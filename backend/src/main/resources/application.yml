@@ -1,0 +1,33 @@
+server:
+  port: ${SERVER_PORT:8080}
+
+spring:
+  application:
+    name: order-menu-backend
+  profiles:
+    active: dev
+  servlet:
+    multipart:
+      enabled: true
+      max-file-size: 5MB
+      max-request-size: 10MB
+
+mybatis-plus:
+  type-aliases-package: com.order.menu.module.*.entity
+  configuration:
+    map-underscore-to-camel-case: true
+  global-config:
+    db-config:
+      id-type: auto
+
+app:
+  jwt:
+    header: Authorization
+    token-prefix: Bearer
+    expire-seconds: 604800
+  upload:
+    allowed-extensions: jpg,jpeg,png,webp
+    image-url-prefix: /images
+    public-base-url: ${ORDER_MENU_PUBLIC_BASE_URL:}
+  cors:
+    allowed-methods: GET,POST,PUT,DELETE,OPTIONS

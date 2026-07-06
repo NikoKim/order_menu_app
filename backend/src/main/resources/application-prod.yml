@@ -1,0 +1,26 @@
+server:
+  port: 8081
+
+spring:
+  datasource:
+    driver-class-name: com.mysql.cj.jdbc.Driver
+    url: ${ORDER_MENU_DB_URL:jdbc:mysql://127.0.0.1:3307/order_menu?useUnicode=true&characterEncoding=utf8&useSSL=false&serverTimezone=Asia/Shanghai&allowPublicKeyRetrieval=true}
+    username: ${ORDER_MENU_DB_USERNAME:order_menu_admin}
+    password: ${ORDER_MENU_DB_PASSWORD}
+
+logging:
+  file:
+    name: /www/wwwroot/order_menu_app/backend/logs/order-menu.log
+  level:
+    com.order.menu: info
+
+app:
+  jwt:
+    secret: ${ORDER_MENU_JWT_SECRET}
+    expire-seconds: 604800
+  upload:
+    base-path: ${ORDER_MENU_UPLOAD_BASE_PATH:/www/server/SpringBoot/order_menu_image}
+    public-base-url: https://order-menu-backend.zsj-unknown.top
+  cors:
+    allowed-origins:
+      - https://order-menu-backend.zsj-unknown.top

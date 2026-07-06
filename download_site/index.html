@@ -1,0 +1,325 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta
+      name="description"
+      content="香狗家庭点餐 App 下载页，提供顾客端和商家端 Android APK 下载。"
+    />
+    <meta name="theme-color" content="#f28c28" />
+    <title>香狗家庭点餐 App 下载</title>
+    <link rel="icon" href="./assets/app_icon.png" />
+    <style>
+      :root {
+        color-scheme: light;
+        --orange: #f28c28;
+        --orange-dark: #d96f0f;
+        --orange-soft: #fff4e8;
+        --ink: #242424;
+        --muted: #756d65;
+        --line: #f0e2d3;
+        --paper: #ffffff;
+        --bg: #fffaf3;
+      }
+
+      * {
+        box-sizing: border-box;
+      }
+
+      body {
+        margin: 0;
+        min-height: 100vh;
+        font-family:
+          -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC",
+          "Microsoft YaHei", sans-serif;
+        color: var(--ink);
+        background: var(--bg);
+      }
+
+      a {
+        color: inherit;
+        text-decoration: none;
+      }
+
+      .page {
+        min-height: 100vh;
+        display: flex;
+        flex-direction: column;
+      }
+
+      .hero {
+        padding: 28px 20px 18px;
+      }
+
+      .hero-inner {
+        width: min(1040px, 100%);
+        margin: 0 auto;
+        display: grid;
+        grid-template-columns: 1fr;
+        gap: 24px;
+        align-items: center;
+      }
+
+      .brand-row {
+        display: flex;
+        gap: 14px;
+        align-items: center;
+      }
+
+      .brand-icon {
+        width: 58px;
+        height: 58px;
+        border-radius: 14px;
+        box-shadow: 0 14px 32px rgba(242, 140, 40, 0.24);
+      }
+
+      .brand-title {
+        margin: 0;
+        font-size: clamp(28px, 8vw, 56px);
+        line-height: 1.05;
+        font-weight: 850;
+        letter-spacing: 0;
+      }
+
+      .brand-subtitle {
+        margin: 10px 0 0;
+        color: var(--muted);
+        font-size: 16px;
+        line-height: 1.7;
+      }
+
+      .hero-icon {
+        width: min(360px, 86vw);
+        border-radius: 28px;
+        justify-self: center;
+        box-shadow: 0 22px 58px rgba(217, 111, 15, 0.22);
+      }
+
+      .downloads {
+        width: min(1040px, calc(100% - 40px));
+        margin: 0 auto;
+        display: grid;
+        grid-template-columns: 1fr;
+        gap: 14px;
+      }
+
+      .download-card {
+        border: 1px solid var(--line);
+        border-radius: 8px;
+        background: var(--paper);
+        padding: 18px;
+        display: grid;
+        gap: 14px;
+      }
+
+      .download-card h2 {
+        margin: 0;
+        font-size: 22px;
+        line-height: 1.3;
+      }
+
+      .download-card p {
+        margin: 0;
+        color: var(--muted);
+        line-height: 1.65;
+      }
+
+      .meta-list {
+        display: grid;
+        gap: 8px;
+        color: var(--muted);
+        font-size: 14px;
+      }
+
+      .meta-item {
+        display: flex;
+        gap: 8px;
+        align-items: flex-start;
+      }
+
+      .meta-item svg {
+        width: 18px;
+        height: 18px;
+        flex: 0 0 auto;
+        color: var(--orange);
+        margin-top: 2px;
+      }
+
+      .download-button {
+        min-height: 48px;
+        display: inline-flex;
+        justify-content: center;
+        align-items: center;
+        gap: 8px;
+        padding: 0 18px;
+        border-radius: 8px;
+        background: var(--orange);
+        color: #fff;
+        font-weight: 750;
+        box-shadow: 0 12px 26px rgba(242, 140, 40, 0.26);
+      }
+
+      .download-button:active {
+        transform: translateY(1px);
+      }
+
+      .notice {
+        width: min(1040px, calc(100% - 40px));
+        margin: 16px auto 0;
+        padding: 14px 16px;
+        border: 1px solid var(--line);
+        border-radius: 8px;
+        background: var(--orange-soft);
+        color: var(--muted);
+        line-height: 1.65;
+        font-size: 14px;
+      }
+
+      .admin-entry {
+        width: min(1040px, calc(100% - 40px));
+        margin: 10px auto 0;
+        text-align: right;
+        color: #9a8f85;
+        font-size: 12px;
+      }
+
+      .admin-entry a {
+        display: inline-flex;
+        align-items: center;
+        padding: 4px 6px;
+        border-radius: 6px;
+      }
+
+      .admin-entry a:hover {
+        color: var(--orange-dark);
+        background: rgba(242, 140, 40, 0.08);
+      }
+
+      .footer {
+        margin-top: auto;
+        padding: 28px 20px 22px;
+        color: var(--muted);
+        text-align: center;
+        font-size: 12px;
+        line-height: 1.8;
+      }
+
+      @media (min-width: 780px) {
+        .hero {
+          padding-top: 46px;
+        }
+
+        .hero-inner {
+          grid-template-columns: 1.08fr 0.92fr;
+        }
+
+        .hero-icon {
+          justify-self: end;
+        }
+
+        .downloads {
+          grid-template-columns: repeat(2, minmax(0, 1fr));
+        }
+      }
+    </style>
+  </head>
+  <body>
+    <main class="page">
+      <section class="hero" aria-labelledby="page-title">
+        <div class="hero-inner">
+          <div>
+            <div class="brand-row">
+              <img class="brand-icon" src="./assets/app_icon.png" alt="点餐 App 图标" />
+              <div>
+                <h1 id="page-title" class="brand-title">香狗家庭点餐</h1>
+                <p class="brand-subtitle">
+                  顾客端用于浏览商家和下单，商家端用于管理店铺、菜品和订单。
+                  请选择对应版本下载安装。
+                </p>
+              </div>
+            </div>
+          </div>
+          <img class="hero-icon" src="./assets/app_icon.png" alt="NikoKim 点餐 App" />
+        </div>
+      </section>
+
+      <section class="downloads" aria-label="App 下载">
+        <article class="download-card">
+          <h2>顾客端 App v 1.2</h2>
+          <p>适合点餐用户使用，可浏览商家、查看菜品、提交订单和管理个人订单。</p>
+          <div class="meta-list">
+            <div class="meta-item">
+              <svg viewBox="0 0 24 24" fill="none" aria-hidden="true">
+                <path d="M12 3v12m0 0 4-4m-4 4-4-4M5 21h14" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" />
+              </svg>
+              <span>Android APK 安装包</span>
+            </div>
+            <div class="meta-item">
+              <svg viewBox="0 0 24 24" fill="none" aria-hidden="true">
+                <path d="M14 3H8a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h8a2 2 0 0 0 2-2V7l-4-4Z" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+                <path d="M14 3v4h4" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+                <path d="M9 14h6" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+                <path d="M9 17h6" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+                <path d="M8 11h8" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+                <path d="M10 9 8 11l2 2" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+                <path d="M14 9l2 2-2 2" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+              </svg>
+              安装包大小：52.00MB
+            </div>
+          </div>
+          <a class="download-button" href="/apk/customer_frontend.apk" download>
+            <span>下载顾客端</span>
+          </a>
+        </article>
+
+        <article class="download-card">
+          <h2>商家端 App v 1.2</h2>
+          <p>适合店铺经营者使用，可维护店铺资料、管理菜品、处理订单和查看反馈。</p>
+          <div class="meta-list">
+            <div class="meta-item">
+              <svg viewBox="0 0 24 24" fill="none" aria-hidden="true">
+                <path d="M12 3v12m0 0 4-4m-4 4-4-4M5 21h14" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" />
+              </svg>
+              <span>Android APK 安装包</span>
+            </div>
+            <div class="meta-item">
+              <svg viewBox="0 0 24 24" fill="none" aria-hidden="true">
+                <path d="M14 3H8a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h8a2 2 0 0 0 2-2V7l-4-4Z" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+                <path d="M14 3v4h4" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+                <path d="M9 14h6" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+                <path d="M9 17h6" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+                <path d="M8 11h8" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+                <path d="M10 9 8 11l2 2" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+                <path d="M14 9l2 2-2 2" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+              </svg>
+              <span>安装包大小：52.53MB</span>
+            </div>
+          </div>
+          <a class="download-button" href="/apk/shop_frontend.apk" download>
+            下载商家端
+          </a>
+        </article>
+      </section>
+
+      <div class="admin-entry">
+        <a href="/apk/admin_frontend.apk" download>管理端下载</a>
+      </div>
+
+      <section class="notice" aria-label="安装提示">
+        手机浏览器下载后，如果系统提示“未知来源应用”，请在系统设置中允许当前浏览器安装应用。
+        <br>
+        如果下载失败，请联系网站管理员：nju_zsj030702@163.com
+        <br>
+        仅支持安卓系统（和部分鸿蒙系统）下载安装，暂不支持IOS系统。
+        <br>
+        此App不会申请获取您的手机任何权限，若您打开的App请求获取您的手机任意权限，请不要同意，并删除App和对应的安装包，同时，将该信息以Email的形式反馈给我们。
+      </section>
+
+      <footer class="footer">
+        2026 @NikoKim NJU v1.0<br />
+        更多反馈 Email: nju_zsj030702@163.com
+      </footer>
+    </main>
+  </body>
+</html>

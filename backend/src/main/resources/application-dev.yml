@@ -1,0 +1,22 @@
+spring:
+  datasource:
+    driver-class-name: com.mysql.cj.jdbc.Driver
+    url: jdbc:mysql://127.0.0.1:3307/order_menu?useUnicode=true&characterEncoding=utf8&useSSL=false&serverTimezone=Asia/Shanghai&allowPublicKeyRetrieval=true
+    username: order_menu_admin
+    password: 1714672038qwe
+
+logging:
+  level:
+    com.order.menu: debug
+
+app:
+  jwt:
+    secret: dev-change-me-to-a-long-random-secret-at-least-32-chars
+  upload:
+    base-path: /www/server/SpringBoot/order_menu_image
+    public-base-url: https://order-menu-backend.zsj-unknown.top
+  cors:
+    allowed-origins:
+      - http://localhost:3000
+      - http://localhost:5173
+      - http://localhost:8080
