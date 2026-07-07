@@ -8,6 +8,7 @@ public final class StatusConstants {
 
     public static final String DISH_ON_SALE = "ON_SALE";
     public static final String DISH_OFF_SALE = "OFF_SALE";
+    public static final String DISH_DELETE = "DELETED";
 
     public static final String ORDER_SUBMITTED = "SUBMITTED";
     public static final String ORDER_ACCEPTED = "ACCEPTED";

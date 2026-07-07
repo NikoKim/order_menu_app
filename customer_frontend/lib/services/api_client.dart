@@ -334,6 +334,23 @@ class CustomerApi {
 
   final ApiClient api;
 
+  Future<Map<String, dynamic>> checkUpdate(String appCode, int currentVersionCode) async {
+    try {
+      final data = await api.get<Map<String, dynamic>>(
+        '/version/check',
+            (json) => json as Map<String, dynamic>,
+        query: {
+          'appCode': appCode,
+          'currentVersionCode': currentVersionCode.toString(),
+        },
+      );
+      return data;
+    } catch (e) {
+      // 忽略网络异常，防止断网时影响APP正常打开
+      return {'hasUpdate': false};
+    }
+  }
+
   Future<PageResult<Shop>> shops({String? keyword, String? familyCode}) {
     return api.get(
       '/shops',

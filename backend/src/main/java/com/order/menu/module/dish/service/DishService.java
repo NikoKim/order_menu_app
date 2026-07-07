@@ -64,8 +64,15 @@ public class DishService {
 
     public void deleteCategory(Long ownerUserId, Long categoryId) {
         MenuCategory category = requireOwnedCategory(ownerUserId, categoryId);
-        category.setStatus(0);
-        categoryMapper.updateById(category);
+        Long dishCount = dishMapper.selectCount(new LambdaQueryWrapper<Dish>()
+                .eq(Dish::getCategoryId, categoryId)
+                .notIn(Dish::getStatus, StatusConstants.DISH_DELETE));
+
+        if (dishCount != null && dishCount > 0) {
+            throw new BusinessException(ErrorCode.BAD_REQUEST, "当前分类中存在菜品，请保证当前分类为空才可删除。");
+        }
+
+        categoryMapper.deleteById(categoryId);
     }
 
     public PageResponse<DishDtos.DishResponse> shopDishes(Long ownerUserId, int page, int pageSize, Long categoryId, String keyword, String status) {
@@ -85,6 +92,7 @@ public class DishService {
 
     public DishDtos.DishResponse createDish(Long ownerUserId, DishDtos.DishRequest request) {
         Shop shop = shopService.requireOwnedShop(ownerUserId);
+        checkDishNameUnique(shop.getId(), null, request.name().trim());
         Dish dish = new Dish();
         dish.setShopId(shop.getId());
         apply(shop.getId(), dish, request);
@@ -96,6 +104,7 @@ public class DishService {
 
     public DishDtos.DishResponse updateDish(Long ownerUserId, Long dishId, DishDtos.DishRequest request) {
         Dish dish = requireOwnedDish(ownerUserId, dishId);
+        checkDishNameUnique(dish.getShopId(), dishId, request.name().trim());
         apply(dish.getShopId(), dish, request);
         dishMapper.updateById(dish);
         dishOptionService.replace(dishId, request.optionGroups());
@@ -111,7 +120,7 @@ public class DishService {
 
     public void deleteDish(Long ownerUserId, Long dishId) {
         Dish dish = requireOwnedDish(ownerUserId, dishId);
-        dish.setStatus(StatusConstants.DISH_OFF_SALE);
+        dish.setStatus(StatusConstants.DISH_DELETE);
         dishMapper.updateById(dish);
     }
 
@@ -176,5 +185,22 @@ public class DishService {
         return new DishDtos.DishResponse(dish.getId(), dish.getShopId(), dish.getCategoryId(), dish.getName(),
                 dish.getDescription(), dish.getPrice(), dish.getImageUrl(), dish.getStock(), dish.getSalesCount(),
                 dish.getStatus(), dish.getSortOrder(), dishOptionService.groups(dish.getId()));
+    }
+
+    private void checkDishNameUnique(Long shopId, Long dishId, String name) {
+        LambdaQueryWrapper<Dish> wrapper = new LambdaQueryWrapper<Dish>()
+                .eq(Dish::getShopId, shopId)
+                .eq(Dish::getName, name)
+                .ne(Dish::getStatus, StatusConstants.DISH_DELETE);
+
+        // 如果是更新操作，需要排除当前正在修改的这道菜自身
+        if (dishId != null) {
+            wrapper.ne(Dish::getId, dishId);
+        }
+
+        Long count = dishMapper.selectCount(wrapper);
+        if (count != null && count > 0) {
+            throw new BusinessException(ErrorCode.BAD_REQUEST, "菜品名称已存在");
+        }
     }
 }

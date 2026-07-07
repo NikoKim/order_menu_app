@@ -32,14 +32,18 @@ class _DishManagePageState extends State<DishManagePage> {
     try {
       final results = await Future.wait([
         shopApi.fetchCategories(),
-        shopApi.fetchDishes(),
+        shopApi.fetchDishes(status: 'ON_SALE'),
+        shopApi.fetchDishes(status: 'OFF_SALE'),
       ]);
       if (!mounted) {
         return;
       }
       setState(() {
         _categories = results[0] as List<CategoryInfo>;
-        _dishes = (results[1] as PageResult<DishInfo>).records;
+        final onSaleDishes = (results[1] as PageResult<DishInfo>).records;
+        final offSaleDishes = (results[2] as PageResult<DishInfo>).records;
+
+        _dishes = [...onSaleDishes, ...offSaleDishes];
       });
     } on ApiException catch (error) {
       if (mounted) {
@@ -54,7 +58,14 @@ class _DishManagePageState extends State<DishManagePage> {
 
   @override
   Widget build(BuildContext context) {
-    final tabs = [null, ..._categories];
+    final virtualOffSaleCategory = CategoryInfo(
+      id: -1,
+      name: '未上架',
+      sortOrder: 9999,
+      status: 1,
+    );
+
+    final tabs = [null,virtualOffSaleCategory, ..._categories];
 
     return DefaultTabController(
       key: ValueKey(tabs.length),
@@ -67,6 +78,12 @@ class _DishManagePageState extends State<DishManagePage> {
           elevation: 0,
           title: const Text('菜品管理'),
           actions: [
+            IconButton(
+              tooltip: '管理分类排序',
+              onPressed: _categories.isEmpty ? null : _showCategoryManageDialog,
+              icon: const Icon(Icons.sort),
+              color: warmOrange,
+            ),
             IconButton(
               tooltip: '新增分类',
               onPressed: _showCategoryDialog,
@@ -96,6 +113,7 @@ class _DishManagePageState extends State<DishManagePage> {
             indicatorColor: warmOrange,
             tabs: [
               const Tab(text: '全部'),
+              const Tab(text: '未上架'),
               for (final category in _categories) Tab(text: category.name),
             ],
           ),
@@ -124,27 +142,16 @@ class _DishManagePageState extends State<DishManagePage> {
         children: [_ErrorPanel(message: _error!, onRetry: _load)],
       );
     }
-    if (_categories.isEmpty) {
-      return ListView(
-        padding: const EdgeInsets.all(16),
-        children: [
-          _ErrorPanel(
-            message: '暂无分类，请先新增分类后再添加菜品',
-            onRetry: _showCategoryDialog,
-          ),
-        ],
-      );
-    }
 
     return TabBarView(
       children: [
         for (final category in tabs)
           _DishList(
             dishes: category == null
-                ? _dishes
-                : _dishes
-                      .where((dish) => dish.categoryId == category.id)
-                      .toList(),
+                ? _dishes // 1. "全部" 标签：展示所有菜品（包含已上架和未上架）
+                : category.id == -1
+                ? _dishes.where((dish) => !dish.isOnSale).toList() // 2. "未上架" 标签：严格过滤，只保留 isOnSale 为 false 的菜品
+                : _dishes.where((dish) => dish.categoryId == category.id).toList(), // 3. 常规分类：按分类 ID 展示
             categories: _categories,
             onEdit: (dish) => _openEditPage(dish: dish),
             onToggleStatus: _toggleStatus,
@@ -152,6 +159,16 @@ class _DishManagePageState extends State<DishManagePage> {
           ),
       ],
     );
+  }
+
+  Future<void> _showCategoryManageDialog() async {
+    final changed = await showDialog<bool>(
+      context: context,
+      builder: (context) => _CategoryManageDialog(categories: _categories),
+    );
+    if (changed == true) {
+      await _load();
+    }
   }
 
   Future<void> _openEditPage({DishInfo? dish}) async {
@@ -521,4 +538,245 @@ String _absoluteImageUrl(String url) {
     ),
   );
   return api.replace(path: url).toString();
+}
+
+class _CategoryManageDialog extends StatefulWidget {
+  const _CategoryManageDialog({required this.categories});
+  final List<CategoryInfo> categories;
+
+  @override
+  State<_CategoryManageDialog> createState() => _CategoryManageDialogState();
+}
+
+class _CategoryManageDialogState extends State<_CategoryManageDialog> {
+  late List<CategoryInfo> _localCategories;
+  bool _saving = false;
+  // 记录是否发生过名称修改，如果有，即使取消排序也要刷新外层列表
+  bool _hasChanges = false;
+
+  @override
+  void initState() {
+    super.initState();
+    _localCategories = List.from(widget.categories);
+    _localCategories.sort((a, b) => a.sortOrder.compareTo(b.sortOrder));
+  }
+
+  // 新增：编辑分类名称的方法
+  Future<void> _editCategoryName(CategoryInfo category, int index) async {
+    final controller = TextEditingController(text: category.name);
+    final newName = await showDialog<String>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('修改分类名称'),
+        content: TextField(
+          controller: controller,
+          autofocus: true,
+          decoration: const InputDecoration(hintText: '请输入新的分类名称'),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context),
+            child: const Text('取消', style: TextStyle(color: mutedColor)),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.pop(context, controller.text.trim()),
+            style: FilledButton.styleFrom(backgroundColor: warmOrange),
+            child: const Text('确定'),
+          ),
+        ],
+      ),
+    );
+
+    // 如果名称有实质性修改，调用接口更新
+    if (newName != null && newName.isNotEmpty && newName != category.name) {
+      setState(() => _saving = true);
+      try {
+        final updatedCategory = await shopApi.updateCategory(
+          categoryId: category.id,
+          name: newName,
+          sortOrder: category.sortOrder,
+        );
+        if (mounted) {
+          setState(() {
+            _localCategories[index] = updatedCategory;
+            _hasChanges = true;
+          });
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(content: Text('名称已更新'), behavior: SnackBarBehavior.floating),
+          );
+        }
+      } catch (error) {
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(content: Text('更新失败: $error'), behavior: SnackBarBehavior.floating),
+          );
+        }
+      } finally {
+        if (mounted) {
+          setState(() => _saving = false);
+        }
+      }
+    }
+  }
+
+  Future<void> _save() async {
+    setState(() => _saving = true);
+    try {
+      final futures = <Future>[];
+      for (int i = 0; i < _localCategories.length; i++) {
+        final cat = _localCategories[i];
+        final newSortOrder = (i + 1) * 10;
+
+        if (cat.sortOrder != newSortOrder) {
+          futures.add(shopApi.updateCategory(
+            categoryId: cat.id,
+            name: cat.name,
+            sortOrder: newSortOrder,
+          ));
+        }
+      }
+
+      if (futures.isNotEmpty) {
+        await Future.wait(futures);
+        _hasChanges = true; // 顺序发生了改变
+      }
+
+      if (mounted) {
+        Navigator.pop(context, _hasChanges); // 将变更状态传给外层页面
+      }
+    } catch (error) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('保存失败: $error'), behavior: SnackBarBehavior.floating),
+        );
+      }
+    } finally {
+      if (mounted) {
+        setState(() => _saving = false);
+      }
+    }
+  }
+
+  // 新增：删除分类的方法
+  Future<void> _deleteCategory(CategoryInfo category, int index) async {
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('删除分类'),
+        content: Text('确定要删除分类“${category.name}”吗？'),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context, false),
+            child: const Text('取消', style: TextStyle(color: mutedColor)),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.pop(context, true),
+            style: FilledButton.styleFrom(backgroundColor: Colors.redAccent),
+            child: const Text('删除'),
+          ),
+        ],
+      ),
+    );
+
+    if (confirmed != true) return;
+
+    setState(() => _saving = true);
+    try {
+      await shopApi.deleteCategory(category.id);
+      if (mounted) {
+        setState(() {
+          _localCategories.removeAt(index);
+          _hasChanges = true; // 触发外层页面刷新以同步 Tab 栏
+        });
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('分类已删除'), behavior: SnackBarBehavior.floating),
+        );
+      }
+    } on ApiException catch (error) {
+      if (mounted) {
+        // 拦截后端返回的“当前分类中存在菜品...”提示并展示给商家
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text(error.message), behavior: SnackBarBehavior.floating),
+        );
+      }
+    } finally {
+      if (mounted) {
+        setState(() => _saving = false);
+      }
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return PopScope(
+      canPop: !_saving,
+      onPopInvokedWithResult: (didPop, result) {
+        if (didPop && result == null) {
+          // 处理用户点击安卓物理返回键的情况
+          Navigator.pop(context, _hasChanges);
+        }
+      },
+      child: AlertDialog(
+        title: const Text('管理分类', style: TextStyle(fontSize: 18, fontWeight: FontWeight.w700)),
+        contentPadding: const EdgeInsets.symmetric(horizontal: 0, vertical: 16),
+        content: SizedBox(
+          width: double.maxFinite,
+          height: 350,
+          child: ReorderableListView.builder(
+            shrinkWrap: true,
+            itemCount: _localCategories.length,
+            onReorder: (oldIndex, newIndex) {
+              setState(() {
+                if (newIndex > oldIndex) {
+                  newIndex -= 1;
+                }
+                final item = _localCategories.removeAt(oldIndex);
+                _localCategories.insert(newIndex, item);
+              });
+            },
+            itemBuilder: (context, index) {
+              final cat = _localCategories[index];
+              return Material(
+                key: ValueKey(cat.id),
+                color: Colors.transparent,
+                child: ListTile(
+                  title: Text(cat.name),
+                  leading: const Icon(Icons.drag_indicator, color: mutedColor),
+                  tileColor: index.isEven ? const Color(0xFFFAFAFA) : Colors.white,
+                  // 替换原有 trailing，支持编辑与删除
+                  trailing: Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      IconButton(
+                        tooltip: '重命名分类',
+                        icon: const Icon(Icons.edit_outlined, color: warmOrange, size: 20),
+                        onPressed: _saving ? null : () => _editCategoryName(cat, index),
+                      ),
+                      IconButton(
+                        tooltip: '删除分类',
+                        icon: const Icon(Icons.delete_outline, color: Colors.redAccent, size: 20),
+                        onPressed: _saving ? null : () => _deleteCategory(cat, index),
+                      ),
+                    ],
+                  ),
+                ),
+              );
+            },
+          ),
+        ),
+        actions: [
+          TextButton(
+            // 取消时，同样返回 _hasChanges 状态，防止已经改了名字但由于没点保存导致外层数据不刷新的问题
+            onPressed: _saving ? null : () => Navigator.pop(context, _hasChanges),
+            child: const Text('关闭', style: TextStyle(color: mutedColor)),
+          ),
+          FilledButton(
+            onPressed: _saving ? null : _save,
+            style: FilledButton.styleFrom(backgroundColor: warmOrange),
+            child: Text(_saving ? '处理中...' : '保存排序'),
+          ),
+        ],
+      ),
+    );
+  }
 }

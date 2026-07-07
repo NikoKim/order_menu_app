@@ -13,8 +13,28 @@ class DevelopmentLogPage extends StatelessWidget {
         padding: const EdgeInsets.fromLTRB(16, 12, 16, 28),
         children: const [
           _VersionCard(
-            version: 'v1.2',
+            version: 'v1.2.2',
             title: '当前版本',
+            items: [
+              '增加调整餐品分类序位，编辑餐品分类名称，删除餐品分类功能',
+              '增加删除餐品功能',
+              '餐品页导航栏增加未上架筛选分类，未上架的餐品可在此查看',
+              '增加显示未上架餐品，并可调整未上架餐品为已上架状态',
+            ],
+          ),
+          SizedBox(height: 12),
+          _VersionCard(
+            version: 'v1.2.1',
+            title: '前版本',
+            items: [
+              '优化点餐页面布局，首页布局',
+              '加入检测新版本和下载新版本功能',
+            ],
+          ),
+          SizedBox(height: 12),
+          _VersionCard(
+            version: 'v1.2',
+            title: '前版本',
             items: [
               '菜品属性支持单选、多选、最少选择和最多选择。',
               '订单新增不接单操作，不接单后库存自动退回。',
@@ -26,7 +46,7 @@ class DevelopmentLogPage extends StatelessWidget {
           SizedBox(height: 12),
           _VersionCard(
             version: 'v1.1',
-            title: '上一个版本',
+            title: '前版本',
             items: [
               '餐品属性：支持规格、口味等餐品可选项。',
               '家庭店铺：支持家庭编号、家庭图片和家庭成员管理。',

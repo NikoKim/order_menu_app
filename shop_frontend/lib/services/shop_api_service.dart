@@ -37,6 +37,25 @@ class ShopApiService {
     _token = token;
   }
 
+  Future<Map<String, dynamic>> checkUpdate(String appCode, int currentVersionCode) async {
+    try {
+      // 注意：authenticated 设为 false，因为检查更新不需要也不应该被 Token 拦截
+      final data = await _request<Map<String, dynamic>>(
+        'GET',
+        '/version/check',
+        query: {
+          'appCode': appCode,
+          'currentVersionCode': currentVersionCode.toString(),
+        },
+        authenticated: false,
+      );
+      return data;
+    } catch (e) {
+      // 忽略网络异常，防止断网时影响APP正常打开
+      return {'hasUpdate': false};
+    }
+  }
+
   Future<LoginResult> login({
     required String nickname,
     required String password,

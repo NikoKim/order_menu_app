@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:io';
 
 import 'package:flutter/material.dart';
 
@@ -9,6 +10,10 @@ import 'pages/shop_login_page.dart';
 import 'pages/shop_profile_page.dart';
 import 'services/shop_api_service.dart';
 import 'shop_mock_data.dart';
+import 'package:package_info_plus/package_info_plus.dart'; // 新增
+import 'package:dio/dio.dart';
+import 'package:open_filex/open_filex.dart';
+import 'package:path_provider/path_provider.dart';
 
 void main() {
   runApp(const ShopFrontendApp());
@@ -85,10 +90,260 @@ class _ShopShellState extends State<ShopShell> {
   int _pendingFamilyMembers = 0;
   Timer? _notificationTimer;
 
+  bool _hasCheckedUpdate = false;
+
   @override
   void initState() {
     super.initState();
     _restore();
+
+    if (!_hasCheckedUpdate) {
+      _hasCheckedUpdate = true;
+      _checkAppUpdate();
+    }
+  }
+
+  Future<void> _checkAppUpdate() async {
+    try {
+      // 获取当前设备的 App 内部版本号 (例如 1, 2)
+      PackageInfo packageInfo = await PackageInfo.fromPlatform();
+      int currentCode = int.tryParse(packageInfo.buildNumber) ?? 1;
+
+      // 向服务器查询 'shop' 端是否有新版
+      final updateInfo = await shopApi.checkUpdate('shop', currentCode);
+
+      if (updateInfo['hasUpdate'] == true && mounted) {
+        _showUpdateDialog(updateInfo);
+      }
+    } catch (e) {
+      debugPrint('版本检测失败: $e');
+    }
+  }
+
+  void _showUpdateDialog(Map<String, dynamic> updateInfo) {
+    final bool isForce = updateInfo['isForce'] == true;
+    final String versionName = updateInfo['versionName']?.toString() ?? '';
+    final String url = updateInfo['downloadUrl']?.toString() ?? '';
+    final String rawUpdateContent = updateInfo['updateContent']?.toString() ?? '';
+    final String updateContent = rawUpdateContent
+        .replaceAll(r'\r\n', '\n')
+        .replaceAll(r'\n', '\n');
+
+    showDialog(
+      context: context,
+      barrierDismissible: !isForce,
+      builder: (dialogContext) {
+        bool downloading = false;
+        bool downloaded = false;
+        double progress = 0;
+        String? apkPath;
+        String statusText = '为了更好的商家发布，修改餐品体验，请更新到最新版本。';
+
+        return StatefulBuilder(
+          builder: (context, setDialogState) {
+            Future<void> installApk() async {
+              final path = apkPath;
+              if (path == null || path.isEmpty) {
+                ScaffoldMessenger.of(context).showSnackBar(
+                  const SnackBar(content: Text('安装包不存在，请先下载')),
+                );
+                return;
+              }
+
+              final file = File(path);
+              if (!await file.exists()) {
+                setDialogState(() {
+                  downloaded = false;
+                  apkPath = null;
+                  statusText = '安装包已丢失，请重新下载';
+                });
+                return;
+              }
+
+              final result = await OpenFilex.open(
+                path,
+                type: 'application/vnd.android.package-archive',
+              );
+
+              debugPrint('打开 APK 结果: ${result.type}, ${result.message}');
+
+              if (result.type != ResultType.done && mounted) {
+                ScaffoldMessenger.of(context).showSnackBar(
+                  SnackBar(content: Text('打开安装程序失败：${result.message}')),
+                );
+              }
+            }
+
+            Future<void> startDownload() async {
+              if (url.isEmpty) {
+                ScaffoldMessenger.of(context).showSnackBar(
+                  const SnackBar(content: Text('下载链接为空')),
+                );
+                return;
+              }
+
+              if (!Platform.isAndroid) {
+                ScaffoldMessenger.of(context).showSnackBar(
+                  const SnackBar(content: Text('当前仅支持 Android APK 更新')),
+                );
+                return;
+              }
+
+              setDialogState(() {
+                downloading = true;
+                downloaded = false;
+                progress = 0;
+                apkPath = null;
+                statusText = '正在准备下载...';
+              });
+
+              try {
+                final uri = Uri.parse(url);
+                final fileName = uri.pathSegments.isNotEmpty
+                    ? uri.pathSegments.last
+                    : 'shop_frontend.apk';
+                final tempDir = await getTemporaryDirectory();
+                final savePath = '${tempDir.path}/$fileName';
+
+                final file = File(savePath);
+                if (await file.exists()) {
+                  await file.delete();
+                }
+
+                final dio = Dio(
+                  BaseOptions(
+                    connectTimeout: const Duration(seconds: 15),
+                    sendTimeout: const Duration(seconds: 15),
+                    receiveTimeout: const Duration(minutes: 5),
+                  ),
+                );
+
+                await dio.download(
+                  url,
+                  savePath,
+                  onReceiveProgress: (received, total) {
+                    if (total <= 0) {
+                      setDialogState(() {
+                        statusText = '正在下载...';
+                      });
+                      return;
+                    }
+
+                    final value = (received / total).clamp(0.0, 1.0);
+                    setDialogState(() {
+                      progress = value;
+                      statusText = '正在下载 ${(value * 100).toStringAsFixed(0)}%';
+                    });
+                  },
+                );
+
+                setDialogState(() {
+                  downloading = false;
+                  downloaded = true;
+                  progress = 1;
+                  apkPath = savePath;
+                  statusText = '下载完成，请点击安装。如果系统已弹出安装界面，可直接继续安装。';
+                });
+
+                await installApk();
+              } catch (e, st) {
+                debugPrint('下载更新失败: $e');
+                debugPrint('$st');
+
+                setDialogState(() {
+                  downloading = false;
+                  downloaded = false;
+                  statusText = '下载失败，请检查网络后重试';
+                });
+
+                if (mounted) {
+                  ScaffoldMessenger.of(context).showSnackBar(
+                    SnackBar(content: Text('下载失败：$e')),
+                  );
+                }
+              }
+            }
+
+            return PopScope(
+              canPop: !isForce && !downloading,
+              child: AlertDialog(
+                title: Text('发现新版本 V$versionName'),
+                content: SingleChildScrollView(
+                  child: Column(
+                    mainAxisSize: MainAxisSize.min,
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      // 增加判断：只有当后端传了更新说明时，才渲染这部分 UI
+                      if (updateContent.isNotEmpty) ...[
+                        const Text(
+                          '更新内容：',
+                          style: TextStyle(fontWeight: FontWeight.bold, fontSize: 15),
+                        ),
+                        const SizedBox(height: 6),
+                        Text(
+                          updateContent,
+                          style: const TextStyle(fontSize: 14, height: 1.4),
+                        ),
+                        const SizedBox(height: 16),
+                      ],
+
+                      // 防锁屏/切后台提示框
+                      Container(
+                        width: double.infinity,
+                        padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
+                        decoration: BoxDecoration(
+                          color: const Color(0xFFFFF4E8),
+                          borderRadius: BorderRadius.circular(6),
+                          border: Border.all(color: const Color(0xFFFFB15C)),
+                        ),
+                        child: const Text(
+                          '更新期间请不要锁屏或跳出软件外，否则会导致下载失败。',
+                          style: TextStyle(
+                            color: Color(0xFFF28C28),
+                            fontSize: 13,
+                            fontWeight: FontWeight.w600,
+                          ),
+                        ),
+                      ),
+                      const SizedBox(height: 16),
+
+                      Text(statusText),
+                      if (downloading || downloaded) ...[
+                        const SizedBox(height: 16),
+                        LinearProgressIndicator(value: progress),
+                        const SizedBox(height: 8),
+                        Text('${(progress * 100).toStringAsFixed(0)}%'),
+                      ],
+                    ],
+                  ),
+                ),
+                actions: [
+                  if (!isForce && !downloading)
+                    TextButton(
+                      onPressed: () => Navigator.pop(dialogContext),
+                      child: const Text('稍后更新'),
+                    ),
+                  FilledButton(
+                    onPressed: downloading
+                        ? null
+                        : downloaded
+                        ? installApk
+                        : startDownload,
+                    child: Text(
+                      downloading
+                          ? '下载中...'
+                          : downloaded
+                          ? '安装'
+                          : '立即下载',
+                    ),
+                  ),
+                ],
+              ),
+            );
+          },
+        );
+      },
+    );
   }
 
   @override

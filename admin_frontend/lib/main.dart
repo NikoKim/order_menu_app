@@ -1,9 +1,14 @@
 import 'dart:async';
 import 'dart:convert';
+import 'dart:io';
 
 import 'package:flutter/material.dart';
 import 'package:http/http.dart' as http;
 import 'package:shared_preferences/shared_preferences.dart';
+import 'package:package_info_plus/package_info_plus.dart'; // 新增
+import 'package:dio/dio.dart';
+import 'package:path_provider/path_provider.dart';
+import 'package:open_filex/open_filex.dart';
 
 void main() {
   runApp(const AdminApp());
@@ -87,6 +92,221 @@ class _AdminShellState extends State<AdminShell> {
   void initState() {
     super.initState();
     _restore();
+    _checkAppUpdate(); // 启动时检测更新
+  }
+
+  Future<void> _checkAppUpdate() async {
+    try {
+      // 获取当前设备的 App 内部版本号 (例如 1, 2)
+      PackageInfo packageInfo = await PackageInfo.fromPlatform();
+      int currentCode = int.tryParse(packageInfo.buildNumber) ?? 1;
+
+      // 向服务器查询 'admin' 端是否有新版
+      final updateInfo = await _api.checkUpdate('admin', currentCode);
+
+      if (updateInfo['hasUpdate'] == true && mounted) {
+        _showUpdateDialog(updateInfo);
+      }
+    } catch (e) {
+      debugPrint('版本检测失败: $e');
+    }
+  }
+
+  void _showUpdateDialog(Map<String, dynamic> updateInfo) {
+    final bool isForce = updateInfo['isForce'] == true;
+    final String versionName = updateInfo['versionName']?.toString() ?? '';
+    final String url = updateInfo['downloadUrl']?.toString() ?? '';
+
+    showDialog(
+      context: context,
+      barrierDismissible: false,
+      builder: (dialogContext) {
+        bool downloading = false;
+        bool installReady = false;
+        double progress = 0;
+        String? apkPath;
+        String statusText = '为了保证正常使用，请更新到最新版本。';
+
+        return StatefulBuilder(
+          builder: (context, setDialogState) {
+            Future<void> installApk() async {
+              final path = apkPath;
+              if (path == null || path.isEmpty) {
+                ScaffoldMessenger.of(context).showSnackBar(
+                  const SnackBar(content: Text('安装包不存在，请先下载')),
+                );
+                return;
+              }
+
+              final apkFile = File(path);
+              if (!await apkFile.exists()) {
+                setDialogState(() {
+                  installReady = false;
+                  statusText = '安装包已丢失，请重新下载';
+                });
+                return;
+              }
+
+              try {
+                final result = await OpenFilex.open(
+                  path,
+                  type: 'application/vnd.android.package-archive',
+                );
+
+                debugPrint('打开 APK 结果: ${result.type}, ${result.message}');
+
+                if (result.type != ResultType.done && mounted) {
+                  ScaffoldMessenger.of(context).showSnackBar(
+                    SnackBar(content: Text('打开安装程序失败：${result.message}')),
+                  );
+                }
+              } catch (e, st) {
+                debugPrint('打开安装程序失败: $e');
+                debugPrint('$st');
+
+                if (mounted) {
+                  ScaffoldMessenger.of(context).showSnackBar(
+                    SnackBar(content: Text('打开安装程序失败：$e')),
+                  );
+                }
+              }
+            }
+
+            Future<void> startDownload() async {
+              if (url.isEmpty) {
+                ScaffoldMessenger.of(context).showSnackBar(
+                  const SnackBar(content: Text('下载链接为空')),
+                );
+                return;
+              }
+
+              if (!Platform.isAndroid) {
+                ScaffoldMessenger.of(context).showSnackBar(
+                  const SnackBar(content: Text('当前仅支持 Android APK 更新')),
+                );
+                return;
+              }
+
+              setDialogState(() {
+                downloading = true;
+                installReady = false;
+                progress = 0;
+                apkPath = null;
+                statusText = '正在准备下载...';
+              });
+
+              try {
+                final uri = Uri.parse(url);
+                final fileName = uri.pathSegments.isNotEmpty
+                    ? uri.pathSegments.last
+                    : 'admin_frontend.apk';
+
+                final tempDir = await getTemporaryDirectory();
+                final savePath = '${tempDir.path}/$fileName';
+
+                final file = File(savePath);
+                if (await file.exists()) {
+                  await file.delete();
+                }
+
+                final dio = Dio(
+                  BaseOptions(
+                    connectTimeout: const Duration(seconds: 15),
+                    receiveTimeout: const Duration(minutes: 5),
+                    sendTimeout: const Duration(seconds: 15),
+                  ),
+                );
+
+                await dio.download(
+                  url,
+                  savePath,
+                  onReceiveProgress: (received, total) {
+                    if (total <= 0) {
+                      setDialogState(() {
+                        statusText = '正在下载...';
+                      });
+                      return;
+                    }
+
+                    final double value = (received / total).clamp(0.0, 1.0).toDouble();
+                    setDialogState(() {
+                      progress = value;
+                      statusText = '正在下载 ${(progress * 100).toStringAsFixed(0)}%';
+                    });
+                  },
+                );
+
+                setDialogState(() {
+                  downloading = false;
+                  installReady = true;
+                  progress = 1;
+                  apkPath = savePath;
+                  statusText = '下载完成，可以点击“安装”继续安装。';
+                });
+
+                await installApk();
+              } catch (e, st) {
+                debugPrint('下载更新失败: $e');
+                debugPrint('$st');
+
+                setDialogState(() {
+                  downloading = false;
+                  installReady = false;
+                  statusText = '下载失败，请检查网络后重试';
+                });
+
+                if (mounted) {
+                  ScaffoldMessenger.of(context).showSnackBar(
+                    SnackBar(content: Text('下载失败：$e')),
+                  );
+                }
+              }
+            }
+
+            return PopScope(
+              canPop: !isForce && !downloading,
+              child: AlertDialog(
+                title: Text('发现新版本 V$versionName'),
+                content: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(statusText),
+                    if (downloading || installReady) ...[
+                      const SizedBox(height: 16),
+                      LinearProgressIndicator(value: progress),
+                      const SizedBox(height: 8),
+                      Text('${(progress * 100).toStringAsFixed(0)}%'),
+                    ],
+                  ],
+                ),
+                actions: [
+                  if (!isForce && !downloading)
+                    TextButton(
+                      onPressed: () => Navigator.pop(dialogContext),
+                      child: const Text('稍后更新'),
+                    ),
+                  FilledButton(
+                    onPressed: downloading
+                        ? null
+                        : installReady
+                        ? installApk
+                        : startDownload,
+                    child: Text(
+                      downloading
+                          ? '下载中...'
+                          : installReady
+                          ? '安装'
+                          : '立即下载',
+                    ),
+                  ),
+                ],
+              ),
+            );
+          },
+        );
+      },
+    );
   }
 
   Future<void> _restore() async {
@@ -252,13 +472,13 @@ class _AdminLoginPageState extends State<AdminLoginPage> {
                       onPressed: _submitting ? null : _login,
                       icon: _submitting
                           ? const SizedBox(
-                              width: 18,
-                              height: 18,
-                              child: CircularProgressIndicator(
-                                strokeWidth: 2,
-                                color: Colors.white,
-                              ),
-                            )
+                        width: 18,
+                        height: 18,
+                        child: CircularProgressIndicator(
+                          strokeWidth: 2,
+                          color: Colors.white,
+                        ),
+                      )
                           : const Icon(Icons.login),
                       label: const Text('登录'),
                     ),
@@ -287,12 +507,17 @@ class AdminManagePage extends StatefulWidget {
 class _AdminManagePageState extends State<AdminManagePage> {
   int _index = 0;
 
+  Widget _buildBody() {
+    if (_index == 0) return AccountList(api: widget.api, role: 'CUSTOMER');
+    if (_index == 1) return AccountList(api: widget.api, role: 'SHOP');
+    return VersionPublishTab(api: widget.api);
+  }
+
   @override
   Widget build(BuildContext context) {
-    final role = _index == 0 ? 'CUSTOMER' : 'SHOP';
     return Scaffold(
       appBar: AppBar(
-        title: const Text('账号管理'),
+        title: Text(_index == 2 ? '版本发布中心' : '账号管理'),
         actions: [
           IconButton(
             tooltip: '退出登录',
@@ -301,9 +526,7 @@ class _AdminManagePageState extends State<AdminManagePage> {
           ),
         ],
       ),
-      body: SafeArea(
-        child: AccountList(api: widget.api, role: role),
-      ),
+      body: SafeArea(child: _buildBody()),
       bottomNavigationBar: NavigationBar(
         selectedIndex: _index,
         backgroundColor: Colors.white,
@@ -320,6 +543,12 @@ class _AdminManagePageState extends State<AdminManagePage> {
             icon: Icon(Icons.storefront_outlined),
             selectedIcon: Icon(Icons.storefront),
             label: '商家',
+          ),
+          // ⬇️ 新增底栏图标
+          NavigationDestination(
+            icon: Icon(Icons.system_update_alt_outlined),
+            selectedIcon: Icon(Icons.system_update_alt),
+            label: '版本',
           ),
         ],
       ),
@@ -645,7 +874,7 @@ class AppFooter extends StatelessWidget {
               crossAxisAlignment: WrapCrossAlignment.center,
               children: [
                 const Text(
-                  '2026 @NikoKim NJU v1.2',
+                  '2026 @NikoKim NJU v1.2.1',
                   style: TextStyle(color: mutedColor, fontSize: 11),
                 ),
                 InkWell(
@@ -690,6 +919,15 @@ class AdminDevelopmentLogPage extends StatelessWidget {
       body: ListView(
         padding: const EdgeInsets.fromLTRB(16, 12, 16, 28),
         children: const [
+          _DevelopmentVersionCard(
+            version: 'v1.2.1',
+            title: '当前版本',
+            items: [
+              '优化点餐页面布局，首页布局',
+              '加入检测新版本和下载新版本功能',
+            ],
+          ),
+          SizedBox(height: 12),
           _DevelopmentVersionCard(
             version: 'v1.2',
             title: '当前版本',
@@ -819,14 +1057,14 @@ class _DevelopmentVersionCard extends StatelessWidget {
 
 class AdminApi {
   AdminApi({http.Client? client, String? baseUrl})
-    : _client = client ?? http.Client(),
-      _baseUrl = Uri.parse(
-        baseUrl ??
-            const String.fromEnvironment(
-              'ADMIN_API_BASE_URL',
-              defaultValue: 'https://order-menu-backend.zsj-unknown.top/api',
-            ),
-      );
+      : _client = client ?? http.Client(),
+        _baseUrl = Uri.parse(
+          baseUrl ??
+              const String.fromEnvironment(
+                'ADMIN_API_BASE_URL',
+                defaultValue: 'https://order-menu-backend.zsj-unknown.top/api',
+              ),
+        );
 
   static const _tokenKey = 'admin_auth_token';
   final http.Client _client;
@@ -915,55 +1153,97 @@ class AdminApi {
   }
 
   Future<T> _request<T>(
-    String method,
-    String path, {
-    Map<String, String>? query,
-    Map<String, dynamic>? body,
-    bool authenticated = true,
-  }) async {
+      String method,
+      String path, {
+        Map<String, String>? query,
+        Map<String, dynamic>? body,
+        bool authenticated = true,
+      }) async {
     final uri = _uri(path, query);
+
+    debugPrint('========== API 请求 ==========');
+    debugPrint('$method $uri');
+    debugPrint('body: ${body == null ? '' : jsonEncode(body)}');
+
     final headers = <String, String>{
       'Accept': 'application/json',
       'Content-Type': 'application/json',
     };
+
     if (authenticated && _token != null && _token!.isNotEmpty) {
       headers['Authorization'] = 'Bearer $_token';
     }
 
-    late final http.Response response;
-    switch (method) {
-      case 'GET':
-        response = await _client.get(uri, headers: headers);
-      case 'POST':
-        response = await _client.post(
-          uri,
-          headers: headers,
-          body: jsonEncode(body ?? const {}),
-        );
-      case 'PUT':
-        response = await _client.put(
-          uri,
-          headers: headers,
-          body: jsonEncode(body ?? const {}),
-        );
-      default:
-        throw const ApiException('不支持的请求方法');
-    }
+    try {
+      late final http.Response response;
 
-    Object? decoded;
-    if (response.body.isNotEmpty) {
-      decoded = jsonDecode(utf8.decode(response.bodyBytes));
-    }
-    if (response.statusCode < 200 || response.statusCode >= 300) {
-      throw ApiException(_message(decoded, '请求失败'));
-    }
-    if (decoded is Map<String, dynamic>) {
-      if (decoded['code'] == 0) {
-        return decoded['data'] as T;
+      switch (method) {
+        case 'GET':
+          response = await _client
+              .get(uri, headers: headers)
+              .timeout(const Duration(seconds: 10));
+          break;
+
+        case 'POST':
+          response = await _client
+              .post(
+            uri,
+            headers: headers,
+            body: jsonEncode(body ?? const {}),
+          )
+              .timeout(const Duration(seconds: 10));
+          break;
+
+        case 'PUT':
+          response = await _client
+              .put(
+            uri,
+            headers: headers,
+            body: jsonEncode(body ?? const {}),
+          )
+              .timeout(const Duration(seconds: 10));
+          break;
+
+        default:
+          throw const ApiException('不支持的请求方法');
       }
-      throw ApiException(decoded['message']?.toString() ?? '请求失败');
+
+      debugPrint('========== API 响应 ==========');
+      debugPrint('statusCode: ${response.statusCode}');
+      debugPrint('body: ${utf8.decode(response.bodyBytes)}');
+
+      Object? decoded;
+      if (response.bodyBytes.isNotEmpty) {
+        decoded = jsonDecode(utf8.decode(response.bodyBytes));
+      }
+
+      if (response.statusCode < 200 || response.statusCode >= 300) {
+        throw ApiException(_message(decoded, '请求失败'));
+      }
+
+      if (decoded is Map<String, dynamic>) {
+        if (decoded['code'] == 0) {
+          return decoded['data'] as T;
+        }
+        throw ApiException(decoded['message']?.toString() ?? '请求失败');
+      }
+
+      return null as T;
+    } on TimeoutException {
+      throw const ApiException('请求超时：线上服务器没有在 10 秒内返回');
+    } on SocketException catch (e) {
+      debugPrint('SocketException: $e');
+      throw const ApiException('无法连接服务器，请检查域名、HTTPS 或服务器状态');
+    } on FormatException catch (e) {
+      debugPrint('FormatException: $e');
+      throw const ApiException('服务器返回的不是合法 JSON');
+    } on ApiException {
+      rethrow;
+    } catch (e, st) {
+      debugPrint('未知请求错误: $e');
+      debugPrint('$st');
+      throw ApiException('请求异常：$e');
     }
-    return null as T;
   }
 
   String _message(Object? decoded, String fallback) {
@@ -981,6 +1261,46 @@ class AdminApi {
     return _baseUrl.replace(
       path: '$basePath$normalizedPath',
       queryParameters: query,
+    );
+  }
+
+  Future<Map<String, dynamic>> checkUpdate(String appCode, int currentVersionCode) async {
+    try {
+      final data = await _request<Map<String, dynamic>>(
+        'GET',
+        '/version/check',
+        query: {
+          'appCode': appCode,
+          'currentVersionCode': currentVersionCode.toString(),
+        },
+        authenticated: false, // 检查更新不需要登录
+      );
+      return data;
+    } catch (e) {
+      // 忽略检查更新时的网络异常，不影响App正常使用
+      return {'hasUpdate': false};
+    }
+  }
+
+  Future<void> publishVersion({
+    required String appCode,
+    required int versionCode,
+    required String versionName,
+    required String downloadUrl,
+    required int isForce,
+    required String updateContent,
+  }) async {
+    await _request<void>(
+      'POST',
+      '/version/publish',
+      body: {
+        'appCode': appCode,
+        'versionCode': versionCode,
+        'versionName': versionName,
+        'downloadUrl': downloadUrl,
+        'isForce': isForce,
+        'updateContent': updateContent,
+      },
     );
   }
 }
@@ -1014,4 +1334,185 @@ class ApiException implements Exception {
   const ApiException(this.message);
 
   final String message;
+}
+
+class VersionPublishTab extends StatefulWidget {
+  const VersionPublishTab({super.key, required this.api});
+  final AdminApi api;
+
+  @override
+  State<VersionPublishTab> createState() => _VersionPublishTabState();
+}
+
+class _VersionPublishTabState extends State<VersionPublishTab> {
+  String _selectedApp = 'admin'; // 默认选中 admin
+  final _versionCodeCtrl = TextEditingController();
+  final _versionNameCtrl = TextEditingController();
+  final _downloadUrlCtrl = TextEditingController();
+  bool _isForce = false;
+  bool _submitting = false;
+  final _updateContentCtrl = TextEditingController();
+
+  static const String _baseApkUrl = 'https://order-menu-backend.zsj-unknown.top/apk/';
+
+  @override
+  void initState() {
+    super.initState();
+    _generateDownloadUrl(_selectedApp);
+  }
+
+  @override
+  void dispose() {
+    _versionCodeCtrl.dispose();
+    _versionNameCtrl.dispose();
+    _downloadUrlCtrl.dispose();
+    _updateContentCtrl.dispose();
+    super.dispose();
+  }
+
+  // ⬇️ 新增：自动生成下载链接的方法
+  void _generateDownloadUrl(String appCode) {
+    // 根据 appCode 自动拼接文件名：admin_frontend.apk, shop_frontend.apk 等
+    _downloadUrlCtrl.text = '$_baseApkUrl${appCode}_frontend.apk';
+  }
+
+  Future<void> _submit() async {
+    final codeStr = _versionCodeCtrl.text.trim();
+    final name = _versionNameCtrl.text.trim();
+    final url = _downloadUrlCtrl.text.trim();
+    final updateContent = _updateContentCtrl.text.trim();
+
+    if (codeStr.isEmpty || name.isEmpty || url.isEmpty || updateContent.isEmpty) {
+      _showMessage('请填写完整信息');
+      return;
+    }
+
+    final code = int.tryParse(codeStr);
+    if (code == null) {
+      _showMessage('构建版本号必须是整数');
+      return;
+    }
+
+    setState(() => _submitting = true);
+    try {
+      await widget.api.publishVersion(
+        appCode: _selectedApp,
+        versionCode: code,
+        versionName: name,
+        downloadUrl: url,
+        isForce: _isForce ? 1 : 0,
+        updateContent: updateContent,
+      );
+      _showMessage('$_selectedApp 版本 $name 发布成功！');
+
+      // 清空表单，但保留下载链接的自动填充状态
+      _versionCodeCtrl.clear();
+      _versionNameCtrl.clear();
+      _updateContentCtrl.clear();
+      _generateDownloadUrl(_selectedApp);
+      setState(() => _isForce = false);
+    } on ApiException catch (e) {
+      _showMessage(e.message);
+    } finally {
+      if (mounted) setState(() => _submitting = false);
+    }
+  }
+
+  void _showMessage(String text) {
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(content: Text(text), behavior: SnackBarBehavior.floating),
+    );
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return ListView(
+      padding: const EdgeInsets.all(16),
+      children: [
+        const Text(
+          '发布新版本',
+          style: TextStyle(fontSize: 22, fontWeight: FontWeight.w800),
+        ),
+        const SizedBox(height: 16),
+        DropdownButtonFormField<String>(
+          value: _selectedApp,
+          decoration: const InputDecoration(labelText: '目标应用 (App Code)'),
+          items: const [
+            DropdownMenuItem(value: 'admin', child: Text('管理端 (admin)')),
+            DropdownMenuItem(value: 'shop', child: Text('商家端 (shop)')),
+            DropdownMenuItem(value: 'customer', child: Text('顾客端 (customer)')),
+          ],
+          onChanged: (val) {
+            if (val != null) {
+              setState(() {
+                _selectedApp = val;
+                _generateDownloadUrl(val);
+              });
+            }
+          },
+        ),
+        const SizedBox(height: 12),
+        TextField(
+          controller: _versionCodeCtrl,
+          keyboardType: TextInputType.number,
+          decoration: const InputDecoration(
+            labelText: '构建版本号 (Version Code)',
+            hintText: '如: 2 (必须递增，用于比对)',
+          ),
+        ),
+        const SizedBox(height: 12),
+        TextField(
+          controller: _versionNameCtrl,
+          decoration: const InputDecoration(
+            labelText: '展示版本号 (Version Name)',
+            hintText: '如: 1.1.0 (展示给用户看)',
+          ),
+        ),
+        const SizedBox(height: 12),
+        TextField(
+          controller: _downloadUrlCtrl,
+          decoration: const InputDecoration(
+            labelText: '下载链接 (Download URL)',
+            hintText: '如: https://.../apk/app.apk',
+          ),
+        ),
+        const SizedBox(height: 12),
+        TextField(
+          controller: _updateContentCtrl,
+          maxLines: 4, // 允许输入多行
+          decoration: const InputDecoration(
+            labelText: '更新内容说明',
+            hintText: '例如:\n1. 修复了扫码闪退问题\n2. 优化了列表加载速度',
+            alignLabelWithHint: true, // 多行文本框，文字对齐到顶部
+          ),
+        ),
+        const SizedBox(height: 12),
+        SwitchListTile(
+          title: const Text('是否强制更新'),
+          subtitle: const Text('开启后用户不更新将无法进入App'),
+          value: _isForce,
+          activeColor: const Color(0xFFF28C28), // 对应 warmOrange
+          onChanged: (val) => setState(() => _isForce = val),
+          contentPadding: EdgeInsets.zero,
+        ),
+        const SizedBox(height: 24),
+        SizedBox(
+          height: 48,
+          child: FilledButton.icon(
+            onPressed: _submitting ? null : _submit,
+            icon: _submitting
+                ? const SizedBox(
+              width: 18,
+              height: 18,
+              child: CircularProgressIndicator(color: Colors.white, strokeWidth: 2),
+            )
+                : const Icon(Icons.publish),
+            label: const Text('发布新版本'),
+          ),
+        ),
+        const SizedBox(height: 20),
+        const AppFooter(),
+      ],
+    );
+  }
 }
