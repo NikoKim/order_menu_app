@@ -4,6 +4,13 @@ import 'package:image_picker/image_picker.dart';
 import '../models/shop_api_models.dart';
 import '../services/shop_api_service.dart';
 
+const Color _warmOrange = Color(0xFFF28C28);
+const Color _softOrange = Color(0xFFFFF4E8);
+const Color _pageBgColor = Color(0xFFF5F6F8);
+const Color _lineColor = Color(0xFFF0E7DE);
+const Color _textColor = Color(0xFF242424);
+const Color _mutedColor = Color(0xFF77716B);
+
 class ShopFamilyPage extends StatefulWidget {
   const ShopFamilyPage({super.key});
 
@@ -12,12 +19,6 @@ class ShopFamilyPage extends StatefulWidget {
 }
 
 class _ShopFamilyPageState extends State<ShopFamilyPage> {
-  static const Color _warmOrange = Color(0xFFF28C28);
-  static const Color _softOrange = Color(0xFFFFF4E8);
-  static const Color _lineColor = Color(0xFFF0E7DE);
-  static const Color _textColor = Color(0xFF242424);
-  static const Color _mutedColor = Color(0xFF77716B);
-
   final TextEditingController _familyNameController = TextEditingController();
   final ImagePicker _imagePicker = ImagePicker();
 
@@ -53,9 +54,8 @@ class _ShopFamilyPageState extends State<ShopFamilyPage> {
       final members = shop.visibilityType == 'FAMILY'
           ? await shopApi.fetchFamilyMembers()
           : <FamilyMemberInfo>[];
-      if (!mounted) {
-        return;
-      }
+      if (!mounted) return;
+
       setState(() {
         _shop = shop;
         _isFamilyShop = shop.visibilityType == 'FAMILY';
@@ -66,13 +66,9 @@ class _ShopFamilyPageState extends State<ShopFamilyPage> {
         _members = members;
       });
     } on ApiException catch (error) {
-      if (mounted) {
-        setState(() => _error = error.message);
-      }
+      if (mounted) setState(() => _error = error.message);
     } finally {
-      if (mounted) {
-        setState(() => _loading = false);
-      }
+      if (mounted) setState(() => _loading = false);
     }
   }
 
@@ -80,50 +76,84 @@ class _ShopFamilyPageState extends State<ShopFamilyPage> {
   Widget build(BuildContext context) {
     final approvedCount = _members.where((item) => item.isApproved).length;
     final pendingCount = _members.where((item) => item.isPending).length;
+
     return Scaffold(
-      backgroundColor: Colors.white,
+      backgroundColor: _pageBgColor,
       appBar: AppBar(
         backgroundColor: Colors.white,
         foregroundColor: _textColor,
         elevation: 0,
-        title: const Text('家庭管理'),
+        title: const Text('家庭管理', style: TextStyle(fontWeight: FontWeight.w700)),
       ),
       body: SafeArea(
         child: RefreshIndicator(
           color: _warmOrange,
+          backgroundColor: Colors.white,
           onRefresh: _load,
-          child: ListView(
-            padding: const EdgeInsets.all(16),
-            children: [
-              if (_loading)
-                const LinearProgressIndicator(color: _warmOrange)
-              else if (_error != null)
-                _buildErrorBanner(),
-              _buildHeader(approvedCount, pendingCount),
-              const SizedBox(height: 12),
-              _buildSettings(),
-              const SizedBox(height: 16),
-              _buildMemberSection(),
-            ],
-          ),
+          child: _buildBody(approvedCount, pendingCount),
         ),
       ),
-      bottomNavigationBar: SafeArea(
-        child: Padding(
-          padding: const EdgeInsets.fromLTRB(16, 8, 16, 16),
-          child: SizedBox(
-            height: 48,
-            child: FilledButton.icon(
-              onPressed: _saving ? null : _save,
-              icon: const Icon(Icons.save_outlined),
-              label: Text(_saving ? '保存中...' : '保存家庭设置'),
-              style: FilledButton.styleFrom(
-                backgroundColor: _warmOrange,
-                foregroundColor: Colors.white,
-                shape: RoundedRectangleBorder(
-                  borderRadius: BorderRadius.circular(8),
-                ),
-              ),
+      bottomNavigationBar: _buildBottomBar(),
+    );
+  }
+
+  Widget _buildBody(int approvedCount, int pendingCount) {
+    if (_loading) {
+      return ListView(
+        padding: const EdgeInsets.all(16),
+        children: const [
+          _SkeletonBox(width: double.infinity, height: 110, borderRadius: 12),
+          SizedBox(height: 16),
+          _SkeletonBox(width: double.infinity, height: 260, borderRadius: 12),
+          SizedBox(height: 16),
+          _SkeletonBox(width: double.infinity, height: 200, borderRadius: 12),
+        ],
+      );
+    }
+
+    if (_error != null) {
+      return ListView(
+        padding: const EdgeInsets.all(16),
+        children: [_ErrorPanel(message: _error!, onRetry: _load)],
+      );
+    }
+
+    return ListView(
+      padding: const EdgeInsets.all(16),
+      children: [
+        _buildHeader(approvedCount, pendingCount),
+        const SizedBox(height: 16),
+        _buildSettings(),
+        const SizedBox(height: 16),
+        _buildMemberSection(),
+      ],
+    );
+  }
+
+  Widget? _buildBottomBar() {
+    if (_loading) return null;
+    return SafeArea(
+      child: Container(
+        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+        decoration: BoxDecoration(
+          color: Colors.white,
+          boxShadow: [
+            BoxShadow(
+              color: Colors.black.withValues(alpha: 0.04),
+              blurRadius: 12,
+              offset: const Offset(0, -4),
+            ),
+          ],
+        ),
+        child: SizedBox(
+          height: 48,
+          child: FilledButton.icon(
+            onPressed: _saving ? null : _save,
+            icon: const Icon(Icons.save_outlined),
+            label: Text(_saving ? '保存中...' : '保存家庭设置', style: const TextStyle(fontSize: 16, fontWeight: FontWeight.w700)),
+            style: FilledButton.styleFrom(
+              backgroundColor: _warmOrange,
+              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
             ),
           ),
         ),
@@ -132,56 +162,41 @@ class _ShopFamilyPageState extends State<ShopFamilyPage> {
   }
 
   Widget _buildHeader(int approvedCount, int pendingCount) {
-    return Container(
-      padding: const EdgeInsets.all(14),
-      decoration: BoxDecoration(
-        color: _softOrange,
-        borderRadius: BorderRadius.circular(8),
-        border: Border.all(color: _lineColor),
-      ),
+    return _BaseCard(
       child: Row(
         children: [
           GestureDetector(
-            onTap: _familyImageUrl?.isNotEmpty == true
-                ? () => _previewImage(_familyImageUrl!)
-                : null,
+            onTap: _familyImageUrl?.isNotEmpty == true ? () => _previewImage(_familyImageUrl!) : null,
             child: Container(
-              width: 76,
-              height: 76,
+              width: 72,
+              height: 72,
               clipBehavior: Clip.antiAlias,
               decoration: BoxDecoration(
-                color: Colors.white,
-                borderRadius: BorderRadius.circular(8),
-                border: Border.all(color: _lineColor),
+                color: _softOrange,
+                borderRadius: BorderRadius.circular(12),
               ),
               child: _familyImageUrl?.isNotEmpty == true
                   ? Image.network(
-                      _absoluteImageUrl(_familyImageUrl!),
-                      fit: BoxFit.cover,
-                    )
-                  : const Icon(
-                      Icons.home_outlined,
-                      color: _warmOrange,
-                      size: 36,
-                    ),
+                _absoluteImageUrl(_familyImageUrl!),
+                fit: BoxFit.cover,
+                loadingBuilder: (context, child, progress) {
+                  if (progress == null) return child;
+                  return const _SkeletonBox(width: 72, height: 72);
+                },
+              )
+                  : const Icon(Icons.home_outlined, color: _warmOrange, size: 36),
             ),
           ),
-          const SizedBox(width: 14),
+          const SizedBox(width: 16),
           Expanded(
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
                 Text(
-                  _familyNameController.text.trim().isEmpty
-                      ? '未命名家庭'
-                      : _familyNameController.text.trim(),
+                  _familyNameController.text.trim().isEmpty ? '未命名家庭' : _familyNameController.text.trim(),
                   maxLines: 1,
                   overflow: TextOverflow.ellipsis,
-                  style: const TextStyle(
-                    color: _textColor,
-                    fontSize: 18,
-                    fontWeight: FontWeight.w800,
-                  ),
+                  style: const TextStyle(color: _textColor, fontSize: 18, fontWeight: FontWeight.w800),
                 ),
                 const SizedBox(height: 8),
                 Wrap(
@@ -190,19 +205,11 @@ class _ShopFamilyPageState extends State<ShopFamilyPage> {
                   children: [
                     _InfoPill(
                       icon: Icons.tag,
-                      text: _isFamilyShop
-                          ? '家庭编号 ${_familyCode?.isNotEmpty == true ? _familyCode : '保存后生成'}'
-                          : '未开启家庭',
+                      text: _isFamilyShop ? '编号 ${_familyCode?.isNotEmpty == true ? _familyCode : '保存后生成'}' : '未开启家庭',
                     ),
-                    _InfoPill(
-                      icon: Icons.people_alt_outlined,
-                      text: '$approvedCount 位成员',
-                    ),
+                    _InfoPill(icon: Icons.people_alt_outlined, text: '$approvedCount 位成员'),
                     if (pendingCount > 0)
-                      _InfoPill(
-                        icon: Icons.hourglass_top,
-                        text: '$pendingCount 个申请',
-                      ),
+                      _InfoPill(icon: Icons.hourglass_top, text: '$pendingCount 个申请', isHighlight: true),
                   ],
                 ),
               ],
@@ -214,63 +221,62 @@ class _ShopFamilyPageState extends State<ShopFamilyPage> {
   }
 
   Widget _buildSettings() {
-    return Container(
-      padding: const EdgeInsets.all(16),
-      decoration: BoxDecoration(
-        color: Colors.white,
-        borderRadius: BorderRadius.circular(8),
-        border: Border.all(color: _lineColor),
-      ),
+    return _BaseCard(
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
+          const Text('基础设置', style: TextStyle(color: _textColor, fontSize: 16, fontWeight: FontWeight.w800)),
+          const SizedBox(height: 16),
           SwitchListTile(
             contentPadding: EdgeInsets.zero,
             value: _isFamilyShop,
-            activeThumbColor: _warmOrange,
-            title: const Text(
-              '开启家庭店铺',
-              style: TextStyle(fontWeight: FontWeight.w700),
-            ),
-            subtitle: const Text('开启后，顾客需要加入家庭才能在家庭标签中看到店铺'),
+            activeColor: Colors.white,
+            activeTrackColor: _warmOrange,
+            title: const Text('开启家庭店铺', style: TextStyle(fontWeight: FontWeight.w700)),
+            subtitle: const Text('开启后，顾客需要加入家庭才能在专属标签中看到本店', style: TextStyle(color: _mutedColor, fontSize: 13)),
             onChanged: (value) => setState(() => _isFamilyShop = value),
           ),
-          const SizedBox(height: 8),
-          TextField(
-            controller: _familyNameController,
-            onChanged: (_) => setState(() {}),
-            decoration: const InputDecoration(
-              labelText: '家庭名称',
-              prefixIcon: Icon(Icons.home_outlined, color: _warmOrange),
+          const Padding(
+            padding: EdgeInsets.symmetric(vertical: 8),
+            child: Divider(color: _lineColor, height: 1),
+          ),
+          _LabeledField(
+            label: '家庭名称',
+            child: TextField(
+              controller: _familyNameController,
+              onChanged: (_) => setState(() {}),
+              decoration: _inputDecoration('请输入家庭名称'),
             ),
           ),
-          const SizedBox(height: 12),
-          DropdownButtonFormField<String>(
-            initialValue: _familyJoinMode,
-            decoration: const InputDecoration(
-              labelText: '用户加入方式',
-              prefixIcon: Icon(Icons.person_add_alt_1, color: _warmOrange),
+          const SizedBox(height: 16),
+          _LabeledField(
+            label: '用户加入方式',
+            child: DropdownButtonFormField<String>(
+              initialValue: _familyJoinMode,
+              decoration: _inputDecoration('请选择加入方式'),
+              icon: const Icon(Icons.expand_more, color: _mutedColor),
+              items: const [
+                DropdownMenuItem(value: 'OPEN', child: Text('可加入，不需要审核')),
+                DropdownMenuItem(value: 'APPROVAL', child: Text('可加入，需要商家审核')),
+                DropdownMenuItem(value: 'CLOSED', child: Text('暂不支持新用户加入')),
+              ],
+              onChanged: (value) {
+                if (value != null) setState(() => _familyJoinMode = value);
+              },
             ),
-            items: const [
-              DropdownMenuItem(value: 'OPEN', child: Text('可加入，不需要审核')),
-              DropdownMenuItem(value: 'APPROVAL', child: Text('可加入，需要商家审核')),
-              DropdownMenuItem(value: 'CLOSED', child: Text('暂不支持新用户加入')),
-            ],
-            onChanged: (value) {
-              if (value != null) {
-                setState(() => _familyJoinMode = value);
-              }
-            },
           ),
-          const SizedBox(height: 12),
+          const SizedBox(height: 16),
           Row(
             children: [
               Expanded(
                 child: OutlinedButton.icon(
                   onPressed: _uploadFamilyImage,
-                  icon: const Icon(Icons.image_outlined),
-                  label: Text(
-                    _familyImageUrl?.isNotEmpty == true ? '更换家庭图片' : '上传家庭图片',
+                  icon: const Icon(Icons.image_outlined, size: 18),
+                  label: Text(_familyImageUrl?.isNotEmpty == true ? '更换家庭图片' : '上传家庭图片'),
+                  style: OutlinedButton.styleFrom(
+                    foregroundColor: _warmOrange,
+                    side: const BorderSide(color: _warmOrange),
+                    shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
                   ),
                 ),
               ),
@@ -279,7 +285,8 @@ class _ShopFamilyPageState extends State<ShopFamilyPage> {
                 IconButton.outlined(
                   tooltip: '查看家庭图片',
                   onPressed: () => _previewImage(_familyImageUrl!),
-                  icon: const Icon(Icons.visibility_outlined),
+                  icon: const Icon(Icons.visibility_outlined, color: _mutedColor),
+                  style: IconButton.styleFrom(side: const BorderSide(color: _lineColor)),
                 ),
               ],
             ],
@@ -291,15 +298,13 @@ class _ShopFamilyPageState extends State<ShopFamilyPage> {
 
   Widget _buildMemberSection() {
     if (!_isFamilyShop) {
-      return _EmptyMembers(
+      return const _EmptyMembers(
         icon: Icons.lock_open_outlined,
-        title: '当前是公开店铺',
-        message: '开启家庭店铺并保存后，就可以在这里查看家庭顾客。',
+        title: '当前是公开店铺模式',
+        message: '开启家庭店铺并保存后，就可以在这里管理家庭顾客。',
       );
     }
-    if (_loading) {
-      return const SizedBox.shrink();
-    }
+
     if (_members.isEmpty) {
       return const _EmptyMembers(
         icon: Icons.people_alt_outlined,
@@ -307,59 +312,38 @@ class _ShopFamilyPageState extends State<ShopFamilyPage> {
         message: '顾客输入家庭编号加入后，会显示在这里。',
       );
     }
-    final sorted = [..._members]..sort((a, b) {
-        if (a.isPending == b.isPending) {
-          return a.id.compareTo(b.id);
-        }
-        return a.isPending ? -1 : 1;
-      });
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        const Text(
-          '家庭顾客',
-          style: TextStyle(
-            color: _textColor,
-            fontSize: 16,
-            fontWeight: FontWeight.w800,
-          ),
-        ),
-        const SizedBox(height: 10),
-        for (final member in sorted)
-          Padding(
-            padding: const EdgeInsets.only(bottom: 10),
-            child: _MemberTile(
-              member: member,
-              avatarUrl: _resolvedAvatarUrl(member.avatarUrl),
-              onInfo: () => _showMemberInfo(member),
-              onApprove: member.isPending ? () => _approveMember(member) : null,
-              onRemove: () => _removeMember(member),
-            ),
-          ),
-      ],
-    );
-  }
 
-  Widget _buildErrorBanner() {
-    return Padding(
-      padding: const EdgeInsets.only(bottom: 12),
-      child: Material(
-        color: _softOrange,
-        borderRadius: BorderRadius.circular(8),
-        child: ListTile(
-          leading: const Icon(Icons.info_outline, color: _warmOrange),
-          title: Text(_error!, style: const TextStyle(color: _textColor)),
-          trailing: TextButton(onPressed: _load, child: const Text('重试')),
-        ),
+    final sorted = [..._members]..sort((a, b) {
+      if (a.isPending == b.isPending) return a.id.compareTo(b.id);
+      return a.isPending ? -1 : 1;
+    });
+
+    return _BaseCard(
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          const Text('家庭顾客', style: TextStyle(color: _textColor, fontSize: 16, fontWeight: FontWeight.w800)),
+          const SizedBox(height: 16),
+          for (final member in sorted)
+            Padding(
+              padding: const EdgeInsets.only(bottom: 12),
+              child: _MemberTile(
+                member: member,
+                avatarUrl: _resolvedAvatarUrl(member.avatarUrl),
+                onInfo: () => _showMemberInfo(member),
+                onApprove: member.isPending ? () => _approveMember(member) : null,
+                onRemove: () => _removeMember(member),
+              ),
+            ),
+        ],
       ),
     );
   }
 
   Future<void> _save() async {
     final shop = _shop;
-    if (shop == null) {
-      return;
-    }
+    if (shop == null) return;
+
     setState(() => _saving = true);
     try {
       final updated = await shopApi.updateMyShop(
@@ -386,41 +370,27 @@ class _ShopFamilyPageState extends State<ShopFamilyPage> {
         _load();
       }
     } on ApiException catch (error) {
-      if (mounted) {
-        _showMessage(error.message);
-      }
+      if (mounted) _showMessage(error.message);
     } finally {
-      if (mounted) {
-        setState(() => _saving = false);
-      }
+      if (mounted) setState(() => _saving = false);
     }
   }
 
   Future<void> _uploadFamilyImage() async {
-    final image = await _imagePicker.pickImage(
-      source: ImageSource.gallery,
-      maxWidth: 1600,
-      imageQuality: 85,
-    );
-    if (image == null) {
-      return;
-    }
+    final image = await _imagePicker.pickImage(source: ImageSource.gallery, maxWidth: 1600, imageQuality: 85);
+    if (image == null) return;
 
     setState(() => _saving = true);
     try {
       final url = await shopApi.uploadFamilyImage(image.path);
       if (mounted) {
         setState(() => _familyImageUrl = url);
-        _showMessage('家庭图片已上传，记得保存家庭设置');
+        _showMessage('家庭图片已上传，记得保存设置');
       }
     } on ApiException catch (error) {
-      if (mounted) {
-        _showMessage(error.message);
-      }
+      if (mounted) _showMessage(error.message);
     } finally {
-      if (mounted) {
-        setState(() => _saving = false);
-      }
+      if (mounted) setState(() => _saving = false);
     }
   }
 
@@ -439,20 +409,17 @@ class _ShopFamilyPageState extends State<ShopFamilyPage> {
         title: const Text('移除顾客'),
         content: Text('确定将 ${member.displayName} 移出家庭吗？'),
         actions: [
-          TextButton(
-            onPressed: () => Navigator.of(context).pop(false),
-            child: const Text('取消'),
-          ),
+          TextButton(onPressed: () => Navigator.of(context).pop(false), child: const Text('取消', style: TextStyle(color: _mutedColor))),
           FilledButton(
             onPressed: () => Navigator.of(context).pop(true),
+            style: FilledButton.styleFrom(backgroundColor: Colors.redAccent),
             child: const Text('移除'),
           ),
         ],
       ),
     );
-    if (confirmed != true) {
-      return;
-    }
+    if (confirmed != true) return;
+
     await shopApi.rejectFamilyMember(member.id);
     if (mounted) {
       _showMessage('已移除顾客');
@@ -464,9 +431,10 @@ class _ShopFamilyPageState extends State<ShopFamilyPage> {
     showModalBottomSheet<void>(
       context: context,
       showDragHandle: true,
+      backgroundColor: Colors.white,
       builder: (context) => SafeArea(
         child: Padding(
-          padding: const EdgeInsets.fromLTRB(20, 8, 20, 24),
+          padding: const EdgeInsets.fromLTRB(24, 8, 24, 32),
           child: Column(
             mainAxisSize: MainAxisSize.min,
             crossAxisAlignment: CrossAxisAlignment.start,
@@ -474,46 +442,36 @@ class _ShopFamilyPageState extends State<ShopFamilyPage> {
               Row(
                 children: [
                   CircleAvatar(
-                    radius: 26,
+                    radius: 28,
                     backgroundColor: _softOrange,
                     foregroundColor: _warmOrange,
                     backgroundImage: _resolvedAvatarUrl(member.avatarUrl) == null
                         ? null
                         : NetworkImage(_resolvedAvatarUrl(member.avatarUrl)!),
                     child: _resolvedAvatarUrl(member.avatarUrl) == null
-                        ? Text(member.displayName.characters.first)
+                        ? Text(member.displayName.characters.first, style: const TextStyle(fontSize: 20))
                         : null,
                   ),
-                  const SizedBox(width: 12),
+                  const SizedBox(width: 16),
                   Expanded(
                     child: Column(
                       crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
                         Text(
                           member.displayName,
-                          style: const TextStyle(
-                            fontSize: 18,
-                            fontWeight: FontWeight.w800,
-                          ),
+                          style: const TextStyle(fontSize: 18, fontWeight: FontWeight.w800),
                         ),
                         const SizedBox(height: 4),
-                        Text(
-                          member.statusText,
-                          style: const TextStyle(
-                            color: _mutedColor,
-                            fontSize: 13,
-                          ),
-                        ),
+                        Text(member.statusText, style: const TextStyle(color: _mutedColor, fontSize: 13)),
                       ],
                     ),
                   ),
                 ],
               ),
-              const SizedBox(height: 18),
-              _InfoRow(label: '用户编号', value: '${member.userId}'),
-              _InfoRow(label: '昵称', value: member.displayName),
-              _InfoRow(label: '电话', value: member.phone?.isNotEmpty == true ? member.phone! : '未填写'),
-              const SizedBox(height: 8),
+              const SizedBox(height: 24),
+              _InfoRow(label: '系统编号', value: '#${member.userId}'),
+              _InfoRow(label: '用户昵称', value: member.displayName),
+              _InfoRow(label: '联系电话', value: member.phone?.isNotEmpty == true ? member.phone! : '未填写'),
             ],
           ),
         ),
@@ -525,16 +483,18 @@ class _ShopFamilyPageState extends State<ShopFamilyPage> {
     showDialog<void>(
       context: context,
       builder: (context) => Dialog(
+        backgroundColor: Colors.transparent,
         insetPadding: const EdgeInsets.all(20),
         child: ClipRRect(
-          borderRadius: BorderRadius.circular(8),
+          borderRadius: BorderRadius.circular(12),
           child: InteractiveViewer(
             child: Image.network(
               _absoluteImageUrl(imageUrl),
               fit: BoxFit.contain,
-              errorBuilder: (_, _, _) => const Padding(
-                padding: EdgeInsets.all(32),
-                child: Text('图片加载失败'),
+              errorBuilder: (_, __, ___) => Container(
+                color: Colors.white,
+                padding: const EdgeInsets.all(32),
+                child: const Text('图片加载失败'),
               ),
             ),
           ),
@@ -550,9 +510,7 @@ class _ShopFamilyPageState extends State<ShopFamilyPage> {
   }
 
   String _absoluteImageUrl(String url) {
-    if (url.startsWith('http')) {
-      return url;
-    }
+    if (url.startsWith('http')) return url;
     final api = Uri.parse(
       const String.fromEnvironment(
         'SHOP_API_BASE_URL',
@@ -563,38 +521,100 @@ class _ShopFamilyPageState extends State<ShopFamilyPage> {
   }
 
   String? _resolvedAvatarUrl(String? url) {
-    if (url == null || url.isEmpty) {
-      return null;
-    }
+    if (url == null || url.isEmpty) return null;
     return _absoluteImageUrl(url);
   }
 }
 
-class _InfoPill extends StatelessWidget {
-  const _InfoPill({required this.icon, required this.text});
+// --------------------------------------------------------------------------
+// 视图组件抽取
+// --------------------------------------------------------------------------
 
-  final IconData icon;
-  final String text;
+class _BaseCard extends StatelessWidget {
+  const _BaseCard({required this.child});
+  final Widget child;
 
   @override
   Widget build(BuildContext context) {
     return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 5),
+      padding: const EdgeInsets.all(20),
       decoration: BoxDecoration(
         color: Colors.white,
+        borderRadius: BorderRadius.circular(12),
+        boxShadow: [
+          BoxShadow(
+            color: Colors.black.withValues(alpha: 0.02),
+            blurRadius: 10,
+            offset: const Offset(0, 4),
+          ),
+        ],
+      ),
+      child: child,
+    );
+  }
+}
+
+class _LabeledField extends StatelessWidget {
+  const _LabeledField({required this.label, required this.child});
+  final String label;
+  final Widget child;
+
+  @override
+  Widget build(BuildContext context) {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Text(label, style: const TextStyle(color: _textColor, fontSize: 14, fontWeight: FontWeight.w600)),
+        const SizedBox(height: 8),
+        child,
+      ],
+    );
+  }
+}
+
+InputDecoration _inputDecoration(String hintText) {
+  return InputDecoration(
+    hintText: hintText,
+    hintStyle: const TextStyle(color: Color(0xFFB8AFA7)),
+    filled: true,
+    fillColor: const Color(0xFFF9FAFB),
+    contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
+    enabledBorder: OutlineInputBorder(
+      borderRadius: BorderRadius.circular(8),
+      borderSide: const BorderSide(color: Color(0xFFE8E8E8)),
+    ),
+    focusedBorder: OutlineInputBorder(
+      borderRadius: BorderRadius.circular(8),
+      borderSide: const BorderSide(color: _warmOrange),
+    ),
+  );
+}
+
+class _InfoPill extends StatelessWidget {
+  const _InfoPill({required this.icon, required this.text, this.isHighlight = false});
+  final IconData icon;
+  final String text;
+  final bool isHighlight;
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+      decoration: BoxDecoration(
+        color: isHighlight ? _warmOrange.withValues(alpha: 0.1) : const Color(0xFFF5F6F8),
         borderRadius: BorderRadius.circular(6),
       ),
       child: Row(
         mainAxisSize: MainAxisSize.min,
         children: [
-          Icon(icon, size: 14, color: const Color(0xFFF28C28)),
+          Icon(icon, size: 14, color: isHighlight ? _warmOrange : _mutedColor),
           const SizedBox(width: 4),
           Text(
             text,
-            style: const TextStyle(
-              color: Color(0xFF242424),
+            style: TextStyle(
+              color: isHighlight ? _warmOrange : _mutedColor,
               fontSize: 12,
-              fontWeight: FontWeight.w700,
+              fontWeight: FontWeight.w600,
             ),
           ),
         ],
@@ -611,7 +631,6 @@ class _MemberTile extends StatelessWidget {
     required this.onRemove,
     this.onApprove,
   });
-
   final FamilyMemberInfo member;
   final String? avatarUrl;
   final VoidCallback onInfo;
@@ -620,54 +639,64 @@ class _MemberTile extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return Material(
-      color: Colors.white,
-      shape: RoundedRectangleBorder(
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
+      decoration: BoxDecoration(
+        color: Colors.white,
         borderRadius: BorderRadius.circular(8),
-        side: const BorderSide(color: Color(0xFFF0E7DE)),
+        border: Border.all(color: _lineColor),
       ),
-      child: ListTile(
-        contentPadding: const EdgeInsets.symmetric(horizontal: 14, vertical: 8),
-        leading: CircleAvatar(
-          backgroundColor: const Color(0xFFFFF4E8),
-          foregroundColor: const Color(0xFFF28C28),
-          backgroundImage: avatarUrl == null ? null : NetworkImage(avatarUrl!),
-          child: avatarUrl == null
-              ? Text(member.displayName.characters.first)
-              : null,
-        ),
-        title: Text(
-          member.displayName,
-          maxLines: 1,
-          overflow: TextOverflow.ellipsis,
-          style: const TextStyle(fontWeight: FontWeight.w700),
-        ),
-        subtitle: Text(
-          '${member.statusText} · ${member.phone?.isNotEmpty == true ? member.phone : '未填写电话'}',
-          maxLines: 1,
-          overflow: TextOverflow.ellipsis,
-        ),
-        trailing: Wrap(
-          spacing: 4,
-          children: [
-            IconButton(
-              tooltip: '查看信息',
-              onPressed: onInfo,
-              icon: const Icon(Icons.info_outline),
+      child: Row(
+        children: [
+          CircleAvatar(
+            backgroundColor: _softOrange,
+            foregroundColor: _warmOrange,
+            backgroundImage: avatarUrl == null ? null : NetworkImage(avatarUrl!),
+            child: avatarUrl == null ? Text(member.displayName.characters.first) : null,
+          ),
+          const SizedBox(width: 12),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  member.displayName,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: const TextStyle(fontWeight: FontWeight.w700, fontSize: 15),
+                ),
+                const SizedBox(height: 4),
+                Text(
+                  '${member.statusText} · ${member.phone?.isNotEmpty == true ? member.phone : '未填电话'}',
+                  style: const TextStyle(color: _mutedColor, fontSize: 13),
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                ),
+              ],
             ),
-            if (onApprove != null)
+          ),
+          Wrap(
+            spacing: 0,
+            children: [
               IconButton(
-                tooltip: '同意加入',
-                onPressed: onApprove,
-                icon: const Icon(Icons.check_circle_outline),
+                tooltip: '查看信息',
+                onPressed: onInfo,
+                icon: const Icon(Icons.info_outline, color: _mutedColor, size: 20),
               ),
-            IconButton(
-              tooltip: '移除',
-              onPressed: onRemove,
-              icon: const Icon(Icons.person_remove_outlined),
-            ),
-          ],
-        ),
+              if (onApprove != null)
+                IconButton(
+                  tooltip: '同意加入',
+                  onPressed: onApprove,
+                  icon: const Icon(Icons.check_circle, color: Color(0xFF20A464), size: 22),
+                ),
+              IconButton(
+                tooltip: '移除',
+                onPressed: onRemove,
+                icon: const Icon(Icons.person_remove_outlined, color: Colors.redAccent, size: 20),
+              ),
+            ],
+          ),
+        ],
       ),
     );
   }
@@ -675,31 +704,21 @@ class _MemberTile extends StatelessWidget {
 
 class _InfoRow extends StatelessWidget {
   const _InfoRow({required this.label, required this.value});
-
   final String label;
   final String value;
 
   @override
   Widget build(BuildContext context) {
     return Padding(
-      padding: const EdgeInsets.only(bottom: 10),
+      padding: const EdgeInsets.only(bottom: 12),
       child: Row(
         children: [
           SizedBox(
-            width: 76,
-            child: Text(
-              label,
-              style: const TextStyle(color: Color(0xFF77716B), fontSize: 13),
-            ),
+            width: 80,
+            child: Text(label, style: const TextStyle(color: _mutedColor, fontSize: 14)),
           ),
           Expanded(
-            child: Text(
-              value,
-              style: const TextStyle(
-                color: Color(0xFF242424),
-                fontWeight: FontWeight.w600,
-              ),
-            ),
+            child: Text(value, style: const TextStyle(color: _textColor, fontWeight: FontWeight.w600, fontSize: 15)),
           ),
         ],
       ),
@@ -708,58 +727,105 @@ class _InfoRow extends StatelessWidget {
 }
 
 class _EmptyMembers extends StatelessWidget {
-  const _EmptyMembers({
-    required this.icon,
-    required this.title,
-    required this.message,
-  });
-
+  const _EmptyMembers({required this.icon, required this.title, required this.message});
   final IconData icon;
   final String title;
   final String message;
 
   @override
   Widget build(BuildContext context) {
-    return Container(
-      padding: const EdgeInsets.all(24),
-      decoration: BoxDecoration(
-        color: Colors.white,
-        borderRadius: BorderRadius.circular(8),
-        border: Border.all(color: const Color(0xFFF0E7DE)),
+    return _BaseCard(
+      child: Container(
+        width: double.infinity,
+        padding: const EdgeInsets.symmetric(vertical: 24),
+        child: Column(
+          children: [
+            Icon(icon, color: const Color(0xFFE0E0E0), size: 48),
+            const SizedBox(height: 16),
+            Text(title, style: const TextStyle(fontWeight: FontWeight.w800, fontSize: 16)),
+            const SizedBox(height: 8),
+            Text(message, textAlign: TextAlign.center, style: const TextStyle(color: _mutedColor, fontSize: 13)),
+          ],
+        ),
       ),
-      child: Column(
+    );
+  }
+}
+
+class _ErrorPanel extends StatelessWidget {
+  const _ErrorPanel({required this.message, required this.onRetry});
+  final String message;
+  final VoidCallback onRetry;
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      padding: const EdgeInsets.all(16),
+      decoration: BoxDecoration(color: _softOrange, borderRadius: BorderRadius.circular(12)),
+      child: Row(
         children: [
-          Icon(icon, color: const Color(0xFFF28C28), size: 38),
-          const SizedBox(height: 10),
-          Text(title, style: const TextStyle(fontWeight: FontWeight.w800)),
-          const SizedBox(height: 6),
-          Text(
-            message,
-            textAlign: TextAlign.center,
-            style: const TextStyle(color: Color(0xFF77716B), fontSize: 13),
-          ),
+          const Icon(Icons.info_outline, color: _warmOrange),
+          const SizedBox(width: 12),
+          Expanded(child: Text(message, style: const TextStyle(color: _textColor))),
+          TextButton(onPressed: onRetry, child: const Text('重试', style: TextStyle(color: _warmOrange))),
         ],
       ),
     );
   }
 }
 
+class _SkeletonBox extends StatefulWidget {
+  final double width;
+  final double height;
+  final double borderRadius;
+
+  const _SkeletonBox({required this.width, required this.height, this.borderRadius = 8});
+
+  @override
+  State<_SkeletonBox> createState() => _SkeletonBoxState();
+}
+
+class _SkeletonBoxState extends State<_SkeletonBox> with SingleTickerProviderStateMixin {
+  late AnimationController _controller;
+  late Animation<Color?> _colorTween;
+
+  @override
+  void initState() {
+    super.initState();
+    _controller = AnimationController(vsync: this, duration: const Duration(milliseconds: 1000))..repeat(reverse: true);
+    _colorTween = ColorTween(begin: const Color(0xFFF0F0F0), end: const Color(0xFFE0E0E0)).animate(_controller);
+  }
+
+  @override
+  void dispose() {
+    _controller.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return AnimatedBuilder(
+      animation: _colorTween,
+      builder: (context, child) {
+        return Container(
+          width: widget.width,
+          height: widget.height,
+          decoration: BoxDecoration(color: _colorTween.value, borderRadius: BorderRadius.circular(widget.borderRadius)),
+        );
+      },
+    );
+  }
+}
+
 extension on FamilyMemberInfo {
   bool get isPending => status == 'PENDING';
-
   bool get isApproved => status == 'APPROVED';
-
-  String get displayName =>
-      nickname?.trim().isNotEmpty == true ? nickname!.trim() : '顾客$userId';
-
+  String get displayName => nickname?.trim().isNotEmpty == true ? nickname!.trim() : '顾客$userId';
   String get statusText {
     switch (status) {
-      case 'APPROVED':
-        return '已加入';
-      case 'PENDING':
-        return '待审核';
-      default:
-        return '已拒绝';
+      case 'APPROVED': return '已加入';
+      case 'PENDING': return '待审核';
+      default: return '已拒绝';
     }
   }
 }

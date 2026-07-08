@@ -293,7 +293,7 @@ class _ShopOrderPageState extends State<ShopOrderPage> {
             elevation: 0,
           ),
           body: switch (snapshot.connectionState) {
-            ConnectionState.waiting => const Center(child: CircularProgressIndicator(color: warmOrange)),
+            ConnectionState.waiting => const _MenuSkeleton(),
             _ when snapshot.hasError => _LoadError(
               message: snapshot.error.toString(),
               onRetry: () => setState(() {
@@ -426,10 +426,18 @@ class _MenuBodyState extends State<_MenuBody> {
   final List<GlobalKey> _categoryKeys = [];
   bool _isManualScrolling = false;
 
+  final ScrollController _leftController = ScrollController();
+
   @override
   void initState() {
     super.initState();
     _initKeys();
+  }
+
+  @override
+  void dispose() {
+    _leftController.dispose();
+    super.dispose();
   }
 
   @override
@@ -450,21 +458,42 @@ class _MenuBodyState extends State<_MenuBody> {
   void _scrollToCategory(int index) async {
     if (_categoryKeys.isEmpty || index >= _categoryKeys.length) return;
 
+    final context = _categoryKeys[index].currentContext;
+    if (context == null) return;
+
+    // 开始锁定手动滑动状态
     setState(() {
       _selectedCategory = index;
       _isManualScrolling = true;
     });
 
-    final context = _categoryKeys[index].currentContext;
-    if (context != null) {
-      await Scrollable.ensureVisible(
-        context,
-        duration: const Duration(milliseconds: 300),
-        curve: Curves.easeOutCubic,
-        alignment: 0.01,
-      );
+    // 拿到右侧菜品列表的 Scrollable
+    final scrollable = Scrollable.maybeOf(context);
+    if (scrollable != null) {
+      final scrollPosition = scrollable.position;
+      final box = context.findRenderObject() as RenderBox?;
+      final scrollableBox = scrollable.context.findRenderObject() as RenderBox?;
+
+      if (box != null && scrollableBox != null) {
+        // 计算目标分类距离当前滚动视口顶部的相对偏移量
+        final offsetDiff = box.localToGlobal(Offset.zero, ancestor: scrollableBox).dy;
+
+        // 真正的目标位置 = 当前已经滚动的像素 + 偏移量
+        final targetOffset = (scrollPosition.pixels + offsetDiff).clamp(
+          scrollPosition.minScrollExtent,
+          scrollPosition.maxScrollExtent,
+        );
+
+        // 直接驱动底层 position 滚动，完美避开 NestedScrollView 的坑
+        await scrollPosition.animateTo(
+          targetOffset,
+          duration: const Duration(milliseconds: 300),
+          curve: Curves.easeOutCubic,
+        );
+      }
     }
 
+    // 留出一小段缓冲时间防止由于惯性触发错误的高亮更新
     await Future.delayed(const Duration(milliseconds: 50));
     if (mounted) {
       setState(() {
@@ -544,25 +573,79 @@ class _MenuBodyState extends State<_MenuBody> {
             width: 86,
             color: const Color(0xFFF7F7F7),
             child: ListView.builder(
+              controller: _leftController,
               padding: const EdgeInsets.only(bottom: 32),
               itemCount: categories.length,
               itemBuilder: (context, index) {
                 final category = categories[index];
                 final isSelected = index == _selectedCategory;
+
+                int categoryCount = 0;
+                for (final dish in category.dishes) {
+                  categoryCount += widget.dishQuantity(dish);
+                }
+
                 return InkWell(
                   onTap: () => _scrollToCategory(index),
                   child: Container(
-                    padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 18),
                     decoration: BoxDecoration(
                       color: isSelected ? Colors.white : Colors.transparent,
                     ),
-                    child: Text(
-                      category.name,
-                      style: TextStyle(
-                        color: isSelected ? pageTextColor : const Color(0xFF77716B),
-                        fontSize: 13,
-                        fontWeight: isSelected ? FontWeight.w900 : FontWeight.normal,
-                      ),
+                    // 使用 Stack 来使内容和角标分离，基于格子进行定位
+                    child: Stack(
+                      clipBehavior: Clip.none,
+                      children: [
+                        // 类别文字本身
+                        Container(
+                          width: double.infinity,
+                          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 18),
+                          alignment: Alignment.centerLeft,
+                          child: Text(
+                            category.name,
+                            style: TextStyle(
+                              color: isSelected ? pageTextColor : const Color(0xFF77716B),
+                              fontSize: 13,
+                              fontWeight: isSelected ? FontWeight.w900 : FontWeight.normal,
+                            ),
+                          ),
+                        ),
+                        // 将角标固定在整个格子的右上角，保证竖直方向完美对齐
+                        if (categoryCount > 0)
+                          Positioned(
+                            top: 4,
+                            right: 6,
+                            child: Container(
+                              width: 16,
+                              height: 16, // 固定宽高为正圆，保证 >9 时宽度也不会变
+                              alignment: Alignment.center,
+                              decoration: const BoxDecoration(
+                                color: Color(0xFFF28C28), // warmOrange
+                                shape: BoxShape.circle,
+                              ),
+                              // 超过 9 时使用密集的点表示
+                              child: categoryCount > 9
+                                  ? const Row(
+                                mainAxisSize: MainAxisSize.min,
+                                mainAxisAlignment: MainAxisAlignment.center,
+                                children: [
+                                  Icon(Icons.circle, size: 2.5, color: Colors.white),
+                                  SizedBox(width: 1),
+                                  Icon(Icons.circle, size: 2.5, color: Colors.white),
+                                  SizedBox(width: 1),
+                                  Icon(Icons.circle, size: 2.5, color: Colors.white),
+                                ],
+                              )
+                                  : Text(
+                                '$categoryCount',
+                                style: const TextStyle(
+                                  color: Colors.white,
+                                  fontSize: 10,
+                                  fontWeight: FontWeight.bold,
+                                ),
+                              ),
+                            ),
+                          ),
+                      ],
                     ),
                   ),
                 );
@@ -677,6 +760,19 @@ class _DishCard extends StatelessWidget {
                 ? Image.network(
               resolveCustomerImageUrl(dish.imageUrl!),
               fit: BoxFit.cover,
+              loadingBuilder: (context, child, progress) {
+                if (progress == null) {
+                  return TweenAnimationBuilder<double>(
+                    tween: Tween(begin: 0.0, end: 1.0),
+                    duration: const Duration(milliseconds: 300),
+                    builder: (context, value, child) =>
+                        Opacity(opacity: value, child: child),
+                    child: child,
+                  );
+                }
+                // 替换转圈动画为呼吸色块
+                return const _PulsePlaceholder();
+              },
               errorBuilder: (context, error, stackTrace) =>
               const Icon(Icons.fastfood_rounded, color: Colors.grey, size: 32),
             )
@@ -861,6 +957,7 @@ class _ShopHeader extends StatelessWidget {
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
+              // 商家名称
               Text(
                 shop.name,
                 style: const TextStyle(
@@ -870,6 +967,7 @@ class _ShopHeader extends StatelessWidget {
                 ),
               ),
               const SizedBox(height: 6),
+              // 商家描述
               Text(
                 shop.description?.isNotEmpty == true
                     ? shop.description!
@@ -878,6 +976,34 @@ class _ShopHeader extends StatelessWidget {
                 overflow: TextOverflow.ellipsis,
                 style: const TextStyle(color: Color(0xFF999999), fontSize: 12),
               ),
+              // 新增：如果商家开启了家庭属性，则在底部显示家庭徽标
+              if (shop.familyName?.isNotEmpty == true)
+                Padding(
+                  padding: const EdgeInsets.only(top: 8),
+                  child: Container(
+                    padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                    decoration: BoxDecoration(
+                      color: const Color(0xFFFFF4E8), // softOrange
+                      borderRadius: BorderRadius.circular(4),
+                      border: Border.all(color: const Color(0xFFFFD7AA)),
+                    ),
+                    child: Row(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        const Icon(Icons.home_outlined, size: 12, color: Color(0xFFF28C28)),
+                        const SizedBox(width: 2),
+                        Text(
+                          shop.familyName!,
+                          style: const TextStyle(
+                            color: Color(0xFFF28C28), // warmOrange
+                            fontSize: 10,
+                            fontWeight: FontWeight.bold,
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                ),
             ],
           ),
         ),
@@ -885,8 +1011,6 @@ class _ShopHeader extends StatelessWidget {
     );
   }
 }
-
-// ======================== 以下保留原有组件逻辑 ========================
 
 class _SpecSheet extends StatefulWidget {
   const _SpecSheet({required this.dish, required this.onConfirm});
@@ -1270,6 +1394,19 @@ class _SquareImage extends StatelessWidget {
           ? Image.network(
         resolveCustomerImageUrl(imageUrl!),
         fit: BoxFit.cover,
+        loadingBuilder: (context, child, progress) {
+          if (progress == null) {
+            return TweenAnimationBuilder<double>(
+              tween: Tween(begin: 0.0, end: 1.0),
+              duration: const Duration(milliseconds: 300),
+              builder: (context, value, child) =>
+                  Opacity(opacity: value, child: child),
+              child: child,
+            );
+          }
+          // 替换转圈动画为呼吸色块
+          return const _PulsePlaceholder();
+        },
         errorBuilder: (_, _, _) => Icon(
           fallbackIcon,
           color: Colors.grey[400],
@@ -1327,6 +1464,180 @@ class _LoadError extends StatelessWidget {
           ],
         ),
       ),
+    );
+  }
+}
+
+class _MenuSkeleton extends StatelessWidget {
+  const _MenuSkeleton();
+
+  @override
+  Widget build(BuildContext context) {
+    const skeletonColor = Color(0xFFFFF4E8); // 使用 softOrange 风格的占位色
+
+    return Column(
+      children: [
+        // 顶部商家信息骨架屏
+        Container(
+          color: Colors.white,
+          padding: const EdgeInsets.fromLTRB(16, 4, 16, 16),
+          child: Row(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Container(
+                width: 64,
+                height: 64,
+                decoration: BoxDecoration(
+                  color: skeletonColor,
+                  borderRadius: BorderRadius.circular(8),
+                ),
+              ),
+              const SizedBox(width: 14),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Container(height: 20, width: 150, color: skeletonColor),
+                    const SizedBox(height: 10),
+                    Container(height: 14, width: double.infinity, color: skeletonColor),
+                    const SizedBox(height: 4),
+                    Container(height: 14, width: 200, color: skeletonColor),
+                  ],
+                ),
+              ),
+            ],
+          ),
+        ),
+        Container(height: 8, color: const Color(0xFFF7F7F7)),
+        // 底部菜单骨架屏
+        Expanded(
+          child: Row(
+            children: [
+              // 左侧分类占位
+              Container(
+                width: 86,
+                color: const Color(0xFFF7F7F7),
+                child: Column(
+                  children: List.generate(
+                    6,
+                        (index) => Container(
+                      height: 50,
+                      margin: const EdgeInsets.only(bottom: 2),
+                      color: index == 0 ? Colors.white : Colors.transparent,
+                      child: index == 0
+                          ? Center(
+                        child: Container(
+                          height: 14,
+                          width: 40,
+                          color: skeletonColor,
+                        ),
+                      )
+                          : null,
+                    ),
+                  ),
+                ),
+              ),
+              // 右侧菜品列表占位
+              Expanded(
+                child: Container(
+                  color: Colors.white,
+                  padding: const EdgeInsets.all(16),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Container(height: 18, width: 80, color: skeletonColor),
+                      const SizedBox(height: 16),
+                      ...List.generate(
+                        4,
+                            (index) => Padding(
+                          padding: const EdgeInsets.only(bottom: 24),
+                          child: Row(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              Container(
+                                width: 80,
+                                height: 80,
+                                decoration: BoxDecoration(
+                                  color: skeletonColor,
+                                  borderRadius: BorderRadius.circular(8),
+                                ),
+                              ),
+                              const SizedBox(width: 12),
+                              Expanded(
+                                child: Column(
+                                  crossAxisAlignment: CrossAxisAlignment.start,
+                                  children: [
+                                    Container(height: 16, width: 120, color: skeletonColor),
+                                    const SizedBox(height: 8),
+                                    Container(height: 12, width: double.infinity, color: skeletonColor),
+                                    const SizedBox(height: 4),
+                                    Container(height: 12, width: 150, color: skeletonColor),
+                                    const SizedBox(height: 12),
+                                    Container(height: 16, width: 60, color: skeletonColor),
+                                  ],
+                                ),
+                              ),
+                            ],
+                          ),
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              ),
+            ],
+          ),
+        ),
+      ],
+    );
+  }
+}
+
+class _PulsePlaceholder extends StatefulWidget {
+  const _PulsePlaceholder();
+
+  @override
+  State<_PulsePlaceholder> createState() => _PulsePlaceholderState();
+}
+
+class _PulsePlaceholderState extends State<_PulsePlaceholder>
+    with SingleTickerProviderStateMixin {
+  late AnimationController _controller;
+  late Animation<Color?> _colorAnimation;
+
+  @override
+  void initState() {
+    super.initState();
+    // 设置 800 毫秒的动画时长，并开启无限往返播放
+    _controller = AnimationController(
+      duration: const Duration(milliseconds: 800),
+      vsync: this,
+    )..repeat(reverse: true);
+
+    // 设置颜色的渐变范围：从淡灰色到淡淡灰色
+    _colorAnimation = ColorTween(
+      begin: const Color(0xFFEAEAEA),
+      end: const Color(0xFFF8F8F8),
+    ).animate(CurvedAnimation(parent: _controller, curve: Curves.easeInOut));
+  }
+
+  @override
+  void dispose() {
+    _controller.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return AnimatedBuilder(
+      animation: _colorAnimation,
+      builder: (context, child) {
+        return Container(
+          width: double.infinity,
+          height: double.infinity,
+          color: _colorAnimation.value,
+        );
+      },
     );
   }
 }

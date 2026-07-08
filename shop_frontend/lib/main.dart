@@ -477,18 +477,22 @@ class _ShopShellState extends State<ShopShell> {
 }
 
 class _BadgeIcon extends StatelessWidget {
-  const _BadgeIcon({required this.icon, required this.count});
+  const _BadgeIcon({required this.icon, required this.count, this.isDot = false});
 
   final IconData icon;
   final int count;
+  final bool isDot;
 
   @override
   Widget build(BuildContext context) {
-    if (count <= 0) {
-      return Icon(icon);
-    }
+    if (count <= 0) return Icon(icon);
+
     return Badge(
-      label: Text(count > 99 ? '99+' : '$count'),
+      isLabelVisible: true,
+      label: isDot ? null : Text(count > 99 ? '99+' : '$count'),
+      smallSize: 8,
+      offset: const Offset(8, -4),
+      backgroundColor: Colors.redAccent,
       child: Icon(icon),
     );
   }

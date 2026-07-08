@@ -13,8 +13,25 @@ class DevelopmentLogPage extends StatelessWidget {
         padding: const EdgeInsets.fromLTRB(16, 12, 16, 28),
         children: const [
           _VersionCard(
-            version: 'v1.2.2',
+            version: 'v1.2.3a',
             title: '当前版本',
+            items: [
+              '优化商家端页面布局和展示',
+            ],
+          ),
+          SizedBox(height: 12),
+          _VersionCard(
+            version: 'v1.2.3',
+            title: '前版本',
+            items: [
+              '优化菜品类别删除功能',
+              '新增首页展示设置功能',
+            ],
+          ),
+          SizedBox(height: 12),
+          _VersionCard(
+            version: 'v1.2.2',
+            title: '前版本',
             items: [
               '增加调整餐品分类序位，编辑餐品分类名称，删除餐品分类功能',
               '增加删除餐品功能',

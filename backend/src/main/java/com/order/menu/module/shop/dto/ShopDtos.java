@@ -10,7 +10,8 @@ public final class ShopDtos {
 
     public record ShopResponse(Long id, String name, String description, String coverImageUrl, String address,
                                String phone, String businessStatus, String visibilityType, String familyName,
-                               String familyCode, String familyJoinMode, String familyImageUrl) {
+                               String familyCode, String familyJoinMode, String familyImageUrl,
+                               List<com.order.menu.module.dish.dto.DishDtos.DishResponse> previewDishes) {
     }
 
     public record ShopUpdateRequest(

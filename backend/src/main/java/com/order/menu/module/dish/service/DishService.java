@@ -1,6 +1,7 @@
 package com.order.menu.module.dish.service;
 
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
+import com.baomidou.mybatisplus.core.conditions.update.LambdaUpdateWrapper;
 import com.baomidou.mybatisplus.extension.plugins.pagination.Page;
 import com.order.menu.common.constant.StatusConstants;
 import com.order.menu.common.exception.BusinessException;
@@ -14,9 +15,15 @@ import com.order.menu.module.dish.entity.Dish;
 import com.order.menu.module.dish.mapper.DishMapper;
 import com.order.menu.module.shop.entity.Shop;
 import com.order.menu.module.shop.service.ShopService;
+
+import java.util.Collections;
 import java.util.List;
+import java.util.Map;
+import java.util.stream.Collectors;
+
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Transactional;
 import org.springframework.util.StringUtils;
 
 @Service
@@ -45,9 +52,11 @@ public class DishService {
 
     public CategoryDtos.CategoryResponse createCategory(Long ownerUserId, CategoryDtos.CategoryRequest request) {
         Shop shop = shopService.requireOwnedShop(ownerUserId);
+        String name = normalizeCategoryName(request.name());
+        checkCategoryNameUnique(shop.getId(), null, name);
         MenuCategory category = new MenuCategory();
         category.setShopId(shop.getId());
-        category.setName(request.name().trim());
+        category.setName(name);
         category.setSortOrder(request.sortOrder() == null ? 0 : request.sortOrder());
         category.setStatus(1);
         categoryMapper.insert(category);
@@ -56,7 +65,9 @@ public class DishService {
 
     public CategoryDtos.CategoryResponse updateCategory(Long ownerUserId, Long categoryId, CategoryDtos.CategoryRequest request) {
         MenuCategory category = requireOwnedCategory(ownerUserId, categoryId);
-        category.setName(request.name().trim());
+        String name = normalizeCategoryName(request.name());
+        checkCategoryNameUnique(category.getShopId(), categoryId, name);
+        category.setName(name);
         category.setSortOrder(request.sortOrder() == null ? category.getSortOrder() : request.sortOrder());
         categoryMapper.updateById(category);
         return toCategoryResponse(categoryMapper.selectById(categoryId));
@@ -184,7 +195,8 @@ public class DishService {
     public DishDtos.DishResponse toResponse(Dish dish) {
         return new DishDtos.DishResponse(dish.getId(), dish.getShopId(), dish.getCategoryId(), dish.getName(),
                 dish.getDescription(), dish.getPrice(), dish.getImageUrl(), dish.getStock(), dish.getSalesCount(),
-                dish.getStatus(), dish.getSortOrder(), dishOptionService.groups(dish.getId()));
+                dish.getStatus(), dish.getSortOrder(), dish.getRecommendOrder(),
+                dishOptionService.groups(dish.getId()));
     }
 
     private void checkDishNameUnique(Long shopId, Long dishId, String name) {
@@ -201,6 +213,107 @@ public class DishService {
         Long count = dishMapper.selectCount(wrapper);
         if (count != null && count > 0) {
             throw new BusinessException(ErrorCode.BAD_REQUEST, "菜品名称已存在");
+        }
+    }
+
+    /**
+     * 根据商家 ID 列表批量获取首页预览菜品（每个商家最多 5 个）
+     */
+    public Map<Long, List<DishDtos.DishResponse>> getPreviewDishesByShopIds(List<Long> shopIds) {
+        if (shopIds == null || shopIds.isEmpty()) {
+            return Collections.emptyMap();
+        }
+
+        // 1. 查询这些店铺下所有在售的菜品，并按 SortOrder 升序排列保证推荐优先级
+        List<Dish> dishes = dishMapper.selectList(new LambdaQueryWrapper<Dish>()
+                .in(Dish::getShopId, shopIds)
+                .eq(Dish::getStatus, StatusConstants.DISH_ON_SALE)
+                .orderByAsc(Dish::getSortOrder)
+        );
+
+        // 2. 按 shopId 分组，每个店铺最多截取前 5 个菜品，并转换为简化版的 DishResponse
+        return dishes.stream()
+                .collect(Collectors.groupingBy(
+                        Dish::getShopId,
+                        Collectors.collectingAndThen(
+                                Collectors.toList(),
+                                list -> list.stream()
+                                        .limit(5)
+                                        .map(this::toSimpleResponse)
+                                        .toList()
+                        )
+                ));
+    }
+
+    /**
+     * 简化版的 DTO 转换，避免首页预览产生 N+1 选项组查询
+     */
+    public DishDtos.DishResponse toSimpleResponse(Dish dish) {
+        return new DishDtos.DishResponse(
+                dish.getId(),
+                dish.getShopId(),
+                dish.getCategoryId(),
+                dish.getName(),
+                dish.getDescription(),
+                dish.getPrice(),
+                dish.getImageUrl(),
+                dish.getStock(),
+                dish.getSalesCount(),
+                dish.getStatus(),
+                dish.getSortOrder(),
+                dish.getRecommendOrder(),
+                Collections.emptyList() // 首页不需要渲染菜品规格，直接返回空列表
+        );
+    }
+
+    @Transactional(rollbackFor = Exception.class)
+    public void updateShowcaseDishes(Long ownerUserId, List<Long> dishIds) {
+        Shop shop = shopService.requireOwnedShop(ownerUserId);
+
+        // 重置当前商家的所有推荐排序为 0
+        dishMapper.update(null, new LambdaUpdateWrapper<Dish>()
+                .eq(Dish::getShopId, shop.getId())
+                .set(Dish::getRecommendOrder, 0));
+
+        // 如果传了空列表，直接返回
+        if (dishIds == null || dishIds.isEmpty()) {
+            return;
+        }
+
+        // 依次更新传入菜品的 recommend_order (1~8)
+        int order = 1;
+        for (Long dishId : dishIds) {
+            dishMapper.update(null, new LambdaUpdateWrapper<Dish>()
+                    .eq(Dish::getId, dishId)
+                    .eq(Dish::getShopId, shop.getId())
+                    .set(Dish::getRecommendOrder, order++));
+        }
+    }
+
+    private String normalizeCategoryName(String name) {
+        if (!StringUtils.hasText(name)) {
+            throw new BusinessException(ErrorCode.BAD_REQUEST, "分类名称不能为空");
+        }
+        String normalized = name.trim();
+        if (normalized.length() > 30) {
+            throw new BusinessException(ErrorCode.BAD_REQUEST, "分类名称不能超过30个字符");
+        }
+        return normalized;
+    }
+
+    private void checkCategoryNameUnique(Long shopId, Long categoryId, String name) {
+        LambdaQueryWrapper<MenuCategory> wrapper = new LambdaQueryWrapper<MenuCategory>()
+                .eq(MenuCategory::getShopId, shopId)
+                .eq(MenuCategory::getName, name);
+
+        // 如果是更新操作，排除当前正在修改的类别自身
+        if (categoryId != null) {
+            wrapper.ne(MenuCategory::getId, categoryId);
+        }
+
+        Long count = categoryMapper.selectCount(wrapper);
+        if (count != null && count > 0) {
+            throw new BusinessException(ErrorCode.BAD_REQUEST, "该类别名称已存在");
         }
     }
 }

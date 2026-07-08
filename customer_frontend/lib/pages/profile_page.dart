@@ -19,6 +19,7 @@ class ProfilePage extends StatelessWidget {
   static const Color _borderColor = Color(0xFFF0E7DE);
   static const Color _textDark = Color(0xFF242424);
   static const Color _textMuted = Color(0xFF77716B);
+  static const Color _bgColor = Color(0xFFF7F7F7); // 统一的背景底色
 
   @override
   Widget build(BuildContext context) {
@@ -28,10 +29,16 @@ class ProfilePage extends StatelessWidget {
       builder: (context, _) {
         final loggedIn = services.auth.isLoggedIn;
         return Scaffold(
-          backgroundColor: Colors.white,
-          appBar: AppBar(title: const Text('我的')),
+          backgroundColor: _bgColor,
+          appBar: AppBar(
+            title: const Text('我的', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 20)),
+            backgroundColor: _bgColor,
+            surfaceTintColor: Colors.transparent,
+            elevation: 0,
+            centerTitle: false,
+          ),
           body: ListView(
-            padding: const EdgeInsets.fromLTRB(16, 12, 16, 24),
+            padding: const EdgeInsets.fromLTRB(16, 4, 16, 24),
             children: [
               if (loggedIn)
                 _UserInfoCard(auth: services.auth)
@@ -96,19 +103,18 @@ class _GuestCard extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return Container(
-      padding: const EdgeInsets.all(18),
+      padding: const EdgeInsets.all(20),
       decoration: BoxDecoration(
-        color: ProfilePage._softOrange,
-        borderRadius: BorderRadius.circular(8),
-        border: Border.all(color: ProfilePage._borderColor),
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(12),
       ),
       child: Row(
         children: [
           Container(
-            width: 64,
-            height: 64,
+            width: 68,
+            height: 68,
             decoration: const BoxDecoration(
-              color: Colors.white,
+              color: ProfilePage._softOrange,
               shape: BoxShape.circle,
             ),
             child: const Icon(
@@ -117,7 +123,7 @@ class _GuestCard extends StatelessWidget {
               size: 36,
             ),
           ),
-          const SizedBox(width: 14),
+          const SizedBox(width: 16),
           Expanded(
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
@@ -127,16 +133,22 @@ class _GuestCard extends StatelessWidget {
                   style: TextStyle(
                     color: ProfilePage._textDark,
                     fontSize: 20,
-                    fontWeight: FontWeight.w700,
+                    fontWeight: FontWeight.w900,
                   ),
                 ),
                 const SizedBox(height: 6),
                 const Text(
                   '登录后可查看订单、保存个人信息',
-                  style: TextStyle(color: ProfilePage._textMuted, fontSize: 14),
+                  style: TextStyle(color: ProfilePage._textMuted, fontSize: 13),
                 ),
                 const SizedBox(height: 12),
-                FilledButton(onPressed: onLogin, child: const Text('登录/注册')),
+                FilledButton(
+                  style: FilledButton.styleFrom(
+                    shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
+                  ),
+                  onPressed: onLogin,
+                  child: const Text('登录 / 注册', style: TextStyle(fontWeight: FontWeight.bold)),
+                ),
               ],
             ),
           ),
@@ -155,41 +167,48 @@ class _UserInfoCard extends StatelessWidget {
   Widget build(BuildContext context) {
     final user = auth.user;
     return Container(
-      padding: const EdgeInsets.all(18),
+      padding: const EdgeInsets.all(20),
       decoration: BoxDecoration(
-        color: ProfilePage._softOrange,
-        borderRadius: BorderRadius.circular(8),
-        border: Border.all(color: ProfilePage._borderColor),
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(12),
       ),
       child: Row(
         children: [
           Container(
-            width: 64,
-            height: 64,
+            width: 68,
+            height: 68,
             clipBehavior: Clip.antiAlias,
             decoration: const BoxDecoration(
-              color: ProfilePage._warmOrange,
+              color: ProfilePage._softOrange,
               shape: BoxShape.circle,
             ),
             child: user?.avatarUrl?.isNotEmpty == true
                 ? Image.network(
-                    resolveCustomerImageUrl(user!.avatarUrl!),
-                    fit: BoxFit.cover,
-                    loadingBuilder: (context, child, progress) =>
-                        progress == null
-                        ? child
-                        : const Center(
-                            child: CircularProgressIndicator(
-                              color: Colors.white,
-                              strokeWidth: 2,
-                            ),
-                          ),
-                    errorBuilder: (_, _, _) =>
-                        const Icon(Icons.person, color: Colors.white, size: 36),
-                  )
-                : const Icon(Icons.person, color: Colors.white, size: 36),
+              resolveCustomerImageUrl(user!.avatarUrl!),
+              fit: BoxFit.cover,
+              loadingBuilder: (context, child, progress) {
+                if (progress == null) {
+                  return TweenAnimationBuilder<double>(
+                    tween: Tween(begin: 0.0, end: 1.0),
+                    duration: const Duration(milliseconds: 300),
+                    builder: (context, value, child) =>
+                        Opacity(opacity: value, child: child),
+                    child: child,
+                  );
+                }
+                return const Center(
+                  child: CircularProgressIndicator(
+                    color: ProfilePage._warmOrange,
+                    strokeWidth: 2,
+                  ),
+                );
+              },
+              errorBuilder: (_, _, _) =>
+              const Icon(Icons.person, color: ProfilePage._warmOrange, size: 36),
+            )
+                : const Icon(Icons.person, color: ProfilePage._warmOrange, size: 36),
           ),
-          const SizedBox(width: 14),
+          const SizedBox(width: 16),
           Expanded(
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
@@ -199,7 +218,7 @@ class _UserInfoCard extends StatelessWidget {
                   style: const TextStyle(
                     color: ProfilePage._textDark,
                     fontSize: 20,
-                    fontWeight: FontWeight.w700,
+                    fontWeight: FontWeight.w900,
                   ),
                 ),
                 const SizedBox(height: 6),
@@ -209,18 +228,27 @@ class _UserInfoCard extends StatelessWidget {
                       : '暂未填写手机号',
                   style: const TextStyle(
                     color: ProfilePage._textMuted,
-                    fontSize: 14,
+                    fontSize: 13,
                   ),
                 ),
                 const SizedBox(height: 10),
                 Row(
                   children: [
                     const _LoginStatusBadge(),
-                    const SizedBox(width: 8),
-                    TextButton.icon(
-                      onPressed: auth.logout,
-                      icon: const Icon(Icons.logout, size: 18),
-                      label: const Text('退出登录'),
+                    const Spacer(),
+                    InkWell(
+                      borderRadius: BorderRadius.circular(4),
+                      onTap: auth.logout,
+                      child: const Padding(
+                        padding: EdgeInsets.symmetric(horizontal: 4, vertical: 2),
+                        child: Row(
+                          children: [
+                            Icon(Icons.logout, size: 14, color: ProfilePage._textMuted),
+                            SizedBox(width: 4),
+                            Text('退出', style: TextStyle(fontSize: 12, color: ProfilePage._textMuted)),
+                          ],
+                        ),
+                      ),
                     ),
                   ],
                 ),
@@ -238,21 +266,19 @@ class _LoginStatusBadge extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return DecoratedBox(
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
       decoration: BoxDecoration(
-        color: Colors.white,
-        borderRadius: BorderRadius.circular(8),
+        color: ProfilePage._softOrange,
+        borderRadius: BorderRadius.circular(4),
         border: Border.all(color: const Color(0xFFFFD7AA)),
       ),
-      child: const Padding(
-        padding: EdgeInsets.symmetric(horizontal: 10, vertical: 5),
-        child: Text(
-          '当前为已登录状态',
-          style: TextStyle(
-            color: ProfilePage._warmOrange,
-            fontSize: 12,
-            fontWeight: FontWeight.w600,
-          ),
+      child: const Text(
+        '已登录',
+        style: TextStyle(
+          color: ProfilePage._warmOrange,
+          fontSize: 11,
+          fontWeight: FontWeight.w800,
         ),
       ),
     );
@@ -266,11 +292,10 @@ class _MenuSection extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return Material(
-      color: Colors.white,
-      shape: RoundedRectangleBorder(
-        borderRadius: BorderRadius.circular(8),
-        side: const BorderSide(color: ProfilePage._borderColor),
+    return Container(
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(12),
       ),
       child: Column(children: children),
     );
@@ -296,22 +321,22 @@ class _ProfileMenuTile extends StatelessWidget {
   Widget build(BuildContext context) {
     return ListTile(
       enabled: enabled,
-      contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+      contentPadding: const EdgeInsets.symmetric(horizontal: 20, vertical: 10),
       leading: Container(
-        width: 42,
-        height: 42,
+        width: 44,
+        height: 44,
         decoration: BoxDecoration(
           color: ProfilePage._softOrange,
-          borderRadius: BorderRadius.circular(8),
+          borderRadius: BorderRadius.circular(10),
         ),
-        child: Icon(icon, color: ProfilePage._warmOrange),
+        child: Icon(icon, color: ProfilePage._warmOrange, size: 22),
       ),
       title: Text(
         title,
         style: const TextStyle(
           color: ProfilePage._textDark,
           fontSize: 16,
-          fontWeight: FontWeight.w600,
+          fontWeight: FontWeight.bold,
         ),
       ),
       subtitle: Padding(
@@ -321,13 +346,13 @@ class _ProfileMenuTile extends StatelessWidget {
           style: const TextStyle(color: ProfilePage._textMuted, fontSize: 13),
         ),
       ),
-      trailing: const Icon(Icons.chevron_right, color: Color(0xFFB8AFA7)),
+      trailing: const Icon(Icons.arrow_forward_ios, color: Color(0xFFD4CDC7), size: 16),
       onTap: enabled
           ? () {
-              Navigator.of(
-                context,
-              ).push(MaterialPageRoute(builder: (_) => destination));
-            }
+        Navigator.of(
+          context,
+        ).push(MaterialPageRoute(builder: (_) => destination));
+      }
           : null,
     );
   }
@@ -341,8 +366,8 @@ class _SectionDivider extends StatelessWidget {
     return const Divider(
       height: 1,
       thickness: 1,
-      indent: 16,
-      endIndent: 16,
+      indent: 20 + 44 + 16, // 精确对齐文本起始位置
+      endIndent: 20,
       color: ProfilePage._borderColor,
     );
   }

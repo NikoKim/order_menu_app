@@ -202,6 +202,14 @@ class ShopApiService {
     await _request<void>('DELETE', '/shop/dishes/$dishId');
   }
 
+  Future<void> updateShowcaseDishes(List<int> dishIds) async {
+    await _request<void>(
+      'PUT',
+      '/shop/dishes/showcase',
+      body: dishIds,
+    );
+  }
+
   Future<PageResult<OrderSummary>> fetchOrders({
     int page = 1,
     int pageSize = 100,
@@ -336,7 +344,7 @@ class ShopApiService {
     String method,
     String path, {
     Map<String, String>? query,
-    Map<String, dynamic>? body,
+    Object? body,
     bool authenticated = true,
   }) async {
     if (authenticated && (_token == null || _token!.isEmpty)) {
@@ -353,13 +361,13 @@ class ShopApiService {
         response = await _client.post(
           uri,
           headers: headers,
-          body: jsonEncode(body ?? const {}),
+          body: body == null ? null : jsonEncode(body),
         );
       case 'PUT':
         response = await _client.put(
           uri,
           headers: headers,
-          body: jsonEncode(body ?? const {}),
+          body: body == null ? null : jsonEncode(body),
         );
       case 'DELETE':
         response = await _client.delete(uri, headers: headers);

@@ -22,6 +22,7 @@ public class Dish {
     private Integer salesCount;
     private String status;
     private Integer sortOrder;
+    private Integer recommendOrder;
     private LocalDateTime createdAt;
     private LocalDateTime updatedAt;
 }

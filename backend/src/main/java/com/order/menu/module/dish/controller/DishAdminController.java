@@ -77,4 +77,10 @@ public class DishAdminController {
         dishService.deleteDish(UserContext.get().userId(), dishId);
         return ApiResponse.success();
     }
+
+    @PutMapping("/dishes/showcase")
+    public ApiResponse<Void> updateShowcaseDishes(@RequestBody List<Long> dishIds) {
+        dishService.updateShowcaseDishes(UserContext.get().userId(), dishIds);
+        return ApiResponse.success();
+    }
 }

@@ -13,8 +13,27 @@ class DevelopmentLogPage extends StatelessWidget {
         padding: const EdgeInsets.fromLTRB(16, 12, 16, 28),
         children: const [
           _VersionCard(
-            version: 'v1.2.1',
+            version: 'v1.2.1b',
             title: '当前版本',
+            items: [
+              '优化顾客端页面布局和展示',
+            ],
+          ),
+          SizedBox(height: 12),
+          _VersionCard(
+            version: 'v1.2.1a',
+            title: '前版本',
+            items: [
+              '优化全部商家，家庭商家显示，添加家庭商家标签',
+              '优化首页、商家页、订单页加载动画',
+              '优化图片加载动画',
+              '加入家庭页面显示家庭图像功能',
+            ],
+          ),
+          SizedBox(height: 12),
+          _VersionCard(
+            version: 'v1.2.1',
+            title: '前版本',
             items: [
               '优化点餐页面布局，首页布局',
               '加入检测新版本和下载新版本功能',

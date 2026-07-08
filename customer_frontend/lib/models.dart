@@ -52,9 +52,11 @@ class Shop {
     this.familyCode,
     this.familyJoinMode,
     this.familyImageUrl,
+    this.previewDishes,
   });
 
   factory Shop.fromJson(Map<String, dynamic> json) {
+    final previewDishesJson = json['previewDishes'];
     return Shop(
       id: _asInt(json['id']),
       name: json['name']?.toString() ?? '未命名商家',
@@ -68,6 +70,12 @@ class Shop {
       familyCode: json['familyCode']?.toString(),
       familyJoinMode: json['familyJoinMode']?.toString(),
       familyImageUrl: json['familyImageUrl']?.toString(),
+      previewDishes: previewDishesJson is List
+          ? previewDishesJson
+          .whereType<Map<String, dynamic>>()
+          .map(Dish.fromJson)
+          .toList()
+          : null,
     );
   }
 
@@ -83,6 +91,7 @@ class Shop {
   final String? familyCode;
   final String? familyJoinMode;
   final String? familyImageUrl;
+  final List<Dish>? previewDishes;
 }
 
 class DishOptionItem {

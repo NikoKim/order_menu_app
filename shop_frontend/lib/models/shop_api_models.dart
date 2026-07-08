@@ -151,6 +151,7 @@ class DishInfo {
     required this.salesCount,
     required this.status,
     required this.sortOrder,
+    required this.recommendOrder,
     this.description,
     this.imageUrl,
     this.optionGroups = const [],
@@ -173,6 +174,7 @@ class DishInfo {
       salesCount: _asInt(json['salesCount']),
       status: _asString(json['status'], fallback: 'ON_SALE'),
       sortOrder: _asInt(json['sortOrder']),
+      recommendOrder: _asInt(json['recommendOrder']),
     );
   }
 
@@ -188,6 +190,7 @@ class DishInfo {
   final int salesCount;
   final String status;
   final int sortOrder;
+  final int recommendOrder;
 
   bool get isOnSale => status == 'ON_SALE';
 }
@@ -396,6 +399,8 @@ class FeedbackInfo {
     required this.status,
     required this.createdAt,
     this.reply,
+    this.userNickname,
+    this.userAvatarUrl,
   });
 
   factory FeedbackInfo.fromJson(Map<String, dynamic> json) {
@@ -407,6 +412,8 @@ class FeedbackInfo {
       reply: json['reply'] as String?,
       status: _asString(json['status'], fallback: 'PENDING'),
       createdAt: _asString(json['createdAt']),
+      userNickname: json['userNickname'] as String?,
+      userAvatarUrl: json['userAvatarUrl'] as String?,
     );
   }
 
@@ -417,6 +424,8 @@ class FeedbackInfo {
   final String? reply;
   final String status;
   final String createdAt;
+  final String? userNickname;
+  final String? userAvatarUrl;
 }
 
 class FamilyMemberInfo {

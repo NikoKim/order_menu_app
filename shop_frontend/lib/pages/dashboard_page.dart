@@ -7,10 +7,12 @@ import '../services/shop_api_service.dart';
 import 'dish_manage_page.dart';
 import 'feedback_manage_page.dart';
 import 'order_manage_page.dart';
+import 'showcase_manage_page.dart';
+import 'shop_family_page.dart'; // 新增：引入家庭管理页
 
 const _warmOrange = Color(0xFFF28C28);
 const _softOrange = Color(0xFFFFF4E8);
-const _lineColor = Color(0xFFF0E7DE);
+const _pageBgColor = Color(0xFFF5F6F8);
 const _textColor = Color(0xFF242424);
 const _mutedColor = Color(0xFF77716B);
 
@@ -24,6 +26,7 @@ class DashboardPage extends StatefulWidget {
 class _DashboardPageState extends State<DashboardPage> {
   ShopInfo? _shop;
   List<OrderSummary> _orders = const [];
+  int _totalOnSaleDishes = 0;
   Timer? _refreshTimer;
   bool _loading = true;
   String? _error;
@@ -56,6 +59,7 @@ class _DashboardPageState extends State<DashboardPage> {
       final results = await Future.wait([
         shopApi.fetchMyShop(),
         shopApi.fetchOrders(pageSize: 100),
+        shopApi.fetchDishes(status: 'ON_SALE', pageSize: 1),
       ]);
       if (!mounted) {
         return;
@@ -63,6 +67,7 @@ class _DashboardPageState extends State<DashboardPage> {
       setState(() {
         _shop = results[0] as ShopInfo;
         _orders = (results[1] as PageResult<OrderSummary>).records;
+        _totalOnSaleDishes = (results[2] as PageResult<DishInfo>).total;
         _error = null;
       });
     } on ApiException catch (error) {
@@ -79,25 +84,47 @@ class _DashboardPageState extends State<DashboardPage> {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      backgroundColor: Colors.white,
+      backgroundColor: _pageBgColor,
       body: SafeArea(
         child: RefreshIndicator(
           color: _warmOrange,
+          backgroundColor: Colors.white,
           onRefresh: _load,
           child: ListView(
-            padding: const EdgeInsets.fromLTRB(20, 18, 20, 28),
+            padding: const EdgeInsets.fromLTRB(16, 16, 16, 32),
             children: [
-              if (_loading)
-                const LinearProgressIndicator(color: _warmOrange)
-              else if (_error != null)
-                _ErrorBanner(message: _error!, onRetry: _load),
-              _ShopHeader(shop: _shop),
-              const SizedBox(height: 20),
-              _MetricGrid(orders: _orders),
-              const SizedBox(height: 24),
-              const _SectionTitle(title: '快捷入口'),
-              const SizedBox(height: 12),
-              const _ShortcutGrid(),
+              if (_loading && _shop == null)
+                const Center(
+                  child: Padding(
+                    padding: EdgeInsets.all(32),
+                    child: CircularProgressIndicator(color: _warmOrange),
+                  ),
+                )
+              else ...[
+                if (_error != null)
+                  _ErrorBanner(message: _error!, onRetry: _load),
+                _ShopHeader(shop: _shop),
+                const SizedBox(height: 14),
+
+                _PendingAlertBanner(orders: _orders),
+
+                _DataDashboardCard(orders: _orders),
+                const SizedBox(height: 20),
+
+                const Padding(
+                  padding: EdgeInsets.symmetric(horizontal: 4, vertical: 8),
+                  child: Text(
+                    '快捷应用',
+                    style: TextStyle(
+                      color: _textColor,
+                      fontSize: 17,
+                      fontWeight: FontWeight.w800,
+                    ),
+                  ),
+                ),
+                // 传入当前店铺信息与刷新方法，供快捷入口内部调用
+                _ShortcutGrid(shop: _shop, onRefresh: _load),
+              ],
             ],
           ),
         ),
@@ -106,30 +133,49 @@ class _DashboardPageState extends State<DashboardPage> {
   }
 }
 
-class _ShopHeader extends StatelessWidget {
-  const _ShopHeader({this.shop});
+class _BaseCard extends StatelessWidget {
+  final Widget child;
+  final EdgeInsetsGeometry? padding;
 
-  final ShopInfo? shop;
+  const _BaseCard({required this.child, this.padding});
 
   @override
   Widget build(BuildContext context) {
     return Container(
-      padding: const EdgeInsets.all(18),
+      padding: padding ?? const EdgeInsets.all(18),
       decoration: BoxDecoration(
-        color: _softOrange,
-        borderRadius: BorderRadius.circular(8),
-        border: Border.all(color: _lineColor),
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(12),
+        boxShadow: [
+          BoxShadow(
+            color: Colors.black.withValues(alpha: 0.03),
+            blurRadius: 10,
+            offset: const Offset(0, 4),
+          ),
+        ],
       ),
+      child: child,
+    );
+  }
+}
+
+class _ShopHeader extends StatelessWidget {
+  const _ShopHeader({this.shop});
+  final ShopInfo? shop;
+
+  @override
+  Widget build(BuildContext context) {
+    return _BaseCard(
       child: Row(
         children: [
           Container(
             width: 52,
             height: 52,
             decoration: BoxDecoration(
-              color: Colors.white,
-              borderRadius: BorderRadius.circular(8),
+              color: _softOrange,
+              borderRadius: BorderRadius.circular(12),
             ),
-            child: const Icon(Icons.storefront, color: _warmOrange, size: 30),
+            child: const Icon(Icons.storefront, color: _warmOrange, size: 28),
           ),
           const SizedBox(width: 14),
           Expanded(
@@ -157,7 +203,6 @@ class _ShopHeader extends StatelessWidget {
 
 class _OpenStatusBadge extends StatelessWidget {
   const _OpenStatusBadge({required this.isOpen});
-
   final bool isOpen;
 
   @override
@@ -187,66 +232,268 @@ class _OpenStatusBadge extends StatelessWidget {
   }
 }
 
-class _MetricGrid extends StatelessWidget {
-  const _MetricGrid({required this.orders});
-
+class _PendingAlertBanner extends StatelessWidget {
+  const _PendingAlertBanner({required this.orders});
   final List<OrderSummary> orders;
 
   @override
   Widget build(BuildContext context) {
-    return LayoutBuilder(
-      builder: (context, constraints) {
-        final isWide = constraints.maxWidth >= 680;
-        final itemWidth = isWide
-            ? (constraints.maxWidth - 24) / 3
-            : constraints.maxWidth;
+    final pendingCount = orders.where((o) => o.status == 'SUBMITTED').length;
+    if (pendingCount == 0) return const SizedBox.shrink();
 
-        final today = DateTime.now().toIso8601String().substring(0, 10);
-        final todayOrders = orders
-            .where((order) => order.createdAt.startsWith(today))
-            .toList();
-        final todayIncome = todayOrders.fold<double>(
-          0,
-          (sum, order) => sum + order.totalAmount,
-        );
-        final pending = orders
-            .where((order) => order.status == 'SUBMITTED')
-            .length;
-
-        return Wrap(
-          spacing: 12,
-          runSpacing: 12,
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 14),
+      child: Container(
+        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+        decoration: BoxDecoration(
+          color: _softOrange,
+          borderRadius: BorderRadius.circular(12),
+          border: Border.all(color: _warmOrange.withValues(alpha: 0.3)),
+        ),
+        child: Row(
           children: [
-            SizedBox(
-              width: itemWidth,
-              child: _MetricCard(
-                title: '今日订单',
-                value: '${todayOrders.length}',
-                unit: '单',
-                icon: Icons.receipt_long_outlined,
+            const Icon(Icons.notifications_active_outlined, color: _warmOrange),
+            const SizedBox(width: 10),
+            Expanded(
+              child: Text(
+                '您有 $pendingCount 笔新订单待处理',
+                style: const TextStyle(
+                  color: _warmOrange,
+                  fontWeight: FontWeight.w700,
+                  fontSize: 14,
+                ),
               ),
             ),
-            SizedBox(
-              width: itemWidth,
-              child: _MetricCard(
-                title: '今日收入',
-                value: todayIncome.toStringAsFixed(0),
-                unit: '元',
-                icon: Icons.payments_outlined,
+            FilledButton(
+              onPressed: () {
+                Navigator.of(context).push(
+                  MaterialPageRoute(builder: (_) => const OrderManagePage()),
+                );
+              },
+              style: FilledButton.styleFrom(
+                backgroundColor: _warmOrange,
+                minimumSize: const Size(72, 34),
+                padding: const EdgeInsets.symmetric(horizontal: 16),
+                shape: RoundedRectangleBorder(
+                  borderRadius: BorderRadius.circular(8),
+                ),
               ),
-            ),
-            SizedBox(
-              width: itemWidth,
-              child: _MetricCard(
-                title: '待处理',
-                value: '$pending',
-                unit: '项',
-                icon: Icons.pending_actions_outlined,
-              ),
-            ),
+              child: const Text('立即处理', style: TextStyle(fontSize: 13)),
+            )
           ],
-        );
+        ),
+      ),
+    );
+  }
+}
+
+class _DataDashboardCard extends StatelessWidget {
+  const _DataDashboardCard({required this.orders});
+  final List<OrderSummary> orders;
+
+  @override
+  Widget build(BuildContext context) {
+    final today = DateTime.now().toIso8601String().substring(0, 10);
+    final todayOrders = orders.where((o) => o.createdAt.startsWith(today)).toList();
+    final todayIncome = todayOrders.fold<double>(0, (sum, o) => sum + o.totalAmount);
+    final pendingCount = orders.where((o) => o.status == 'SUBMITTED').length;
+
+    return _BaseCard(
+      padding: const EdgeInsets.all(20),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            mainAxisAlignment: MainAxisAlignment.spaceBetween,
+            children: [
+              const Text(
+                '今日实收金额 (元)',
+                style: TextStyle(color: _mutedColor, fontSize: 13, fontWeight: FontWeight.w600),
+              ),
+              Text(
+                today,
+                style: const TextStyle(color: _mutedColor, fontSize: 12),
+              ),
+            ],
+          ),
+          const SizedBox(height: 8),
+          Text(
+            todayIncome.toStringAsFixed(2),
+            style: const TextStyle(
+              color: _textColor,
+              fontSize: 32,
+              fontWeight: FontWeight.w900,
+            ),
+          ),
+          const Padding(
+            padding: EdgeInsets.symmetric(vertical: 16),
+            child: Divider(color: Color(0xFFF0E7DE), height: 1),
+          ),
+          IntrinsicHeight(
+            child: Row(
+              children: [
+                _buildSubMetric('今日成单', '${todayOrders.length}'),
+                const VerticalDivider(color: Color(0xFFF0E7DE), width: 32),
+                _buildSubMetric('待接单', '$pendingCount', highlight: pendingCount > 0),
+              ],
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildSubMetric(String label, String value, {bool highlight = false}) {
+    return Expanded(
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(label, style: const TextStyle(color: _mutedColor, fontSize: 13)),
+          const SizedBox(height: 4),
+          Text(
+            value,
+            style: TextStyle(
+              color: highlight ? Colors.redAccent : _textColor,
+              fontSize: 20,
+              fontWeight: FontWeight.w800,
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _ShortcutGrid extends StatelessWidget {
+  final ShopInfo? shop;
+  final VoidCallback onRefresh;
+
+  const _ShortcutGrid({this.shop, required this.onRefresh});
+
+  @override
+  Widget build(BuildContext context) {
+    return _BaseCard(
+      padding: const EdgeInsets.all(20),
+      child: LayoutBuilder(
+        builder: (context, constraints) {
+          final itemWidth = (constraints.maxWidth - 20) / 2;
+
+          return Wrap(
+            spacing: 20,
+            runSpacing: 20,
+            children: [
+              SizedBox(
+                width: itemWidth,
+                child: const _GridShortcutItem(
+                  icon: Icons.restaurant_menu_outlined,
+                  title: '菜品管理',
+                  targetPage: DishManagePage(),
+                ),
+              ),
+              SizedBox(
+                width: itemWidth,
+                child: const _GridShortcutItem(
+                  icon: Icons.receipt_long_outlined,
+                  title: '订单处理',
+                  targetPage: OrderManagePage(),
+                ),
+              ),
+              SizedBox(
+                width: itemWidth,
+                child: const _GridShortcutItem(
+                  icon: Icons.view_carousel_outlined,
+                  title: '首页展示',
+                  targetPage: ShowcaseManagePage(),
+                ),
+              ),
+              SizedBox(
+                width: itemWidth,
+                child: const _GridShortcutItem(
+                  icon: Icons.family_restroom,
+                  title: '家庭管理',
+                  targetPage: ShopFamilyPage(),
+                ),
+              ),
+              SizedBox(
+                width: itemWidth,
+                child: _GridShortcutItem(
+                  icon: Icons.schedule_outlined,
+                  title: '营业状态',
+                  onTap: () {
+                    if (shop != null) {
+                      _showStatusToggleDialog(context, shop!, onRefresh);
+                    } else {
+                      ScaffoldMessenger.of(context).showSnackBar(
+                        const SnackBar(content: Text('店铺信息加载中，请稍后再试')),
+                      );
+                    }
+                  },
+                ),
+              ),
+              SizedBox(
+                width: itemWidth,
+                child: const _GridShortcutItem(
+                  icon: Icons.forum_outlined,
+                  title: '顾客反馈',
+                  targetPage: FeedbackManagePage(),
+                ),
+              ),
+            ],
+          );
+        },
+      ),
+    );
+  }
+}
+
+class _GridShortcutItem extends StatelessWidget {
+  const _GridShortcutItem({
+    required this.icon,
+    required this.title,
+    this.targetPage,
+    this.onTap,
+  });
+
+  final IconData icon;
+  final String title;
+  final Widget? targetPage;
+  final VoidCallback? onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    return InkWell(
+      onTap: () {
+        if (onTap != null) {
+          onTap!();
+        } else if (targetPage != null) {
+          Navigator.of(context).push(MaterialPageRoute(builder: (_) => targetPage!));
+        }
       },
+      borderRadius: BorderRadius.circular(8),
+      child: Row(
+        children: [
+          Container(
+            width: 42,
+            height: 42,
+            decoration: BoxDecoration(
+              color: const Color(0xFFFFF8F0),
+              borderRadius: BorderRadius.circular(10),
+            ),
+            child: Icon(icon, color: _warmOrange, size: 22),
+          ),
+          const SizedBox(width: 12),
+          Expanded(
+            child: Text(
+              title,
+              style: const TextStyle(
+                color: _textColor,
+                fontSize: 14,
+                fontWeight: FontWeight.w700,
+              ),
+            ),
+          ),
+        ],
+      ),
     );
   }
 }
@@ -263,7 +510,7 @@ class _ErrorBanner extends StatelessWidget {
       padding: const EdgeInsets.only(bottom: 12),
       child: Material(
         color: const Color(0xFFFFF4E8),
-        borderRadius: BorderRadius.circular(8),
+        borderRadius: BorderRadius.circular(12),
         child: ListTile(
           leading: const Icon(Icons.info_outline, color: _warmOrange),
           title: Text(message, style: const TextStyle(color: _textColor)),
@@ -274,249 +521,104 @@ class _ErrorBanner extends StatelessWidget {
   }
 }
 
-class _MetricCard extends StatelessWidget {
-  const _MetricCard({
-    required this.title,
-    required this.value,
-    required this.unit,
-    required this.icon,
-  });
-
-  final String title;
-  final String value;
-  final String unit;
-  final IconData icon;
-
-  @override
-  Widget build(BuildContext context) {
-    return Container(
-      padding: const EdgeInsets.all(16),
-      decoration: BoxDecoration(
-        color: Colors.white,
-        borderRadius: BorderRadius.circular(8),
-        border: Border.all(color: _lineColor),
-      ),
-      child: Row(
-        children: [
-          Container(
-            width: 42,
-            height: 42,
-            decoration: BoxDecoration(
-              color: _softOrange,
-              borderRadius: BorderRadius.circular(8),
-            ),
-            child: Icon(icon, color: _warmOrange, size: 24),
-          ),
-          const SizedBox(width: 12),
-          Expanded(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text(
-                  title,
-                  style: const TextStyle(color: _mutedColor, fontSize: 13),
-                ),
-                const SizedBox(height: 6),
-                RichText(
-                  text: TextSpan(
-                    style: const TextStyle(color: _textColor),
-                    children: [
-                      TextSpan(
-                        text: value,
-                        style: const TextStyle(
-                          fontSize: 24,
-                          fontWeight: FontWeight.w800,
-                        ),
-                      ),
-                      TextSpan(
-                        text: ' $unit',
-                        style: const TextStyle(
-                          color: _mutedColor,
-                          fontSize: 13,
-                          fontWeight: FontWeight.w600,
-                        ),
-                      ),
-                    ],
+// --------------------------------------------------------------------------
+// 营业状态快捷设置弹窗
+// --------------------------------------------------------------------------
+void _showStatusToggleDialog(BuildContext context, ShopInfo shop, VoidCallback onRefresh) {
+  showModalBottomSheet(
+    context: context,
+    backgroundColor: Colors.white,
+    shape: const RoundedRectangleBorder(
+      borderRadius: BorderRadius.vertical(top: Radius.circular(16)),
+    ),
+    builder: (context) {
+      bool isSubmitting = false;
+      return StatefulBuilder(
+        builder: (context, setModalState) {
+          return SafeArea(
+            child: Padding(
+              padding: const EdgeInsets.symmetric(vertical: 16),
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  const Padding(
+                    padding: EdgeInsets.symmetric(horizontal: 20, vertical: 8),
+                    child: Align(
+                      alignment: Alignment.centerLeft,
+                      child: Text('设置营业状态', style: TextStyle(fontSize: 18, fontWeight: FontWeight.w800, color: _textColor)),
+                    ),
                   ),
-                ),
-              ],
-            ),
-          ),
-        ],
-      ),
-    );
-  }
-}
-
-class _SectionTitle extends StatelessWidget {
-  const _SectionTitle({required this.title});
-
-  final String title;
-
-  @override
-  Widget build(BuildContext context) {
-    return Text(
-      title,
-      style: const TextStyle(
-        color: _textColor,
-        fontSize: 18,
-        fontWeight: FontWeight.w800,
-      ),
-    );
-  }
-}
-
-class _ShortcutGrid extends StatelessWidget {
-  const _ShortcutGrid();
-
-  @override
-  Widget build(BuildContext context) {
-    return LayoutBuilder(
-      builder: (context, constraints) {
-        final itemWidth = constraints.maxWidth >= 680
-            ? (constraints.maxWidth - 12) / 2
-            : constraints.maxWidth;
-
-        return Wrap(
-          spacing: 12,
-          runSpacing: 12,
-          children: [
-            SizedBox(
-              width: itemWidth,
-              child: _ShortcutCard(
-                icon: Icons.restaurant_menu_outlined,
-                title: '菜品管理',
-                description: '上架新品、调整价格与售卖状态',
+                  const SizedBox(height: 8),
+                  ListTile(
+                    leading: const Icon(Icons.check_circle, color: Color(0xFF20A464)),
+                    title: const Text('正常营业', style: TextStyle(fontWeight: FontWeight.w600)),
+                    subtitle: const Text('顾客可正常浏览菜单并下单', style: TextStyle(fontSize: 13, color: _mutedColor)),
+                    trailing: shop.isOpen
+                        ? const Icon(Icons.radio_button_checked, color: _warmOrange)
+                        : const Icon(Icons.radio_button_off, color: Color(0xFFE0E0E0)),
+                    onTap: shop.isOpen || isSubmitting ? null : () async {
+                      setModalState(() => isSubmitting = true);
+                      try {
+                        await shopApi.updateMyShop(
+                          name: shop.name,
+                          description: shop.description,
+                          coverImageUrl: shop.coverImageUrl,
+                          address: shop.address,
+                          phone: shop.phone,
+                          visibilityType: shop.visibilityType,
+                          familyName: shop.familyName,
+                          familyJoinMode: shop.familyJoinMode,
+                          familyImageUrl: shop.familyImageUrl,
+                          businessStatus: 'OPEN',
+                        );
+                        onRefresh();
+                        if (context.mounted) Navigator.pop(context);
+                      } catch (e) {
+                        if (context.mounted) {
+                          ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(e.toString())));
+                        }
+                        setModalState(() => isSubmitting = false);
+                      }
+                    },
+                  ),
+                  ListTile(
+                    leading: const Icon(Icons.remove_circle, color: _mutedColor),
+                    title: const Text('店铺休息', style: TextStyle(fontWeight: FontWeight.w600)),
+                    subtitle: const Text('店铺将显示休息中，顾客无法下单', style: TextStyle(fontSize: 13, color: _mutedColor)),
+                    trailing: !shop.isOpen
+                        ? const Icon(Icons.radio_button_checked, color: _warmOrange)
+                        : const Icon(Icons.radio_button_off, color: Color(0xFFE0E0E0)),
+                    onTap: !shop.isOpen || isSubmitting ? null : () async {
+                      setModalState(() => isSubmitting = true);
+                      try {
+                        await shopApi.updateMyShop(
+                          name: shop.name,
+                          description: shop.description,
+                          coverImageUrl: shop.coverImageUrl,
+                          address: shop.address,
+                          phone: shop.phone,
+                          visibilityType: shop.visibilityType,
+                          familyName: shop.familyName,
+                          familyJoinMode: shop.familyJoinMode,
+                          familyImageUrl: shop.familyImageUrl,
+                          businessStatus: 'CLOSED',
+                        );
+                        onRefresh();
+                        if (context.mounted) Navigator.pop(context);
+                      } catch (e) {
+                        if (context.mounted) {
+                          ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(e.toString())));
+                        }
+                        setModalState(() => isSubmitting = false);
+                      }
+                    },
+                  ),
+                ],
               ),
             ),
-            SizedBox(
-              width: itemWidth,
-              child: _ShortcutCard(
-                icon: Icons.receipt_long_outlined,
-                title: '订单处理',
-                description: '查看新订单、接单与更新制作进度',
-              ),
-            ),
-            SizedBox(
-              width: itemWidth,
-              child: _ShortcutCard(
-                icon: Icons.campaign_outlined,
-                title: '门店公告',
-                description: '发布营业提醒、优惠和临时通知',
-              ),
-            ),
-            SizedBox(
-              width: itemWidth,
-              child: _ShortcutCard(
-                icon: Icons.forum_outlined,
-                title: '顾客反馈',
-                description: '查看评价与待回复消息',
-              ),
-            ),
-          ],
-        );
-      },
-    );
-  }
-}
-
-class _ShortcutCard extends StatelessWidget {
-  const _ShortcutCard({
-    required this.icon,
-    required this.title,
-    required this.description,
-  });
-
-  final IconData icon;
-  final String title;
-  final String description;
-
-  VoidCallback _tapAction(BuildContext context) {
-    if (icon == Icons.restaurant_menu_outlined) {
-      return () {
-        Navigator.of(
-          context,
-        ).push(MaterialPageRoute(builder: (_) => const DishManagePage()));
-      };
-    }
-    if (icon == Icons.receipt_long_outlined) {
-      return () {
-        Navigator.of(
-          context,
-        ).push(MaterialPageRoute(builder: (_) => const OrderManagePage()));
-      };
-    }
-    if (icon == Icons.forum_outlined) {
-      return () {
-        Navigator.of(
-          context,
-        ).push(MaterialPageRoute(builder: (_) => const FeedbackManagePage()));
-      };
-    }
-    return () {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(
-          content: Text('请在店铺页面维护公告信息'),
-          behavior: SnackBarBehavior.floating,
-        ),
+          );
+        },
       );
-    };
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    return Material(
-      color: Colors.white,
-      shape: RoundedRectangleBorder(
-        borderRadius: BorderRadius.circular(8),
-        side: const BorderSide(color: _lineColor),
-      ),
-      child: InkWell(
-        borderRadius: BorderRadius.circular(8),
-        onTap: _tapAction(context),
-        child: Padding(
-          padding: const EdgeInsets.all(16),
-          child: Row(
-            children: [
-              Container(
-                width: 44,
-                height: 44,
-                decoration: BoxDecoration(
-                  color: _softOrange,
-                  borderRadius: BorderRadius.circular(8),
-                ),
-                child: Icon(icon, color: _warmOrange, size: 24),
-              ),
-              const SizedBox(width: 12),
-              Expanded(
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Text(
-                      title,
-                      style: const TextStyle(
-                        color: _textColor,
-                        fontSize: 15,
-                        fontWeight: FontWeight.w800,
-                      ),
-                    ),
-                    const SizedBox(height: 5),
-                    Text(
-                      description,
-                      style: const TextStyle(
-                        color: _mutedColor,
-                        fontSize: 13,
-                        height: 1.35,
-                      ),
-                    ),
-                  ],
-                ),
-              ),
-              const Icon(Icons.chevron_right, color: _mutedColor),
-            ],
-          ),
-        ),
-      ),
-    );
-  }
+    },
+  );
 }

@@ -11,6 +11,8 @@ import com.order.menu.module.feedback.entity.Feedback;
 import com.order.menu.module.feedback.mapper.FeedbackMapper;
 import com.order.menu.module.shop.entity.Shop;
 import com.order.menu.module.shop.service.ShopService;
+import com.order.menu.module.user.entity.User;
+import com.order.menu.module.user.mapper.UserMapper;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
 import org.springframework.util.StringUtils;
@@ -20,6 +22,7 @@ import org.springframework.util.StringUtils;
 public class FeedbackService {
     private final FeedbackMapper feedbackMapper;
     private final ShopService shopService;
+    private final UserMapper userMapper;
 
     public FeedbackDtos.FeedbackResponse create(Long userId, FeedbackDtos.FeedbackRequest request) {
         if (request.shopId() != null) {
@@ -75,7 +78,27 @@ public class FeedbackService {
     }
 
     private FeedbackDtos.FeedbackResponse toResponse(Feedback feedback) {
-        return new FeedbackDtos.FeedbackResponse(feedback.getId(), feedback.getUserId(), feedback.getShopId(),
-                feedback.getContent(), feedback.getReply(), feedback.getStatus(), feedback.getCreatedAt());
+        String nickname = null;
+        String avatarUrl = null;
+
+        if (feedback.getUserId() != null) {
+            User user = userMapper.selectById(feedback.getUserId());
+            if (user != null) {
+                nickname = user.getNickname();
+                avatarUrl = user.getAvatarUrl();
+            }
+        }
+
+        return new FeedbackDtos.FeedbackResponse(
+                feedback.getId(),
+                feedback.getUserId(),
+                feedback.getShopId(),
+                feedback.getContent(),
+                feedback.getReply(),
+                feedback.getStatus(),
+                feedback.getCreatedAt(),
+                nickname,
+                avatarUrl
+        );
     }
 }

@@ -15,6 +15,6 @@ public final class FeedbackDtos {
     public record ReplyRequest(@NotBlank(message = "回复内容不能为空") @Size(max = 1000, message = "回复不能超过1000个字符") String reply) {
     }
 
-    public record FeedbackResponse(Long id, Long userId, Long shopId, String content, String reply, String status, LocalDateTime createdAt) {
+    public record FeedbackResponse(Long id, Long userId, Long shopId, String content, String reply, String status, LocalDateTime createdAt, String userNickname, String userAvatarUrl) {
     }
 }

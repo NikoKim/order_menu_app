@@ -14,7 +14,8 @@ public final class DishDtos {
 
     public record DishResponse(Long id, Long shopId, Long categoryId, String name, String description,
                                BigDecimal price, String imageUrl, Integer stock, Integer salesCount,
-                               String status, Integer sortOrder, List<OptionGroupResponse> optionGroups) {
+                               String status, Integer sortOrder, Integer recommendOrder, // 新增
+                               List<OptionGroupResponse> optionGroups) {
     }
 
     public record OptionGroupResponse(Long id, String name, Boolean required, String selectionType,
