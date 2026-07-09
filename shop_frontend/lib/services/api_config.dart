@@ -5,4 +5,9 @@ class ApiConfig {
     'SHOP_API_BASE_URL',
     defaultValue: 'https://order-menu-backend.zsj-unknown.top/api',
   );
+
+  static const String wsBaseUrl = String.fromEnvironment(
+    'SHOP_WS_BASE_URL',
+    defaultValue: 'wss://order-menu-backend.zsj-unknown.top/ws',
+  );
 }

@@ -24,6 +24,8 @@ import com.order.menu.module.user.entity.User;
 import com.order.menu.module.user.mapper.UserMapper;
 import java.math.BigDecimal;
 import java.util.List;
+
+import com.order.menu.websocket.WsPushService;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.ArgumentCaptor;
@@ -50,6 +52,8 @@ class OrderServiceTest {
     private DishOptionItemMapper dishOptionItemMapper;
     @Mock
     private FamilyService familyService;
+    @Mock
+    private WsPushService wsPushService;
 
     @Test
     void completeAddsItemQuantitiesToDishSalesCount() {
@@ -97,7 +101,7 @@ class OrderServiceTest {
 
     private OrderService service() {
         return new OrderService(orderMapper, orderItemMapper, dishMapper, shopMapper, shopService, userMapper,
-                dishOptionGroupMapper, dishOptionItemMapper, familyService);
+                dishOptionGroupMapper, dishOptionItemMapper, familyService, wsPushService);
     }
 
     private Order acceptedOrder() {

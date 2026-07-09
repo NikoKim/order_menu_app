@@ -13,6 +13,7 @@ import com.order.menu.module.shop.entity.Shop;
 import com.order.menu.module.shop.service.ShopService;
 import com.order.menu.module.user.entity.User;
 import com.order.menu.module.user.mapper.UserMapper;
+import com.order.menu.websocket.WsPushService;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
 import org.springframework.util.StringUtils;
@@ -23,6 +24,7 @@ public class FeedbackService {
     private final FeedbackMapper feedbackMapper;
     private final ShopService shopService;
     private final UserMapper userMapper;
+    private final WsPushService wsPushService;
 
     public FeedbackDtos.FeedbackResponse create(Long userId, FeedbackDtos.FeedbackRequest request) {
         if (request.shopId() != null) {
@@ -34,6 +36,11 @@ public class FeedbackService {
         feedback.setContent(request.content().trim());
         feedback.setStatus(StatusConstants.FEEDBACK_PENDING);
         feedbackMapper.insert(feedback);
+
+        if (feedback.getShopId() != null) {
+            wsPushService.pushFeedbackCreated(feedback);
+        }
+
         return toResponse(feedback);
     }
 
@@ -63,7 +70,9 @@ public class FeedbackService {
         feedback.setReply(request.reply().trim());
         feedback.setStatus(StatusConstants.FEEDBACK_REPLIED);
         feedbackMapper.updateById(feedback);
-        return toResponse(feedbackMapper.selectById(feedbackId));
+        Feedback updated = feedbackMapper.selectById(feedbackId);
+        wsPushService.pushFeedbackReplied(updated);
+        return toResponse(updated);
     }
 
     private String normalizeFeedbackStatus(String status) {

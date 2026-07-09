@@ -1,8 +1,11 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:image_picker/image_picker.dart';
 
 import '../models/shop_api_models.dart';
 import '../services/shop_api_service.dart';
+import '../services/websocket_service.dart';
 
 const Color _warmOrange = Color(0xFFF28C28);
 const Color _softOrange = Color(0xFFFFF4E8);
@@ -31,29 +34,50 @@ class _ShopFamilyPageState extends State<ShopFamilyPage> {
   ShopInfo? _shop;
   List<FamilyMemberInfo> _members = const [];
   String? _error;
+  StreamSubscription? _wsSubscription;
 
   @override
   void initState() {
     super.initState();
+
     _load();
+
+    _wsSubscription = ShopWebSocketService.instance
+        .streamForModule('FAMILY')
+        .listen((msg) {
+      if (!mounted) return;
+
+      if ({
+        'MEMBER_APPLIED',
+        'MEMBER_APPROVED',
+        'MEMBER_REJECTED',
+      }.contains(msg.action)) {
+        _load(silent: true);
+      }
+    });
   }
 
   @override
   void dispose() {
-    _familyNameController.dispose();
+    _wsSubscription?.cancel();
     super.dispose();
   }
 
-  Future<void> _load() async {
-    setState(() {
-      _loading = true;
-      _error = null;
-    });
+  Future _load({bool silent = false}) async {
+    if (!silent) {
+      setState(() {
+        _loading = true;
+        _error = null;
+      });
+    }
+
     try {
       final shop = await shopApi.fetchMyShop();
-      final members = shop.visibilityType == 'FAMILY'
+
+      final List<FamilyMemberInfo> members = shop.visibilityType == 'FAMILY'
           ? await shopApi.fetchFamilyMembers()
           : <FamilyMemberInfo>[];
+
       if (!mounted) return;
 
       setState(() {
@@ -64,11 +88,16 @@ class _ShopFamilyPageState extends State<ShopFamilyPage> {
         _familyJoinMode = shop.familyJoinMode ?? 'OPEN';
         _familyImageUrl = shop.familyImageUrl;
         _members = members;
+        _error = null;
       });
     } on ApiException catch (error) {
-      if (mounted) setState(() => _error = error.message);
+      if (mounted && !silent) {
+        setState(() => _error = error.message);
+      }
     } finally {
-      if (mounted) setState(() => _loading = false);
+      if (mounted && !silent) {
+        setState(() => _loading = false);
+      }
     }
   }
 

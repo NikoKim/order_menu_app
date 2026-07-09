@@ -12,6 +12,8 @@ import com.order.menu.module.dish.service.DishOptionService;
 import com.order.menu.module.shop.entity.Shop;
 import com.order.menu.module.shop.mapper.ShopMapper;
 import java.util.List;
+
+import com.order.menu.websocket.WsPushService;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.Mock;
@@ -21,15 +23,14 @@ import org.mockito.junit.jupiter.MockitoExtension;
 class ShopServiceTest {
     @Mock
     private ShopMapper shopMapper;
-
     @Mock
     private MenuCategoryMapper categoryMapper;
-
     @Mock
     private DishMapper dishMapper;
-
     @Mock
     private DishOptionService dishOptionService;
+    @Mock
+    private WsPushService wsPushService;
 
     @Test
     void listAllowsMissingKeyword() {
@@ -37,7 +38,7 @@ class ShopServiceTest {
         pageResult.setRecords(List.of());
         when(shopMapper.selectPage(any(Page.class), any(Wrapper.class))).thenReturn(pageResult);
 
-        ShopService service = new ShopService(shopMapper, categoryMapper, dishMapper, dishOptionService);
+        ShopService service = new ShopService(shopMapper, categoryMapper, dishMapper, dishOptionService, wsPushService);
 
         assertDoesNotThrow(() -> service.list(1, 10, null, null));
     }

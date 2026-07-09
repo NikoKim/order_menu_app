@@ -1,8 +1,11 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 
 import '../models/shop_api_models.dart';
 import '../services/api_config.dart';
 import '../services/shop_api_service.dart';
+import '../services/websocket_service.dart';
 
 const Color _warmOrange = Color(0xFFF28C28);
 const Color _softOrange = Color(0xFFFFF4E8);
@@ -23,26 +26,56 @@ class _FeedbackManagePageState extends State<FeedbackManagePage> {
   bool _loading = true;
   String? _error;
 
+  StreamSubscription? _wsSubscription;
+
   @override
   void initState() {
     super.initState();
+
     _load();
+
+    _wsSubscription = ShopWebSocketService.instance
+        .streamForModule('FEEDBACK')
+        .listen((msg) {
+      if (!mounted) return;
+
+      if ({'CREATED', 'UPDATED', 'REPLIED'}.contains(msg.action)) {
+        _load(silent: true);
+      }
+    });
   }
 
-  Future<void> _load() async {
-    setState(() {
-      _loading = true;
-      _error = null;
-    });
+  @override
+  void dispose() {
+    _wsSubscription?.cancel();
+    super.dispose();
+  }
+
+  Future _load({bool silent = false}) async {
+    if (!silent) {
+      setState(() {
+        _loading = true;
+        _error = null;
+      });
+    }
+
     try {
       final result = await shopApi.fetchFeedback(pageSize: 100);
+
       if (mounted) {
-        setState(() => _feedback = result.records);
+        setState(() {
+          _feedback = result.records;
+          _error = null;
+        });
       }
     } on ApiException catch (error) {
-      if (mounted) setState(() => _error = error.message);
+      if (mounted && !silent) {
+        setState(() => _error = error.message);
+      }
     } finally {
-      if (mounted) setState(() => _loading = false);
+      if (mounted && !silent) {
+        setState(() => _loading = false);
+      }
     }
   }
 
@@ -137,60 +170,22 @@ class _FeedbackManagePageState extends State<FeedbackManagePage> {
   }
 
   Future<void> _reply(FeedbackInfo feedback) async {
-    final controller = TextEditingController(text: feedback.reply ?? '');
-    final submitted = await showDialog<bool>(
+    // 唤起独立的 StatefulWidget 弹窗，并等待返回 String 结果
+    final replyText = await showDialog<String>(
       context: context,
-      builder: (context) => AlertDialog(
-        title: const Text('回复留言'),
-        backgroundColor: Colors.white,
-        surfaceTintColor: Colors.white,
-        content: SizedBox(
-          width: double.maxFinite,
-          child: TextField(
-            controller: controller,
-            maxLines: 4,
-            decoration: InputDecoration(
-              hintText: '请输入回复内容',
-              hintStyle: const TextStyle(color: Color(0xFFB8AFA7)),
-              filled: true,
-              fillColor: const Color(0xFFF9FAFB),
-              contentPadding: const EdgeInsets.all(12),
-              enabledBorder: OutlineInputBorder(
-                borderRadius: BorderRadius.circular(8),
-                borderSide: const BorderSide(color: Color(0xFFE8E8E8)),
-              ),
-              focusedBorder: OutlineInputBorder(
-                borderRadius: BorderRadius.circular(8),
-                borderSide: const BorderSide(color: _warmOrange),
-              ),
-            ),
-          ),
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(context, false),
-            child: const Text('取消', style: TextStyle(color: _mutedColor)),
-          ),
-          FilledButton(
-            onPressed: () => Navigator.pop(context, true),
-            style: FilledButton.styleFrom(backgroundColor: _warmOrange),
-            child: const Text('发送'),
-          ),
-        ],
-      ),
+      builder: (context) => _ReplyDialog(initialText: feedback.reply ?? ''),
     );
 
-    final reply = controller.text.trim();
-    controller.dispose();
+    // 如果返回 null，说明用户点击了取消或点击背景关闭了弹窗
+    if (replyText == null) return;
 
-    if (submitted != true) return;
-    if (reply.isEmpty) {
+    if (replyText.isEmpty) {
       _showSnackBar('请填写回复内容');
       return;
     }
 
     try {
-      await shopApi.replyFeedback(feedbackId: feedback.id, reply: reply);
+      await shopApi.replyFeedback(feedbackId: feedback.id, reply: replyText);
       await _load();
       if (mounted) _showSnackBar('已回复');
     } on ApiException catch (error) {
@@ -428,4 +423,73 @@ String _absoluteImageUrl(String url) {
   if (url.startsWith('http://') || url.startsWith('https://')) return url;
   final api = Uri.parse(ApiConfig.baseUrl);
   return api.replace(path: url.startsWith('/') ? url : '/$url').toString();
+}
+
+class _ReplyDialog extends StatefulWidget {
+  final String initialText;
+
+  const _ReplyDialog({required this.initialText});
+
+  @override
+  State<_ReplyDialog> createState() => _ReplyDialogState();
+}
+
+class _ReplyDialogState extends State<_ReplyDialog> {
+  late TextEditingController _controller;
+
+  @override
+  void initState() {
+    super.initState();
+    // 在组件初始化时创建 Controller
+    _controller = TextEditingController(text: widget.initialText);
+  }
+
+  @override
+  void dispose() {
+    // 弹窗完全关闭并从渲染树移除后，自动销毁 Controller，避免任何内存泄漏或动画冲突报错
+    _controller.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return AlertDialog(
+      title: const Text('回复留言', style: TextStyle(fontWeight: FontWeight.w700)),
+      backgroundColor: Colors.white,
+      surfaceTintColor: Colors.white,
+      content: SizedBox(
+        width: double.maxFinite,
+        child: TextField(
+          controller: _controller,
+          maxLines: 4,
+          decoration: InputDecoration(
+            hintText: '请输入回复内容',
+            hintStyle: const TextStyle(color: Color(0xFFB8AFA7)),
+            filled: true,
+            fillColor: const Color(0xFFF9FAFB),
+            contentPadding: const EdgeInsets.all(12),
+            enabledBorder: OutlineInputBorder(
+              borderRadius: BorderRadius.circular(8),
+              borderSide: const BorderSide(color: Color(0xFFE8E8E8)),
+            ),
+            focusedBorder: OutlineInputBorder(
+              borderRadius: BorderRadius.circular(8),
+              borderSide: const BorderSide(color: Color(0xFFF28C28)), // 暖橙色焦点
+            ),
+          ),
+        ),
+      ),
+      actions: [
+        TextButton(
+          onPressed: () => Navigator.pop(context, null), // 取消时返回 null
+          child: const Text('取消', style: TextStyle(color: Color(0xFF77716B))),
+        ),
+        FilledButton(
+          onPressed: () => Navigator.pop(context, _controller.text.trim()), // 发送时返回输入的文本
+          style: FilledButton.styleFrom(backgroundColor: const Color(0xFFF28C28)),
+          child: const Text('发送'),
+        ),
+      ],
+    );
+  }
 }

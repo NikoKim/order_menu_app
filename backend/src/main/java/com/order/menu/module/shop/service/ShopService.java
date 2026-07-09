@@ -19,8 +19,10 @@ import com.order.menu.module.shop.mapper.ShopMapper;
 import java.util.Collections;
 import java.util.List;
 import java.util.Map;
+import java.util.Objects;
 import java.util.stream.Collectors;
 
+import com.order.menu.websocket.WsPushService;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
 import org.springframework.util.StringUtils;
@@ -32,6 +34,7 @@ public class ShopService {
     private final MenuCategoryMapper categoryMapper;
     private final DishMapper dishMapper;
     private final DishOptionService dishOptionService;
+    private final WsPushService wsPushService;
 
     public PageResponse<ShopDtos.ShopResponse> list(int page, int pageSize, String keyword, String familyCode) {
         String safeKeyword = StringUtils.hasText(keyword) ? keyword.trim() : null;
@@ -143,34 +146,62 @@ public class ShopService {
 
     public ShopDtos.ShopResponse updateMyShop(Long ownerUserId, ShopDtos.ShopUpdateRequest request) {
         Shop shop = requireOwnedShop(ownerUserId);
+
+        String oldBusinessStatus = shop.getBusinessStatus();
+
         shop.setName(request.name().trim());
         shop.setDescription(trimToNull(request.description()));
         shop.setCoverImageUrl(trimToNull(request.coverImageUrl()));
         shop.setAddress(trimToNull(request.address()));
         shop.setPhone(trimToNull(request.phone()));
-        String businessStatus = StringUtils.hasText(request.businessStatus()) ? request.businessStatus().trim() : StatusConstants.BUSINESS_OPEN;
+
+        String businessStatus = StringUtils.hasText(request.businessStatus())
+                ? request.businessStatus().trim()
+                : StatusConstants.BUSINESS_OPEN;
+
         if (!StatusConstants.isBusinessStatus(businessStatus)) {
             throw new BusinessException(ErrorCode.BAD_REQUEST, "Invalid shop business status");
         }
+
         shop.setBusinessStatus(businessStatus);
-        String visibilityType = StringUtils.hasText(request.visibilityType()) ? request.visibilityType().trim() : "PUBLIC";
+
+        String visibilityType = StringUtils.hasText(request.visibilityType())
+                ? request.visibilityType().trim()
+                : "PUBLIC";
+
         if (!"PUBLIC".equals(visibilityType) && !"FAMILY".equals(visibilityType)) {
             throw new BusinessException(ErrorCode.BAD_REQUEST, "Invalid visibility type");
         }
+
         shop.setVisibilityType(visibilityType);
         shop.setFamilyName(trimToNull(request.familyName()));
         shop.setFamilyJoinMode(normalizeJoinMode(request.familyJoinMode()));
         shop.setFamilyImageUrl(trimToNull(request.familyImageUrl()));
+
         if ("FAMILY".equals(visibilityType) && !StringUtils.hasText(shop.getFamilyCode())) {
             shop.setFamilyCode(generateFamilyCode());
         }
+
         if ("PUBLIC".equals(visibilityType)) {
             shop.setFamilyName(null);
             shop.setFamilyJoinMode("OPEN");
             shop.setFamilyImageUrl(null);
         }
+
         shopMapper.updateById(shop);
-        return toResponse(shopMapper.selectById(shop.getId()));
+
+        Shop updated = shopMapper.selectById(shop.getId());
+
+        if (!Objects.equals(oldBusinessStatus, updated.getBusinessStatus())) {
+            wsPushService.pushShopBusinessStatusChanged(
+                    updated.getId(),
+                    updated.getBusinessStatus()
+            );
+        } else {
+            wsPushService.pushShopProfileChanged(updated.getId());
+        }
+
+        return toResponse(updated);
     }
 
     public ShopDtos.MenuResponse menu(Long shopId) {

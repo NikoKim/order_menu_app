@@ -30,6 +30,8 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
 import java.util.stream.Collectors;
+
+import com.order.menu.websocket.WsPushService;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -47,6 +49,7 @@ public class OrderService {
     private final DishOptionGroupMapper dishOptionGroupMapper;
     private final DishOptionItemMapper dishOptionItemMapper;
     private final FamilyService familyService;
+    private final WsPushService wsPushService;
 
     @Transactional
     public OrderDtos.OrderSubmitResponse create(Long customerUserId, OrderDtos.CreateOrderRequest request) {
@@ -94,6 +97,9 @@ public class OrderService {
             orderItem.setOptionAmount(line.optionSelection().amount());
             orderItemMapper.insert(orderItem);
         }
+
+        wsPushService.pushOrderCreated(order);
+
         return new OrderDtos.OrderSubmitResponse(order.getId(), order.getOrderNo(), order.getStatus(), order.getTotalAmount());
     }
 
@@ -117,15 +123,21 @@ public class OrderService {
     @Transactional
     public void cancel(Long customerUserId, Long orderId) {
         Order order = requireOrder(orderId);
+
         if (!customerUserId.equals(order.getCustomerUserId())) {
-            throw new BusinessException(ErrorCode.FORBIDDEN, "No permission to cancel this order");
+            throw new BusinessException(ErrorCode.FORBIDDEN, "无权限取消该订单，请反馈商家。");
         }
+
         if (!StatusConstants.ORDER_SUBMITTED.equals(order.getStatus())) {
-            throw new BusinessException(ErrorCode.CONFLICT, "Current order status cannot be cancelled");
+            throw new BusinessException(ErrorCode.CONFLICT, "当前订单订单状态无法被取消。");
         }
+
         order.setStatus(StatusConstants.ORDER_CANCELLED);
         orderMapper.updateById(order);
+
         restoreStock(order);
+
+        wsPushService.pushOrderCancelled(order);
     }
 
     public PageResponse<OrderDtos.OrderSummaryResponse> shopOrders(Long ownerUserId, int page, int pageSize, String status, LocalDate date) {
@@ -147,28 +159,37 @@ public class OrderService {
 
     public void accept(Long ownerUserId, Long orderId) {
         Order order = requireOwnedOrder(ownerUserId, orderId);
+
         if (!StatusConstants.ORDER_SUBMITTED.equals(order.getStatus())) {
-            throw new BusinessException(ErrorCode.CONFLICT, "Current order status cannot be accepted");
+            throw new BusinessException(ErrorCode.CONFLICT, "当前订单状态无法被处理。");
         }
+
         order.setStatus(StatusConstants.ORDER_ACCEPTED);
         orderMapper.updateById(order);
+
+        wsPushService.pushOrderAccepted(order);
     }
 
     @Transactional
     public void reject(Long ownerUserId, Long orderId) {
         Order order = requireOwnedOrder(ownerUserId, orderId);
+
         if (!StatusConstants.ORDER_SUBMITTED.equals(order.getStatus())) {
-            throw new BusinessException(ErrorCode.CONFLICT, "Current order status cannot be rejected");
+            throw new BusinessException(ErrorCode.CONFLICT, "当前订单状态无法被拒绝。");
         }
+
         order.setStatus(StatusConstants.ORDER_REJECTED);
         orderMapper.updateById(order);
+
         restoreStock(order);
+
+        wsPushService.pushOrderRejected(order);
     }
 
     public void complete(Long ownerUserId, Long orderId) {
         Order order = requireOwnedOrder(ownerUserId, orderId);
         if (!StatusConstants.ORDER_ACCEPTED.equals(order.getStatus())) {
-            throw new BusinessException(ErrorCode.CONFLICT, "Current order status cannot be completed");
+            throw new BusinessException(ErrorCode.CONFLICT, "当前订单状态无法被完成。");
         }
         order.setStatus(StatusConstants.ORDER_COMPLETED);
         orderMapper.updateById(order);
@@ -183,6 +204,8 @@ public class OrderService {
                 dishMapper.updateById(dish);
             }
         }
+
+        wsPushService.pushOrderCompleted(order);
     }
 
     private Dish requireOnSaleDish(Long shopId, Long dishId) {

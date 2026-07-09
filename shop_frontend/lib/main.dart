@@ -2,7 +2,9 @@ import 'dart:async';
 import 'dart:io';
 
 import 'package:flutter/material.dart';
+import 'package:shop_frontend/services/websocket_service.dart';
 
+import 'models/shop_api_models.dart';
 import 'pages/dashboard_page.dart';
 import 'pages/dish_manage_page.dart';
 import 'pages/order_manage_page.dart';
@@ -88,7 +90,8 @@ class _ShopShellState extends State<ShopShell> {
   bool _loggedIn = false;
   int _pendingOrders = 0;
   int _pendingFamilyMembers = 0;
-  Timer? _notificationTimer;
+  int _pendingFeedback = 0;
+  StreamSubscription? _wsSubscription;
 
   bool _hasCheckedUpdate = false;
 
@@ -101,6 +104,21 @@ class _ShopShellState extends State<ShopShell> {
       _hasCheckedUpdate = true;
       _checkAppUpdate();
     }
+
+    _wsSubscription = ShopWebSocketService.instance.messageStream.listen((msg) {
+      if (!_loggedIn) return;
+
+      final needRefreshBadge = {
+        'ORDER',
+        'FEEDBACK',
+        'FAMILY',
+        'NOTIFICATION',
+      }.contains(msg.module);
+
+      if (needRefreshBadge) {
+        _loadNotifications();
+      }
+    });
   }
 
   Future<void> _checkAppUpdate() async {
@@ -348,7 +366,8 @@ class _ShopShellState extends State<ShopShell> {
 
   @override
   void dispose() {
-    _notificationTimer?.cancel();
+    _wsSubscription?.cancel();
+    ShopWebSocketService.instance.disconnect();
     super.dispose();
   }
 
@@ -360,47 +379,43 @@ class _ShopShellState extends State<ShopShell> {
         _checking = false;
       });
       if (_loggedIn) {
-        _startNotificationRefresh();
+        _loadNotifications();
+        ShopWebSocketService.instance.connect();
       }
     }
   }
 
   Future<void> _logout() async {
+    ShopWebSocketService.instance.disconnect();
     await shopApi.logout();
-    _notificationTimer?.cancel();
     if (mounted) {
       setState(() {
         _index = 0;
         _loggedIn = false;
         _pendingOrders = 0;
         _pendingFamilyMembers = 0;
+        _pendingFeedback = 0;
       });
     }
   }
 
-  void _startNotificationRefresh() {
-    _loadNotifications();
-    _notificationTimer?.cancel();
-    _notificationTimer = Timer.periodic(const Duration(seconds: 8), (_) {
-      _loadNotifications();
-    });
-  }
-
   Future<void> _loadNotifications() async {
-    if (!_loggedIn) {
-      return;
-    }
+    if (!_loggedIn) return;
     try {
-      final info = await shopApi.fetchNotifications();
+      final results = await Future.wait([
+        shopApi.fetchNotifications(),
+        shopApi.fetchFeedback(status: 'PENDING', pageSize: 1),
+      ]);
       if (mounted) {
         setState(() {
+          final info = results[0] as ShopNotificationInfo;
+          final feedbackRes = results[1] as PageResult<FeedbackInfo>;
           _pendingOrders = info.pendingOrders;
           _pendingFamilyMembers = info.pendingFamilyMembers;
+          _pendingFeedback = feedbackRes.total; // 获取真实数量
         });
       }
-    } catch (_) {
-      // Badge refresh is best-effort; page-level actions still show errors.
-    }
+    } catch (_) {}
   }
 
   @override
@@ -410,10 +425,11 @@ class _ShopShellState extends State<ShopShell> {
     }
     if (!_loggedIn) {
       return ShopLoginPage(
-        onLoggedIn: () {
-          setState(() => _loggedIn = true);
-          _startNotificationRefresh();
-        },
+          onLoggedIn: () {
+            setState(() => _loggedIn = true);
+            _loadNotifications();
+            ShopWebSocketService.instance.connect(force: true);
+          }
       );
     }
 
@@ -462,11 +478,11 @@ class _ShopShellState extends State<ShopShell> {
           NavigationDestination(
             icon: _BadgeIcon(
               icon: Icons.storefront_outlined,
-              count: _pendingFamilyMembers,
+              count: _pendingFamilyMembers + _pendingFeedback,
             ),
             selectedIcon: _BadgeIcon(
               icon: Icons.storefront,
-              count: _pendingFamilyMembers,
+              count: _pendingFamilyMembers + _pendingFeedback,
             ),
             label: '店铺',
           ),
@@ -477,11 +493,10 @@ class _ShopShellState extends State<ShopShell> {
 }
 
 class _BadgeIcon extends StatelessWidget {
-  const _BadgeIcon({required this.icon, required this.count, this.isDot = false});
+  const _BadgeIcon({required this.icon, required this.count});
 
   final IconData icon;
   final int count;
-  final bool isDot;
 
   @override
   Widget build(BuildContext context) {
@@ -489,8 +504,7 @@ class _BadgeIcon extends StatelessWidget {
 
     return Badge(
       isLabelVisible: true,
-      label: isDot ? null : Text(count > 99 ? '99+' : '$count'),
-      smallSize: 8,
+      label: Text(count > 9 ? '...' : '$count'),
       offset: const Offset(8, -4),
       backgroundColor: Colors.redAccent,
       child: Icon(icon),

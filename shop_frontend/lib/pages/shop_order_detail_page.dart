@@ -1,8 +1,11 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 
 import '../models/shop_api_models.dart';
 import '../services/api_config.dart';
 import '../services/shop_api_service.dart';
+import '../services/websocket_service.dart';
 
 const _warmOrange = Color(0xFFF28C28);
 const _softOrange = Color(0xFFFFF4E8);
@@ -25,29 +28,55 @@ class _ShopOrderDetailPageState extends State<ShopOrderDetailPage> {
   bool _loading = true;
   bool _submitting = false;
   String? _error;
+  StreamSubscription? _wsSubscription;
 
   @override
   void initState() {
     super.initState();
+
     _load();
+
+    _wsSubscription = ShopWebSocketService.instance
+        .streamForModule('ORDER')
+        .listen((msg) {
+      if (!mounted) return;
+
+      final orderId = int.tryParse('${msg.data['orderId']}');
+      if (orderId == widget.orderId) {
+        _load(silent: true);
+      }
+    });
   }
 
-  Future<void> _load() async {
-    setState(() {
-      _loading = true;
-      _error = null;
-    });
+  @override
+  void dispose() {
+    _wsSubscription?.cancel();
+    super.dispose();
+  }
+
+  Future _load({bool silent = false}) async {
+    if (!silent) {
+      setState(() {
+        _loading = true;
+        _error = null;
+      });
+    }
+
     try {
       final order = await shopApi.fetchOrderDetail(widget.orderId);
+
       if (mounted) {
-        setState(() => _order = order);
+        setState(() {
+          _order = order;
+          _error = null;
+        });
       }
     } on ApiException catch (error) {
-      if (mounted) {
+      if (mounted && !silent) {
         setState(() => _error = error.message);
       }
     } finally {
-      if (mounted) {
+      if (mounted && !silent) {
         setState(() => _loading = false);
       }
     }

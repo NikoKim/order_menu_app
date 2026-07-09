@@ -1,7 +1,11 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:image_picker/image_picker.dart';
 
+import '../models/shop_api_models.dart';
 import '../services/shop_api_service.dart';
+import '../services/websocket_service.dart';
 import 'feedback_manage_page.dart';
 import 'shop_family_page.dart';
 
@@ -36,34 +40,74 @@ class _ShopProfilePageState extends State<ShopProfilePage> {
   String? _familyJoinMode;
   String? _familyImageUrl;
   String? _visibilityType;
+
+  // 用于存储通知徽标数量
   int _pendingFamilyMembers = 0;
+  int _pendingFeedback = 0;
+
   String? _error;
+  StreamSubscription? _wsSubscription;
   final ImagePicker _imagePicker = ImagePicker();
 
   @override
   void initState() {
     super.initState();
+
     _load();
+
+    _wsSubscription = ShopWebSocketService.instance.messageStream.listen((msg) {
+      if (!mounted) return;
+
+      final shouldRefresh = switch (msg.module) {
+        'FEEDBACK' => {'CREATED', 'UPDATED', 'REPLIED'}.contains(msg.action),
+        'FAMILY' => {
+          'MEMBER_APPLIED',
+          'MEMBER_APPROVED',
+          'MEMBER_REJECTED',
+        }.contains(msg.action),
+        'NOTIFICATION' => true,
+        'SHOP' => true,
+        _ => false,
+      };
+
+      if (shouldRefresh) {
+        _load(silent: true);
+      }
+    });
   }
 
   @override
   void dispose() {
+    _wsSubscription?.cancel();
+
     _nameController.dispose();
     _descriptionController.dispose();
     _phoneController.dispose();
     _addressController.dispose();
+
     super.dispose();
   }
 
-  Future<void> _load() async {
-    setState(() {
-      _loading = true;
-      _error = null;
-    });
+  Future _load({bool silent = false}) async {
+    if (!silent) {
+      setState(() {
+        _loading = true;
+        _error = null;
+      });
+    }
+
     try {
-      final shop = await shopApi.fetchMyShop();
-      final notifications = await shopApi.fetchNotifications();
+      final results = await Future.wait([
+        shopApi.fetchMyShop(),
+        shopApi.fetchNotifications(),
+        shopApi.fetchFeedback(status: 'PENDING', pageSize: 1),
+      ]);
+
       if (!mounted) return;
+
+      final shop = results[0] as ShopInfo;
+      final notifications = results[1] as ShopNotificationInfo;
+      final pendingFeedbackData = results[2] as PageResult<FeedbackInfo>;
 
       setState(() {
         _nameController.text = shop.name;
@@ -71,20 +115,25 @@ class _ShopProfilePageState extends State<ShopProfilePage> {
         _phoneController.text = shop.phone ?? '';
         _addressController.text = shop.address ?? '';
         _coverImageUrl = shop.coverImageUrl;
+
         _familyName = shop.familyName;
         _familyCode = shop.familyCode;
         _familyJoinMode = shop.familyJoinMode;
         _familyImageUrl = shop.familyImageUrl;
         _visibilityType = shop.visibilityType;
+
         _pendingFamilyMembers = notifications.pendingFamilyMembers;
+        _pendingFeedback = pendingFeedbackData.total;
+
         _isOpen = shop.isOpen;
+        _error = null;
       });
     } on ApiException catch (error) {
-      if (mounted) {
+      if (mounted && !silent) {
         setState(() => _error = error.message);
       }
     } finally {
-      if (mounted) {
+      if (mounted && !silent) {
         setState(() => _loading = false);
       }
     }
@@ -338,7 +387,7 @@ class _ShopProfilePageState extends State<ShopProfilePage> {
           value: _isOpen,
           activeColor: Colors.white,
           activeTrackColor: _warmOrange,
-          onChanged: (value) => setState(() => _isOpen = value),
+          onChanged: _saving ? null : _updateBusinessStatus,
         ),
       ],
     );
@@ -359,10 +408,7 @@ class _ShopProfilePageState extends State<ShopProfilePage> {
             Container(
               width: 40,
               height: 40,
-              decoration: BoxDecoration(
-                color: _softOrange,
-                borderRadius: BorderRadius.circular(8),
-              ),
+              decoration: BoxDecoration(color: _softOrange, borderRadius: BorderRadius.circular(8)),
               child: const Icon(Icons.home_outlined, color: _warmOrange, size: 20),
             ),
             const SizedBox(width: 12),
@@ -373,16 +419,18 @@ class _ShopProfilePageState extends State<ShopProfilePage> {
                   const Text('家庭管理', style: TextStyle(color: _textColor, fontWeight: FontWeight.w700, fontSize: 15)),
                   const SizedBox(height: 4),
                   Text(
-                    isFamilyShop
-                        ? '${_familyName?.isNotEmpty == true ? _familyName : '未命名家庭'} · 编号 ${_familyCode ?? '待生成'}'
-                        : '公开店铺模式，点击可开启家庭',
+                    isFamilyShop ? '${_familyName?.isNotEmpty == true ? _familyName : '未命名家庭'} · 编号 ${_familyCode ?? '待生成'}' : '公开店铺模式，点击可开启家庭',
                     style: const TextStyle(color: _mutedColor, fontSize: 13),
                   ),
                 ],
               ),
             ),
+            // 【新增】家庭管理红点徽标，超过9显示...
             if (_pendingFamilyMembers > 0) ...[
-              Badge(label: Text('$_pendingFamilyMembers')),
+              Badge(
+                label: Text(_pendingFamilyMembers > 9 ? '...' : '$_pendingFamilyMembers'),
+                backgroundColor: Colors.redAccent,
+              ),
               const SizedBox(width: 10),
             ],
             const Icon(Icons.chevron_right, color: Color(0xFFD9D9D9)),
@@ -394,8 +442,14 @@ class _ShopProfilePageState extends State<ShopProfilePage> {
 
   Widget _buildFeedbackEntry() {
     return InkWell(
-      onTap: () {
-        Navigator.of(context).push(MaterialPageRoute(builder: (_) => const FeedbackManagePage()));
+      onTap: () async {
+        await Navigator.of(context).push(
+          MaterialPageRoute(builder: (_) => const FeedbackManagePage()),
+        );
+
+        if (mounted) {
+          _load(silent: true);
+        }
       },
       borderRadius: BorderRadius.circular(8),
       child: Padding(
@@ -405,10 +459,7 @@ class _ShopProfilePageState extends State<ShopProfilePage> {
             Container(
               width: 40,
               height: 40,
-              decoration: BoxDecoration(
-                color: _softOrange,
-                borderRadius: BorderRadius.circular(8),
-              ),
+              decoration: BoxDecoration(color: _softOrange, borderRadius: BorderRadius.circular(8)),
               child: const Icon(Icons.chat_bubble_outline, color: _warmOrange, size: 20),
             ),
             const SizedBox(width: 12),
@@ -422,6 +473,13 @@ class _ShopProfilePageState extends State<ShopProfilePage> {
                 ],
               ),
             ),
+            if (_pendingFeedback > 0) ...[
+              Badge(
+                label: Text(_pendingFeedback > 9 ? '...' : '$_pendingFeedback'),
+                backgroundColor: Colors.redAccent,
+              ),
+              const SizedBox(width: 10),
+            ],
             const Icon(Icons.chevron_right, color: Color(0xFFD9D9D9)),
           ],
         ),
@@ -444,6 +502,54 @@ class _ShopProfilePageState extends State<ShopProfilePage> {
       if (mounted) _showSnackBar(error.message);
     } finally {
       if (mounted) setState(() => _saving = false);
+    }
+  }
+
+  Future<void> _updateBusinessStatus(bool value) async {
+    final oldValue = _isOpen;
+
+    setState(() {
+      _isOpen = value;
+      _saving = true;
+    });
+
+    try {
+      final updated = await shopApi.updateMyShop(
+        name: _nameController.text.trim(),
+        description: _descriptionController.text.trim(),
+        coverImageUrl: _coverImageUrl,
+        address: _addressController.text.trim(),
+        phone: _phoneController.text.trim(),
+        businessStatus: value ? 'OPEN' : 'CLOSED',
+        visibilityType: _visibilityType,
+        familyName: _familyName,
+        familyJoinMode: _familyJoinMode,
+        familyImageUrl: _familyImageUrl,
+      );
+
+      if (!mounted) return;
+
+      setState(() {
+        _isOpen = updated.isOpen;
+        _error = null;
+      });
+
+      _showSnackBar(updated.isOpen ? '店铺已切换为营业中' : '店铺已切换为休息中');
+
+      // 兜底刷新，后端 WS 到达前也能保证当前页数据正确
+      _load(silent: true);
+    } on ApiException catch (error) {
+      if (!mounted) return;
+
+      setState(() {
+        _isOpen = oldValue;
+      });
+
+      _showSnackBar(error.message);
+    } finally {
+      if (mounted) {
+        setState(() => _saving = false);
+      }
     }
   }
 

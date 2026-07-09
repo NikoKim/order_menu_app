@@ -4,6 +4,7 @@ import 'package:flutter/material.dart';
 
 import '../models/shop_api_models.dart';
 import '../services/shop_api_service.dart';
+import '../services/websocket_service.dart';
 import 'shop_order_detail_page.dart';
 
 const _warmOrange = Color(0xFFF28C28);
@@ -30,7 +31,7 @@ class _OrderManagePageState extends State<OrderManagePage> {
   ];
 
   List<OrderSummary> _orders = const [];
-  Timer? _refreshTimer;
+  StreamSubscription? _wsSubscription;
   bool _loading = true;
   String? _error;
 
@@ -38,8 +39,22 @@ class _OrderManagePageState extends State<OrderManagePage> {
   void initState() {
     super.initState();
     _load();
-    _refreshTimer = Timer.periodic(const Duration(seconds: 6), (_) {
-      if (mounted) {
+
+    _wsSubscription = ShopWebSocketService.instance
+        .streamForModule('ORDER')
+        .listen((msg) {
+      if (!mounted) return;
+
+      final shouldRefresh = {
+        'CREATED',
+        'UPDATED',
+        'ACCEPTED',
+        'REJECTED',
+        'COMPLETED',
+        'CANCELED',
+      }.contains(msg.action);
+
+      if (shouldRefresh) {
         _load(silent: true);
       }
     });
@@ -47,7 +62,7 @@ class _OrderManagePageState extends State<OrderManagePage> {
 
   @override
   void dispose() {
-    _refreshTimer?.cancel();
+    _wsSubscription?.cancel();
     super.dispose();
   }
 

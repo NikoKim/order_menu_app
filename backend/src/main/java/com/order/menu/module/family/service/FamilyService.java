@@ -12,6 +12,8 @@ import com.order.menu.module.shop.service.ShopService;
 import com.order.menu.module.user.entity.User;
 import com.order.menu.module.user.mapper.UserMapper;
 import java.util.List;
+
+import com.order.menu.websocket.WsPushService;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
 
@@ -22,6 +24,7 @@ public class FamilyService {
     private final ShopMapper shopMapper;
     private final ShopService shopService;
     private final UserMapper userMapper;
+    private final WsPushService wsPushService;
 
     public FamilyDtos.MyFamiliesResponse myFamilies(Long userId) {
         List<FamilyDtos.FamilyResponse> families = familyMemberMapper.selectList(new LambdaQueryWrapper<FamilyMember>()
@@ -61,6 +64,13 @@ public class FamilyService {
         } else {
             familyMemberMapper.updateById(member);
         }
+
+        if ("PENDING".equals(member.getStatus())) {
+            wsPushService.pushFamilyMemberApplied(member);
+        } else if ("APPROVED".equals(member.getStatus())) {
+            wsPushService.pushFamilyMemberApproved(member);
+        }
+
         return toResponse(member);
     }
 
@@ -93,12 +103,17 @@ public class FamilyService {
         FamilyMember member = requireOwnedMember(ownerUserId, memberId);
         member.setStatus("APPROVED");
         familyMemberMapper.updateById(member);
+        wsPushService.pushFamilyMemberApproved(member);
         return toMemberResponse(member);
     }
 
     public void reject(Long ownerUserId, Long memberId) {
         FamilyMember member = requireOwnedMember(ownerUserId, memberId);
+        Long deletedMemberId = member.getId();
+        Long shopId = member.getShopId();
+        Long userId = member.getUserId();
         familyMemberMapper.deleteById(member.getId());
+        wsPushService.pushFamilyMemberRejected(deletedMemberId, shopId, userId);
     }
 
     private FamilyMember requireOwnedMember(Long ownerUserId, Long memberId) {
