@@ -239,17 +239,20 @@ class ShopNotificationInfo {
   const ShopNotificationInfo({
     required this.pendingOrders,
     required this.pendingFamilyMembers,
+    required this.pendingFeedback,
   });
 
   factory ShopNotificationInfo.fromJson(Map<String, dynamic> json) {
     return ShopNotificationInfo(
       pendingOrders: _asInt(json['pendingOrders']),
       pendingFamilyMembers: _asInt(json['pendingFamilyMembers']),
+      pendingFeedback: _asInt(json['pendingFeedback']),
     );
   }
 
   final int pendingOrders;
   final int pendingFamilyMembers;
+  final int pendingFeedback;
 }
 
 class DishOptionItemInfo {

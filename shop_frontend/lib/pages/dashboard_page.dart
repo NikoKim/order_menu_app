@@ -4,11 +4,12 @@ import 'package:flutter/material.dart';
 
 import '../models/shop_api_models.dart';
 import '../services/shop_api_service.dart';
+import '../services/websocket_service.dart';
 import 'dish_manage_page.dart';
 import 'feedback_manage_page.dart';
 import 'order_manage_page.dart';
 import 'showcase_manage_page.dart';
-import 'shop_family_page.dart'; // 新增：引入家庭管理页
+import 'shop_family_page.dart';
 
 const _warmOrange = Color(0xFFF28C28);
 const _softOrange = Color(0xFFFFF4E8);
@@ -27,7 +28,9 @@ class _DashboardPageState extends State<DashboardPage> {
   ShopInfo? _shop;
   List<OrderSummary> _orders = const [];
   int _totalOnSaleDishes = 0;
-  Timer? _refreshTimer;
+  ShopNotificationInfo? _notifications;
+  int _pendingFeedbackCount = 0; // 新增：保存留言数
+  StreamSubscription? _wsSubscription;
   bool _loading = true;
   String? _error;
 
@@ -35,16 +38,14 @@ class _DashboardPageState extends State<DashboardPage> {
   void initState() {
     super.initState();
     _load();
-    _refreshTimer = Timer.periodic(const Duration(seconds: 8), (_) {
-      if (mounted) {
-        _load(silent: true);
-      }
+    _wsSubscription = ShopWebSocketService.instance.messageStream.listen((msg) {
+      if (mounted) _load(silent: true);
     });
   }
 
   @override
   void dispose() {
-    _refreshTimer?.cancel();
+    _wsSubscription?.cancel();
     super.dispose();
   }
 
@@ -60,24 +61,24 @@ class _DashboardPageState extends State<DashboardPage> {
         shopApi.fetchMyShop(),
         shopApi.fetchOrders(pageSize: 100),
         shopApi.fetchDishes(status: 'ON_SALE', pageSize: 1),
+        shopApi.fetchNotifications(),
+        // 主动获取未处理留言
+        shopApi.fetchFeedback(status: 'PENDING', pageSize: 1),
       ]);
-      if (!mounted) {
-        return;
-      }
+      if (!mounted) return;
+
       setState(() {
         _shop = results[0] as ShopInfo;
         _orders = (results[1] as PageResult<OrderSummary>).records;
         _totalOnSaleDishes = (results[2] as PageResult<DishInfo>).total;
+        _notifications = results[3] as ShopNotificationInfo;
+        _pendingFeedbackCount = (results[4] as PageResult<FeedbackInfo>).total;
         _error = null;
       });
     } on ApiException catch (error) {
-      if (mounted && !silent) {
-        setState(() => _error = error.message);
-      }
+      if (mounted && !silent) setState(() => _error = error.message);
     } finally {
-      if (mounted && !silent) {
-        setState(() => _loading = false);
-      }
+      if (mounted && !silent) setState(() => _loading = false);
     }
   }
 
@@ -105,25 +106,22 @@ class _DashboardPageState extends State<DashboardPage> {
                   _ErrorBanner(message: _error!, onRetry: _load),
                 _ShopHeader(shop: _shop),
                 const SizedBox(height: 14),
-
                 _PendingAlertBanner(orders: _orders),
-
                 _DataDashboardCard(orders: _orders),
                 const SizedBox(height: 20),
-
                 const Padding(
                   padding: EdgeInsets.symmetric(horizontal: 4, vertical: 8),
                   child: Text(
                     '快捷应用',
-                    style: TextStyle(
-                      color: _textColor,
-                      fontSize: 17,
-                      fontWeight: FontWeight.w800,
-                    ),
+                    style: TextStyle(color: _textColor, fontSize: 17, fontWeight: FontWeight.w800),
                   ),
                 ),
-                // 传入当前店铺信息与刷新方法，供快捷入口内部调用
-                _ShortcutGrid(shop: _shop, onRefresh: _load),
+                _ShortcutGrid(
+                    shop: _shop,
+                    notifications: _notifications,
+                    pendingFeedbackCount: _pendingFeedbackCount,
+                    onRefresh: _load
+                ),
               ],
             ],
           ),
@@ -184,11 +182,7 @@ class _ShopHeader extends StatelessWidget {
               children: [
                 Text(
                   shop?.name.isNotEmpty == true ? shop!.name : '商家工作台',
-                  style: const TextStyle(
-                    color: _textColor,
-                    fontSize: 20,
-                    fontWeight: FontWeight.w800,
-                  ),
+                  style: const TextStyle(color: _textColor, fontSize: 20, fontWeight: FontWeight.w800),
                 ),
                 const SizedBox(height: 6),
                 _OpenStatusBadge(isOpen: shop?.isOpen ?? true),
@@ -257,26 +251,18 @@ class _PendingAlertBanner extends StatelessWidget {
             Expanded(
               child: Text(
                 '您有 $pendingCount 笔新订单待处理',
-                style: const TextStyle(
-                  color: _warmOrange,
-                  fontWeight: FontWeight.w700,
-                  fontSize: 14,
-                ),
+                style: const TextStyle(color: _warmOrange, fontWeight: FontWeight.w700, fontSize: 14),
               ),
             ),
             FilledButton(
               onPressed: () {
-                Navigator.of(context).push(
-                  MaterialPageRoute(builder: (_) => const OrderManagePage()),
-                );
+                Navigator.of(context).push(MaterialPageRoute(builder: (_) => const OrderManagePage()));
               },
               style: FilledButton.styleFrom(
                 backgroundColor: _warmOrange,
                 minimumSize: const Size(72, 34),
                 padding: const EdgeInsets.symmetric(horizontal: 16),
-                shape: RoundedRectangleBorder(
-                  borderRadius: BorderRadius.circular(8),
-                ),
+                shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
               ),
               child: const Text('立即处理', style: TextStyle(fontSize: 13)),
             )
@@ -306,24 +292,14 @@ class _DataDashboardCard extends StatelessWidget {
           Row(
             mainAxisAlignment: MainAxisAlignment.spaceBetween,
             children: [
-              const Text(
-                '今日实收金额 (元)',
-                style: TextStyle(color: _mutedColor, fontSize: 13, fontWeight: FontWeight.w600),
-              ),
-              Text(
-                today,
-                style: const TextStyle(color: _mutedColor, fontSize: 12),
-              ),
+              const Text('今日实收金额 (元)', style: TextStyle(color: _mutedColor, fontSize: 13, fontWeight: FontWeight.w600)),
+              Text(today, style: const TextStyle(color: _mutedColor, fontSize: 12)),
             ],
           ),
           const SizedBox(height: 8),
           Text(
             todayIncome.toStringAsFixed(2),
-            style: const TextStyle(
-              color: _textColor,
-              fontSize: 32,
-              fontWeight: FontWeight.w900,
-            ),
+            style: const TextStyle(color: _textColor, fontSize: 32, fontWeight: FontWeight.w900),
           ),
           const Padding(
             padding: EdgeInsets.symmetric(vertical: 16),
@@ -366,9 +342,17 @@ class _DataDashboardCard extends StatelessWidget {
 
 class _ShortcutGrid extends StatelessWidget {
   final ShopInfo? shop;
+  final ShopNotificationInfo? notifications;
+  final int pendingFeedbackCount;
   final VoidCallback onRefresh;
 
-  const _ShortcutGrid({this.shop, required this.onRefresh});
+  const _ShortcutGrid({
+    super.key,
+    this.shop,
+    this.notifications,
+    this.pendingFeedbackCount = 0,
+    required this.onRefresh
+  });
 
   @override
   Widget build(BuildContext context) {
@@ -392,10 +376,11 @@ class _ShortcutGrid extends StatelessWidget {
               ),
               SizedBox(
                 width: itemWidth,
-                child: const _GridShortcutItem(
+                child: _GridShortcutItem(
                   icon: Icons.receipt_long_outlined,
                   title: '订单处理',
-                  targetPage: OrderManagePage(),
+                  targetPage: const OrderManagePage(),
+                  badgeCount: notifications?.pendingOrders ?? 0,
                 ),
               ),
               SizedBox(
@@ -408,10 +393,11 @@ class _ShortcutGrid extends StatelessWidget {
               ),
               SizedBox(
                 width: itemWidth,
-                child: const _GridShortcutItem(
+                child: _GridShortcutItem(
                   icon: Icons.family_restroom,
                   title: '家庭管理',
-                  targetPage: ShopFamilyPage(),
+                  targetPage: const ShopFamilyPage(),
+                  badgeCount: notifications?.pendingFamilyMembers ?? 0,
                 ),
               ),
               SizedBox(
@@ -432,10 +418,11 @@ class _ShortcutGrid extends StatelessWidget {
               ),
               SizedBox(
                 width: itemWidth,
-                child: const _GridShortcutItem(
+                child: _GridShortcutItem(
                   icon: Icons.forum_outlined,
                   title: '顾客反馈',
-                  targetPage: FeedbackManagePage(),
+                  targetPage: const FeedbackManagePage(),
+                  badgeCount: pendingFeedbackCount,
                 ),
               ),
             ],
@@ -452,15 +439,28 @@ class _GridShortcutItem extends StatelessWidget {
     required this.title,
     this.targetPage,
     this.onTap,
+    this.badgeCount = 0,
   });
 
   final IconData icon;
   final String title;
   final Widget? targetPage;
   final VoidCallback? onTap;
+  final int badgeCount;
 
   @override
   Widget build(BuildContext context) {
+    Widget iconWidget = Icon(icon, color: const Color(0xFFF28C28), size: 22);
+    // 展示数量红点，颜色固定为与订单相同的红
+    if (badgeCount > 0) {
+      iconWidget = Badge(
+        label: Text(badgeCount > 9 ? '...' : '$badgeCount'),
+        offset: const Offset(8, -6),
+        backgroundColor: Colors.redAccent,
+        child: iconWidget,
+      );
+    }
+
     return InkWell(
       onTap: () {
         if (onTap != null) {
@@ -479,17 +479,13 @@ class _GridShortcutItem extends StatelessWidget {
               color: const Color(0xFFFFF8F0),
               borderRadius: BorderRadius.circular(10),
             ),
-            child: Icon(icon, color: _warmOrange, size: 22),
+            child: Center(child: iconWidget),
           ),
           const SizedBox(width: 12),
           Expanded(
             child: Text(
               title,
-              style: const TextStyle(
-                color: _textColor,
-                fontSize: 14,
-                fontWeight: FontWeight.w700,
-              ),
+              style: const TextStyle(color: Color(0xFF242424), fontSize: 14, fontWeight: FontWeight.w700),
             ),
           ),
         ],
@@ -521,16 +517,11 @@ class _ErrorBanner extends StatelessWidget {
   }
 }
 
-// --------------------------------------------------------------------------
-// 营业状态快捷设置弹窗
-// --------------------------------------------------------------------------
 void _showStatusToggleDialog(BuildContext context, ShopInfo shop, VoidCallback onRefresh) {
   showModalBottomSheet(
     context: context,
     backgroundColor: Colors.white,
-    shape: const RoundedRectangleBorder(
-      borderRadius: BorderRadius.vertical(top: Radius.circular(16)),
-    ),
+    shape: const RoundedRectangleBorder(borderRadius: BorderRadius.vertical(top: Radius.circular(16))),
     builder: (context) {
       bool isSubmitting = false;
       return StatefulBuilder(
@@ -560,23 +551,15 @@ void _showStatusToggleDialog(BuildContext context, ShopInfo shop, VoidCallback o
                       setModalState(() => isSubmitting = true);
                       try {
                         await shopApi.updateMyShop(
-                          name: shop.name,
-                          description: shop.description,
-                          coverImageUrl: shop.coverImageUrl,
-                          address: shop.address,
-                          phone: shop.phone,
-                          visibilityType: shop.visibilityType,
-                          familyName: shop.familyName,
-                          familyJoinMode: shop.familyJoinMode,
-                          familyImageUrl: shop.familyImageUrl,
-                          businessStatus: 'OPEN',
+                          name: shop.name, description: shop.description, coverImageUrl: shop.coverImageUrl,
+                          address: shop.address, phone: shop.phone, visibilityType: shop.visibilityType,
+                          familyName: shop.familyName, familyJoinMode: shop.familyJoinMode,
+                          familyImageUrl: shop.familyImageUrl, businessStatus: 'OPEN',
                         );
                         onRefresh();
                         if (context.mounted) Navigator.pop(context);
                       } catch (e) {
-                        if (context.mounted) {
-                          ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(e.toString())));
-                        }
+                        if (context.mounted) ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(e.toString())));
                         setModalState(() => isSubmitting = false);
                       }
                     },
@@ -592,23 +575,15 @@ void _showStatusToggleDialog(BuildContext context, ShopInfo shop, VoidCallback o
                       setModalState(() => isSubmitting = true);
                       try {
                         await shopApi.updateMyShop(
-                          name: shop.name,
-                          description: shop.description,
-                          coverImageUrl: shop.coverImageUrl,
-                          address: shop.address,
-                          phone: shop.phone,
-                          visibilityType: shop.visibilityType,
-                          familyName: shop.familyName,
-                          familyJoinMode: shop.familyJoinMode,
-                          familyImageUrl: shop.familyImageUrl,
-                          businessStatus: 'CLOSED',
+                          name: shop.name, description: shop.description, coverImageUrl: shop.coverImageUrl,
+                          address: shop.address, phone: shop.phone, visibilityType: shop.visibilityType,
+                          familyName: shop.familyName, familyJoinMode: shop.familyJoinMode,
+                          familyImageUrl: shop.familyImageUrl, businessStatus: 'CLOSED',
                         );
                         onRefresh();
                         if (context.mounted) Navigator.pop(context);
                       } catch (e) {
-                        if (context.mounted) {
-                          ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(e.toString())));
-                        }
+                        if (context.mounted) ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(e.toString())));
                         setModalState(() => isSubmitting = false);
                       }
                     },
