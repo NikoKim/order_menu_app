@@ -44,7 +44,10 @@ public class ShopService {
                 .eq(Shop::getStatus, 1)
                 .inSql(Shop::getOwnerUserId, "select id from users where status = 1")
                 .eq(StringUtils.hasText(safeFamilyCode), Shop::getFamilyCode, safeFamilyCode)
-                .eq(!StringUtils.hasText(safeFamilyCode), Shop::getVisibilityType, "PUBLIC")
+                .and(!StringUtils.hasText(safeFamilyCode), wrapper -> wrapper
+                        .eq(Shop::getVisibilityType, "PUBLIC")
+                        .or()
+                        .isNull(Shop::getFamilyCode))
                 .like(StringUtils.hasText(safeKeyword), Shop::getName, safeKeyword)
                 .orderByDesc(Shop::getId));
 

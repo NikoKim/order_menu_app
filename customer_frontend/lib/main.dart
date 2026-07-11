@@ -10,6 +10,8 @@ import 'package:dio/dio.dart';
 import 'package:path_provider/path_provider.dart';
 import 'package:open_filex/open_filex.dart';
 
+import 'services/customer_websocket_service.dart';
+
 void main() {
   runApp(const OrderMenuCustomerApp());
 }
@@ -129,7 +131,7 @@ class _CustomerShellState extends State<CustomerShell> {
   bool _autoSelectedLogin = false;
   bool _hasCheckedUpdate = false;
   late CustomerApi _customerApi;
-
+  String? _webSocketToken;
 
   @override
   void didChangeDependencies() {
@@ -149,7 +151,10 @@ class _CustomerShellState extends State<CustomerShell> {
       int currentCode = int.tryParse(packageInfo.buildNumber) ?? 1;
 
       // 向服务器查询 'customer' 端是否有新版 (注意这里传的是 'customer')
-      final updateInfo = await _customerApi.checkUpdate('customer', currentCode);
+      final updateInfo = await _customerApi.checkUpdate(
+        'customer',
+        currentCode,
+      );
 
       if (updateInfo['hasUpdate'] == true && mounted) {
         _showUpdateDialog(updateInfo);
@@ -159,11 +164,34 @@ class _CustomerShellState extends State<CustomerShell> {
     }
   }
 
+  void _syncWebSocket(AuthController auth) {
+    final token = auth.api.token;
+    if (auth.isReady && auth.isLoggedIn && token != null && token.isNotEmpty) {
+      if (_webSocketToken != token) {
+        _webSocketToken = token;
+        CustomerWebSocketService.instance.connect(token, force: true);
+      }
+      return;
+    }
+
+    if (_webSocketToken != null) {
+      _webSocketToken = null;
+      CustomerWebSocketService.instance.disconnect();
+    }
+  }
+
+  @override
+  void dispose() {
+    CustomerWebSocketService.instance.disconnect();
+    super.dispose();
+  }
+
   void _showUpdateDialog(Map<String, dynamic> updateInfo) {
     final bool isForce = updateInfo['isForce'] == true;
     final String versionName = updateInfo['versionName']?.toString() ?? '';
     final String url = updateInfo['downloadUrl']?.toString() ?? '';
-    final String rawUpdateContent = updateInfo['updateContent']?.toString() ?? '';
+    final String rawUpdateContent =
+        updateInfo['updateContent']?.toString() ?? '';
     final String updateContent = rawUpdateContent
         .replaceAll(r'\r\n', '\n')
         .replaceAll(r'\n', '\n');
@@ -183,9 +211,9 @@ class _CustomerShellState extends State<CustomerShell> {
             Future<void> installApk() async {
               final path = apkPath;
               if (path == null || path.isEmpty) {
-                ScaffoldMessenger.of(context).showSnackBar(
-                  const SnackBar(content: Text('安装包不存在，请先下载')),
-                );
+                ScaffoldMessenger.of(
+                  context,
+                ).showSnackBar(const SnackBar(content: Text('安装包不存在，请先下载')));
                 return;
               }
 
@@ -206,18 +234,18 @@ class _CustomerShellState extends State<CustomerShell> {
                 debugPrint('$st');
 
                 if (mounted) {
-                  ScaffoldMessenger.of(context).showSnackBar(
-                    SnackBar(content: Text('打开安装程序失败：$e')),
-                  );
+                  ScaffoldMessenger.of(
+                    context,
+                  ).showSnackBar(SnackBar(content: Text('打开安装程序失败：$e')));
                 }
               }
             }
 
             Future<void> startDownload() async {
               if (url.isEmpty) {
-                ScaffoldMessenger.of(context).showSnackBar(
-                  const SnackBar(content: Text('下载链接为空')),
-                );
+                ScaffoldMessenger.of(
+                  context,
+                ).showSnackBar(const SnackBar(content: Text('下载链接为空')));
                 return;
               }
 
@@ -272,7 +300,7 @@ class _CustomerShellState extends State<CustomerShell> {
                     setDialogState(() {
                       progress = nextProgress;
                       statusText =
-                      '正在下载 ${(progress * 100).toStringAsFixed(0)}%';
+                          '正在下载 ${(progress * 100).toStringAsFixed(0)}%';
                     });
                   },
                 );
@@ -298,9 +326,9 @@ class _CustomerShellState extends State<CustomerShell> {
                 });
 
                 if (mounted) {
-                  ScaffoldMessenger.of(context).showSnackBar(
-                    SnackBar(content: Text('下载失败：$e')),
-                  );
+                  ScaffoldMessenger.of(
+                    context,
+                  ).showSnackBar(SnackBar(content: Text('下载失败：$e')));
                 }
               }
             }
@@ -318,7 +346,10 @@ class _CustomerShellState extends State<CustomerShell> {
                       if (updateContent.isNotEmpty) ...[
                         const Text(
                           '更新内容：',
-                          style: TextStyle(fontWeight: FontWeight.bold, fontSize: 15),
+                          style: TextStyle(
+                            fontWeight: FontWeight.bold,
+                            fontSize: 15,
+                          ),
                         ),
                         const SizedBox(height: 6),
                         Text(
@@ -331,7 +362,10 @@ class _CustomerShellState extends State<CustomerShell> {
                       // 防锁屏/切后台提示框
                       Container(
                         width: double.infinity,
-                        padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
+                        padding: const EdgeInsets.symmetric(
+                          horizontal: 10,
+                          vertical: 8,
+                        ),
                         decoration: BoxDecoration(
                           color: const Color(0xFFFFF4E8),
                           borderRadius: BorderRadius.circular(6),
@@ -395,6 +429,9 @@ class _CustomerShellState extends State<CustomerShell> {
       builder: (context, _) {
         final isReady = services.auth.isReady;
         final loggedIn = services.auth.isLoggedIn;
+        WidgetsBinding.instance.addPostFrameCallback((_) {
+          if (mounted) _syncWebSocket(services.auth);
+        });
         if (isReady && !loggedIn && !_autoSelectedLogin) {
           _autoSelectedLogin = true;
           WidgetsBinding.instance.addPostFrameCallback((_) {

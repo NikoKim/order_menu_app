@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:convert';
 
 import 'package:flutter/foundation.dart';
@@ -17,9 +18,12 @@ class ApiException implements Exception {
 }
 
 class ApiClient {
-  ApiClient({http.Client? httpClient, String? baseUrl})
-    : _httpClient = httpClient ?? http.Client(),
-      baseUrl = baseUrl ?? defaultBaseUrl;
+  ApiClient({
+    http.Client? httpClient,
+    String? baseUrl,
+    this.requestTimeout = const Duration(seconds: 15),
+  }) : _httpClient = httpClient ?? http.Client(),
+       baseUrl = baseUrl ?? defaultBaseUrl;
 
   static const defaultBaseUrl = String.fromEnvironment(
     'CUSTOMER_API_BASE_URL',
@@ -28,6 +32,7 @@ class ApiClient {
 
   final http.Client _httpClient;
   final String baseUrl;
+  final Duration requestTimeout;
   String? token;
 
   Future<T> get<T>(
@@ -72,8 +77,10 @@ class ApiClient {
           'Authorization': 'Bearer $token',
       })
       ..files.add(await http.MultipartFile.fromPath(field, filePath));
-    final streamed = await _httpClient.send(request);
-    final response = await http.Response.fromStream(streamed);
+    final streamed = await _httpClient.send(request).timeout(requestTimeout);
+    final response = await http.Response.fromStream(
+      streamed,
+    ).timeout(requestTimeout);
     final decoded = response.body.isEmpty ? null : jsonDecode(response.body);
     if (response.statusCode < 200 || response.statusCode >= 300) {
       throw ApiException('Request failed', statusCode: response.statusCode);
@@ -109,18 +116,26 @@ class ApiClient {
     };
 
     final response = switch (method) {
-      'GET' => await _httpClient.get(uri, headers: headers),
-      'POST' => await _httpClient.post(
-        uri,
-        headers: headers,
-        body: body == null ? null : jsonEncode(body),
-      ),
-      'PUT' => await _httpClient.put(
-        uri,
-        headers: headers,
-        body: body == null ? null : jsonEncode(body),
-      ),
-      'DELETE' => await _httpClient.delete(uri, headers: headers),
+      'GET' =>
+        await _httpClient.get(uri, headers: headers).timeout(requestTimeout),
+      'POST' =>
+        await _httpClient
+            .post(
+              uri,
+              headers: headers,
+              body: body == null ? null : jsonEncode(body),
+            )
+            .timeout(requestTimeout),
+      'PUT' =>
+        await _httpClient
+            .put(
+              uri,
+              headers: headers,
+              body: body == null ? null : jsonEncode(body),
+            )
+            .timeout(requestTimeout),
+      'DELETE' =>
+        await _httpClient.delete(uri, headers: headers).timeout(requestTimeout),
       _ => throw ApiException('不支持的请求方法：$method'),
     };
 
@@ -334,11 +349,14 @@ class CustomerApi {
 
   final ApiClient api;
 
-  Future<Map<String, dynamic>> checkUpdate(String appCode, int currentVersionCode) async {
+  Future<Map<String, dynamic>> checkUpdate(
+    String appCode,
+    int currentVersionCode,
+  ) async {
     try {
       final data = await api.get<Map<String, dynamic>>(
         '/version/check',
-            (json) => json as Map<String, dynamic>,
+        (json) => json as Map<String, dynamic>,
         query: {
           'appCode': appCode,
           'currentVersionCode': currentVersionCode.toString(),

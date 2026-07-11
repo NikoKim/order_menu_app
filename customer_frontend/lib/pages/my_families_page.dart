@@ -1,9 +1,11 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 
 import '../app_mock_data.dart';
-import '../main.dart';
 import '../models.dart';
 import '../services/api_client.dart';
+import '../services/customer_websocket_service.dart';
 import '../widgets/app_footer.dart';
 
 class MyFamiliesPage extends StatefulWidget {
@@ -19,16 +21,30 @@ class _MyFamiliesPageState extends State<MyFamiliesPage> {
   final _codeController = TextEditingController();
   late Future<List<FamilyInfo>> _familiesFuture;
   bool _joining = false;
+  StreamSubscription<CustomerWsMessage>? _webSocketSubscription;
 
   @override
   void initState() {
     super.initState();
     _familiesFuture = widget.api.myFamilies();
+    _webSocketSubscription = CustomerWebSocketService.instance
+        .streamForModule('FAMILY')
+        .listen((message) {
+          if (mounted &&
+              const {
+                'MEMBER_APPLIED',
+                'MEMBER_APPROVED',
+                'MEMBER_REJECTED',
+              }.contains(message.action)) {
+            _reload();
+          }
+        });
   }
 
   @override
   void dispose() {
     _codeController.dispose();
+    _webSocketSubscription?.cancel();
     super.dispose();
   }
 
@@ -67,10 +83,7 @@ class _MyFamiliesPageState extends State<MyFamiliesPage> {
     ScaffoldMessenger.of(context)
       ..hideCurrentSnackBar()
       ..showSnackBar(
-        SnackBar(
-          content: Text(message),
-          behavior: SnackBarBehavior.floating,
-        ),
+        SnackBar(content: Text(message), behavior: SnackBarBehavior.floating),
       );
   }
 
@@ -113,13 +126,13 @@ class _MyFamiliesPageState extends State<MyFamiliesPage> {
                       onPressed: _joining ? null : _join,
                       icon: _joining
                           ? const SizedBox(
-                        width: 18,
-                        height: 18,
-                        child: CircularProgressIndicator(
-                          strokeWidth: 2,
-                          color: warmOrange,
-                        ),
-                      )
+                              width: 18,
+                              height: 18,
+                              child: CircularProgressIndicator(
+                                strokeWidth: 2,
+                                color: warmOrange,
+                              ),
+                            )
                           : const Icon(Icons.login_rounded),
                     ),
                   ),
@@ -158,7 +171,10 @@ class _MyFamiliesPageState extends State<MyFamiliesPage> {
                     crossAxisAlignment: CrossAxisAlignment.stretch,
                     children: [
                       for (final family in families) ...[
-                        _FamilyCard(family: family, onLeave: () => _leave(family)),
+                        _FamilyCard(
+                          family: family,
+                          onLeave: () => _leave(family),
+                        ),
                         const SizedBox(height: 12),
                       ],
                     ],
@@ -206,30 +222,31 @@ class _FamilyCard extends StatelessWidget {
             ),
             child: family.familyImageUrl?.isNotEmpty == true
                 ? Image.network(
-              resolveCustomerImageUrl(family.familyImageUrl!),
-              fit: BoxFit.cover,
-              loadingBuilder: (context, child, progress) {
-                if (progress == null) {
-                  return TweenAnimationBuilder<double>(
-                    tween: Tween(begin: 0.0, end: 1.0),
-                    duration: const Duration(milliseconds: 300),
-                    builder: (context, value, child) => Opacity(opacity: value, child: child),
-                    child: child,
-                  );
-                }
-                return const Center(
-                  child: CircularProgressIndicator(
-                    strokeWidth: 2,
-                    color: warmOrange,
-                  ),
-                );
-              },
-              errorBuilder: (_, _, _) => const Icon(
-                Icons.home_outlined,
-                color: warmOrange,
-                size: 30,
-              ),
-            )
+                    resolveCustomerImageUrl(family.familyImageUrl!),
+                    fit: BoxFit.cover,
+                    loadingBuilder: (context, child, progress) {
+                      if (progress == null) {
+                        return TweenAnimationBuilder<double>(
+                          tween: Tween(begin: 0.0, end: 1.0),
+                          duration: const Duration(milliseconds: 300),
+                          builder: (context, value, child) =>
+                              Opacity(opacity: value, child: child),
+                          child: child,
+                        );
+                      }
+                      return const Center(
+                        child: CircularProgressIndicator(
+                          strokeWidth: 2,
+                          color: warmOrange,
+                        ),
+                      );
+                    },
+                    errorBuilder: (_, _, _) => const Icon(
+                      Icons.home_outlined,
+                      color: warmOrange,
+                      size: 30,
+                    ),
+                  )
                 : const Icon(Icons.home_outlined, color: warmOrange, size: 30),
           ),
           const SizedBox(width: 12),
@@ -261,14 +278,21 @@ class _FamilyCard extends StatelessWidget {
                 const SizedBox(height: 6),
                 Row(
                   children: [
-                    const Icon(Icons.confirmation_number_outlined, color: warmOrange, size: 14),
+                    const Icon(
+                      Icons.confirmation_number_outlined,
+                      color: warmOrange,
+                      size: 14,
+                    ),
                     const SizedBox(width: 4),
                     Expanded(
                       child: Text(
                         family.familyCode,
                         maxLines: 1,
                         overflow: TextOverflow.ellipsis,
-                        style: const TextStyle(color: pageMutedColor, fontSize: 12),
+                        style: const TextStyle(
+                          color: pageMutedColor,
+                          fontSize: 12,
+                        ),
                       ),
                     ),
                   ],
@@ -277,10 +301,7 @@ class _FamilyCard extends StatelessWidget {
             ),
           ),
           const SizedBox(width: 8),
-          TextButton(
-            onPressed: onLeave,
-            child: const Text('退出'),
-          ),
+          TextButton(onPressed: onLeave, child: const Text('退出')),
         ],
       ),
     );
@@ -346,7 +367,11 @@ class _FamiliesSkeleton extends StatelessWidget {
                   child: Column(
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
-                      Container(height: 18, width: double.infinity, color: skeletonColor),
+                      Container(
+                        height: 18,
+                        width: double.infinity,
+                        color: skeletonColor,
+                      ),
                       const SizedBox(height: 10),
                       Container(height: 14, width: 120, color: skeletonColor),
                     ],

@@ -5,6 +5,7 @@ import 'package:flutter/material.dart';
 import '../app_mock_data.dart';
 import '../models.dart';
 import '../services/api_client.dart';
+import '../services/customer_websocket_service.dart';
 import '../widgets/app_footer.dart';
 import 'order_detail_page.dart';
 
@@ -19,22 +20,31 @@ class OrdersPage extends StatefulWidget {
 
 class _OrdersPageState extends State<OrdersPage> {
   late Future<PageResult<OrderSummary>> _ordersFuture;
-  Timer? _refreshTimer;
+  StreamSubscription<CustomerWsMessage>? _webSocketSubscription;
 
   @override
   void initState() {
     super.initState();
     _ordersFuture = widget.api.orders();
-    _refreshTimer = Timer.periodic(const Duration(seconds: 10), (_) {
-      if (mounted) {
-        _reload();
-      }
-    });
+    _webSocketSubscription = CustomerWebSocketService.instance
+        .streamForModule('ORDER')
+        .listen((message) {
+          if (mounted &&
+              const {
+                'CREATED',
+                'CANCELLED',
+                'ACCEPTED',
+                'REJECTED',
+                'COMPLETED',
+              }.contains(message.action)) {
+            _reload();
+          }
+        });
   }
 
   @override
   void dispose() {
-    _refreshTimer?.cancel();
+    _webSocketSubscription?.cancel();
     super.dispose();
   }
 
@@ -213,7 +223,11 @@ class _OrderCard extends StatelessWidget {
             const SizedBox(height: 8),
             Row(
               children: [
-                const Icon(Icons.access_time_rounded, color: warmOrange, size: 14),
+                const Icon(
+                  Icons.access_time_rounded,
+                  color: warmOrange,
+                  size: 14,
+                ),
                 const SizedBox(width: 4),
                 Expanded(
                   child: Text(
@@ -234,7 +248,10 @@ class _OrderCard extends StatelessWidget {
               ),
               child: Row(
                 children: [
-                  const Text('订单号', style: TextStyle(color: pageMutedColor, fontSize: 12)),
+                  const Text(
+                    '订单号',
+                    style: TextStyle(color: pageMutedColor, fontSize: 12),
+                  ),
                   const SizedBox(width: 8),
                   Expanded(
                     child: Text(
@@ -242,7 +259,10 @@ class _OrderCard extends StatelessWidget {
                       maxLines: 1,
                       overflow: TextOverflow.ellipsis,
                       textAlign: TextAlign.right,
-                      style: const TextStyle(color: pageTextColor, fontSize: 12),
+                      style: const TextStyle(
+                        color: pageTextColor,
+                        fontSize: 12,
+                      ),
                     ),
                   ),
                 ],

@@ -1,8 +1,11 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 
 import '../app_mock_data.dart';
 import '../models.dart';
 import '../services/api_client.dart';
+import '../services/customer_websocket_service.dart';
 import '../widgets/app_footer.dart';
 
 class MyFeedbackPage extends StatefulWidget {
@@ -16,11 +19,26 @@ class MyFeedbackPage extends StatefulWidget {
 
 class _MyFeedbackPageState extends State<MyFeedbackPage> {
   late Future<PageResult<FeedbackEntry>> _feedbackFuture;
+  StreamSubscription<CustomerWsMessage>? _webSocketSubscription;
 
   @override
   void initState() {
     super.initState();
     _reload();
+    _webSocketSubscription = CustomerWebSocketService.instance
+        .streamForModule('FEEDBACK')
+        .listen((message) {
+          if (mounted &&
+              const {'CREATED', 'REPLIED'}.contains(message.action)) {
+            _reload();
+          }
+        });
+  }
+
+  @override
+  void dispose() {
+    _webSocketSubscription?.cancel();
+    super.dispose();
   }
 
   void _reload() {
@@ -122,14 +140,21 @@ class _FeedbackCard extends StatelessWidget {
               Expanded(
                 child: Row(
                   children: [
-                    const Icon(Icons.schedule_rounded, color: warmOrange, size: 14),
+                    const Icon(
+                      Icons.schedule_rounded,
+                      color: warmOrange,
+                      size: 14,
+                    ),
                     const SizedBox(width: 4),
                     Expanded(
                       child: Text(
                         _formatTime(feedback.createdAt),
                         maxLines: 1,
                         overflow: TextOverflow.ellipsis,
-                        style: const TextStyle(color: pageMutedColor, fontSize: 12),
+                        style: const TextStyle(
+                          color: pageMutedColor,
+                          fontSize: 12,
+                        ),
                       ),
                     ),
                   ],
@@ -167,7 +192,11 @@ class _FeedbackCard extends StatelessWidget {
                 children: [
                   const Row(
                     children: [
-                      Icon(Icons.storefront_outlined, color: warmOrange, size: 15),
+                      Icon(
+                        Icons.storefront_outlined,
+                        color: warmOrange,
+                        size: 15,
+                      ),
                       SizedBox(width: 4),
                       Text(
                         '商家回复',
@@ -311,7 +340,11 @@ class _FeedbackSkeleton extends StatelessWidget {
                 ],
               ),
               const SizedBox(height: 14),
-              Container(height: 16, width: double.infinity, color: skeletonColor),
+              Container(
+                height: 16,
+                width: double.infinity,
+                color: skeletonColor,
+              ),
               const SizedBox(height: 8),
               Container(height: 16, width: 220, color: skeletonColor),
               const SizedBox(height: 12),
