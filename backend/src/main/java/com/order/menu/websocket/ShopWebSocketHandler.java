@@ -38,6 +38,7 @@ public class ShopWebSocketHandler extends TextWebSocketHandler {
         session.getAttributes().put("shopId", shop.getId());
 
         registry.registerShop(shop.getId(), session);
+        registry.registerUser(ownerUserId, session);
     }
 
     @Override

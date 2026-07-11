@@ -6,6 +6,7 @@ import 'package:shop_frontend/services/websocket_service.dart';
 
 import 'models/shop_api_models.dart';
 import 'pages/dashboard_page.dart';
+import 'pages/chat_list_page.dart';
 import 'pages/dish_manage_page.dart';
 import 'pages/order_manage_page.dart';
 import 'pages/shop_login_page.dart';
@@ -91,6 +92,7 @@ class _ShopShellState extends State<ShopShell> {
   int _pendingOrders = 0;
   int _pendingFamilyMembers = 0;
   int _pendingFeedback = 0;
+  int _unreadChats = 0;
   StreamSubscription? _wsSubscription;
 
   bool _hasCheckedUpdate = false;
@@ -113,10 +115,12 @@ class _ShopShellState extends State<ShopShell> {
         'FEEDBACK',
         'FAMILY',
         'NOTIFICATION',
+        'CHAT',
       }.contains(msg.module);
 
       if (needRefreshBadge) {
         _loadNotifications();
+        _loadChatBadge();
       }
     });
   }
@@ -142,7 +146,8 @@ class _ShopShellState extends State<ShopShell> {
     final bool isForce = updateInfo['isForce'] == true;
     final String versionName = updateInfo['versionName']?.toString() ?? '';
     final String url = updateInfo['downloadUrl']?.toString() ?? '';
-    final String rawUpdateContent = updateInfo['updateContent']?.toString() ?? '';
+    final String rawUpdateContent =
+        updateInfo['updateContent']?.toString() ?? '';
     final String updateContent = rawUpdateContent
         .replaceAll(r'\r\n', '\n')
         .replaceAll(r'\n', '\n');
@@ -162,9 +167,9 @@ class _ShopShellState extends State<ShopShell> {
             Future<void> installApk() async {
               final path = apkPath;
               if (path == null || path.isEmpty) {
-                ScaffoldMessenger.of(context).showSnackBar(
-                  const SnackBar(content: Text('安装包不存在，请先下载')),
-                );
+                ScaffoldMessenger.of(
+                  context,
+                ).showSnackBar(const SnackBar(content: Text('安装包不存在，请先下载')));
                 return;
               }
 
@@ -194,9 +199,9 @@ class _ShopShellState extends State<ShopShell> {
 
             Future<void> startDownload() async {
               if (url.isEmpty) {
-                ScaffoldMessenger.of(context).showSnackBar(
-                  const SnackBar(content: Text('下载链接为空')),
-                );
+                ScaffoldMessenger.of(
+                  context,
+                ).showSnackBar(const SnackBar(content: Text('下载链接为空')));
                 return;
               }
 
@@ -275,9 +280,9 @@ class _ShopShellState extends State<ShopShell> {
                 });
 
                 if (mounted) {
-                  ScaffoldMessenger.of(context).showSnackBar(
-                    SnackBar(content: Text('下载失败：$e')),
-                  );
+                  ScaffoldMessenger.of(
+                    context,
+                  ).showSnackBar(SnackBar(content: Text('下载失败：$e')));
                 }
               }
             }
@@ -295,7 +300,10 @@ class _ShopShellState extends State<ShopShell> {
                       if (updateContent.isNotEmpty) ...[
                         const Text(
                           '更新内容：',
-                          style: TextStyle(fontWeight: FontWeight.bold, fontSize: 15),
+                          style: TextStyle(
+                            fontWeight: FontWeight.bold,
+                            fontSize: 15,
+                          ),
                         ),
                         const SizedBox(height: 6),
                         Text(
@@ -308,7 +316,10 @@ class _ShopShellState extends State<ShopShell> {
                       // 防锁屏/切后台提示框
                       Container(
                         width: double.infinity,
-                        padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
+                        padding: const EdgeInsets.symmetric(
+                          horizontal: 10,
+                          vertical: 8,
+                        ),
                         decoration: BoxDecoration(
                           color: const Color(0xFFFFF4E8),
                           borderRadius: BorderRadius.circular(6),
@@ -380,6 +391,7 @@ class _ShopShellState extends State<ShopShell> {
       });
       if (_loggedIn) {
         _loadNotifications();
+        _loadChatBadge();
         ShopWebSocketService.instance.connect();
       }
     }
@@ -395,6 +407,7 @@ class _ShopShellState extends State<ShopShell> {
         _pendingOrders = 0;
         _pendingFamilyMembers = 0;
         _pendingFeedback = 0;
+        _unreadChats = 0;
       });
     }
   }
@@ -418,6 +431,30 @@ class _ShopShellState extends State<ShopShell> {
     } catch (_) {}
   }
 
+  Future<void> _loadChatBadge() async {
+    if (!_loggedIn) return;
+    try {
+      final conversations = await shopApi.fetchConversations();
+      final count = conversations
+          .where((item) => !item.muted)
+          .fold<int>(0, (total, item) => total + item.unreadCount);
+      if (mounted) setState(() => _unreadChats = count);
+    } catch (_) {}
+  }
+
+  Future<void> _markAllChatsRead() async {
+    try {
+      final conversations = await shopApi.fetchConversations();
+      for (final item in conversations.where((item) => item.unreadCount > 0)) {
+        await shopApi.fetchChatMessages(item.id);
+      }
+    } catch (_) {
+      // Keep navigation responsive while offline.
+    } finally {
+      if (mounted) setState(() => _unreadChats = 0);
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
     if (_checking) {
@@ -425,17 +462,19 @@ class _ShopShellState extends State<ShopShell> {
     }
     if (!_loggedIn) {
       return ShopLoginPage(
-          onLoggedIn: () {
-            setState(() => _loggedIn = true);
-            _loadNotifications();
-            ShopWebSocketService.instance.connect(force: true);
-          }
+        onLoggedIn: () {
+          setState(() => _loggedIn = true);
+          _loadNotifications();
+          _loadChatBadge();
+          ShopWebSocketService.instance.connect(force: true);
+        },
       );
     }
 
     final pages = [
       const DashboardPage(),
       const DishManagePage(),
+      const ChatListPage(),
       const OrderManagePage(),
       ShopProfilePage(onLogout: _logout),
     ];
@@ -452,6 +491,7 @@ class _ShopShellState extends State<ShopShell> {
         onDestinationSelected: (value) {
           setState(() => _index = value);
           _loadNotifications();
+          if (value == 2) _markAllChatsRead();
         },
         destinations: [
           const NavigationDestination(
@@ -463,6 +503,17 @@ class _ShopShellState extends State<ShopShell> {
             icon: Icon(Icons.restaurant_menu_outlined),
             selectedIcon: Icon(Icons.restaurant_menu),
             label: '菜品',
+          ),
+          NavigationDestination(
+            icon: _BadgeIcon(
+              icon: Icons.chat_bubble_outline,
+              count: _unreadChats,
+            ),
+            selectedIcon: _BadgeIcon(
+              icon: Icons.chat_bubble,
+              count: _unreadChats,
+            ),
+            label: '聊天',
           ),
           NavigationDestination(
             icon: _BadgeIcon(

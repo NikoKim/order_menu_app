@@ -1,9 +1,12 @@
-import 'package:flutter/material.dart';
+import 'dart:async';
 import 'dart:io';
+
+import 'package:flutter/material.dart';
 
 import 'pages/auth_page.dart';
 import 'pages/home_page.dart';
 import 'pages/profile_page.dart';
+import 'pages/chat_list_page.dart';
 import 'services/api_client.dart';
 import 'package:package_info_plus/package_info_plus.dart';
 import 'package:dio/dio.dart';
@@ -15,6 +18,9 @@ import 'services/customer_websocket_service.dart';
 void main() {
   runApp(const OrderMenuCustomerApp());
 }
+
+List<String> customerNavigationLabels({required bool loggedIn}) =>
+    loggedIn ? const ['首页', '聊天', '我的'] : const ['首页', '登录'];
 
 class OrderMenuCustomerApp extends StatefulWidget {
   const OrderMenuCustomerApp({super.key});
@@ -132,11 +138,16 @@ class _CustomerShellState extends State<CustomerShell> {
   bool _hasCheckedUpdate = false;
   late CustomerApi _customerApi;
   String? _webSocketToken;
+  StreamSubscription<CustomerWsMessage>? _chatBadgeSubscription;
+  int _unreadChats = 0;
 
   @override
   void didChangeDependencies() {
     super.didChangeDependencies();
     _customerApi = CustomerApi(AppScope.of(context).api);
+    _chatBadgeSubscription ??= CustomerWebSocketService.instance
+        .streamForModule('CHAT')
+        .listen((_) => _refreshChatBadge());
 
     if (!_hasCheckedUpdate) {
       _hasCheckedUpdate = true;
@@ -170,6 +181,7 @@ class _CustomerShellState extends State<CustomerShell> {
       if (_webSocketToken != token) {
         _webSocketToken = token;
         CustomerWebSocketService.instance.connect(token, force: true);
+        _refreshChatBadge();
       }
       return;
     }
@@ -177,11 +189,37 @@ class _CustomerShellState extends State<CustomerShell> {
     if (_webSocketToken != null) {
       _webSocketToken = null;
       CustomerWebSocketService.instance.disconnect();
+      if (mounted) setState(() => _unreadChats = 0);
+    }
+  }
+
+  Future<void> _refreshChatBadge() async {
+    if (!AppScope.of(context).auth.isLoggedIn) return;
+    try {
+      final conversations = await _customerApi.conversations();
+      final count = conversations
+          .where((item) => !item.muted)
+          .fold<int>(0, (total, item) => total + item.unreadCount);
+      if (mounted) setState(() => _unreadChats = count);
+    } catch (_) {}
+  }
+
+  Future<void> _markAllChatsRead() async {
+    try {
+      final conversations = await _customerApi.conversations();
+      for (final item in conversations.where((item) => item.unreadCount > 0)) {
+        await _customerApi.chatMessages(item.id);
+      }
+    } catch (_) {
+      // Opening the chat tab must remain usable while offline.
+    } finally {
+      if (mounted) setState(() => _unreadChats = 0);
     }
   }
 
   @override
   void dispose() {
+    _chatBadgeSubscription?.cancel();
     CustomerWebSocketService.instance.disconnect();
     super.dispose();
   }
@@ -441,19 +479,23 @@ class _CustomerShellState extends State<CustomerShell> {
 
         final pages = [
           HomePage(api: _customerApi),
+          if (loggedIn) const ChatListPage(),
           loggedIn
               ? ProfilePage(api: _customerApi)
-              : AuthPage(onLoggedIn: () => setState(() => _currentIndex = 1)),
+              : AuthPage(onLoggedIn: () => setState(() => _currentIndex = 2)),
         ];
+        final selectedIndex = !loggedIn && _currentIndex >= pages.length
+            ? pages.length - 1
+            : _currentIndex;
 
         return Scaffold(
           body: SafeArea(
             child: isReady
-                ? IndexedStack(index: _currentIndex, children: pages)
+                ? IndexedStack(index: selectedIndex, children: pages)
                 : const Center(child: CircularProgressIndicator()),
           ),
           bottomNavigationBar: NavigationBar(
-            selectedIndex: _currentIndex,
+            selectedIndex: selectedIndex,
             indicatorColor: const Color(0xFFFFE3C4),
             backgroundColor: Colors.white,
             surfaceTintColor: Colors.white,
@@ -461,6 +503,7 @@ class _CustomerShellState extends State<CustomerShell> {
               setState(() {
                 _currentIndex = index;
               });
+              if (loggedIn && index == 1) _markAllChatsRead();
             },
             destinations: [
               const NavigationDestination(
@@ -468,6 +511,18 @@ class _CustomerShellState extends State<CustomerShell> {
                 selectedIcon: Icon(Icons.storefront),
                 label: '首页',
               ),
+              if (loggedIn)
+                NavigationDestination(
+                  icon: _ChatBadgeIcon(
+                    icon: Icons.chat_bubble_outline,
+                    count: _unreadChats,
+                  ),
+                  selectedIcon: _ChatBadgeIcon(
+                    icon: Icons.chat_bubble,
+                    count: _unreadChats,
+                  ),
+                  label: '聊天',
+                ),
               NavigationDestination(
                 icon: Icon(
                   loggedIn ? Icons.person_outline : Icons.login_outlined,
@@ -481,4 +536,17 @@ class _CustomerShellState extends State<CustomerShell> {
       },
     );
   }
+}
+
+class _ChatBadgeIcon extends StatelessWidget {
+  const _ChatBadgeIcon({required this.icon, required this.count});
+  final IconData icon;
+  final int count;
+
+  @override
+  Widget build(BuildContext context) => Badge(
+    isLabelVisible: count > 0,
+    label: Text(count > 99 ? '99+' : '$count'),
+    child: Icon(icon),
+  );
 }

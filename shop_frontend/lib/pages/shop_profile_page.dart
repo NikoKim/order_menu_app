@@ -32,6 +32,7 @@ class _ShopProfilePageState extends State<ShopProfilePage> {
   final TextEditingController _addressController = TextEditingController();
 
   bool _isOpen = true;
+  bool _allowPrivateChat = true;
   bool _loading = true;
   bool _saving = false;
   String? _coverImageUrl;
@@ -99,6 +100,7 @@ class _ShopProfilePageState extends State<ShopProfilePage> {
     try {
       final results = await Future.wait([
         shopApi.fetchMyShop(),
+        shopApi.fetchCurrentUser(),
         shopApi.fetchNotifications(),
         shopApi.fetchFeedback(status: 'PENDING', pageSize: 1),
       ]);
@@ -106,8 +108,9 @@ class _ShopProfilePageState extends State<ShopProfilePage> {
       if (!mounted) return;
 
       final shop = results[0] as ShopInfo;
-      final notifications = results[1] as ShopNotificationInfo;
-      final pendingFeedbackData = results[2] as PageResult<FeedbackInfo>;
+      final currentUser = results[1] as CurrentUser;
+      final notifications = results[2] as ShopNotificationInfo;
+      final pendingFeedbackData = results[3] as PageResult<FeedbackInfo>;
 
       setState(() {
         _nameController.text = shop.name;
@@ -126,6 +129,7 @@ class _ShopProfilePageState extends State<ShopProfilePage> {
         _pendingFeedback = pendingFeedbackData.total;
 
         _isOpen = shop.isOpen;
+        _allowPrivateChat = currentUser.allowPrivateChat;
         _error = null;
       });
     } on ApiException catch (error) {
@@ -240,6 +244,11 @@ class _ShopProfilePageState extends State<ShopProfilePage> {
               const _SectionTitle(title: '经营与管理', icon: Icons.settings_outlined),
               const SizedBox(height: 16),
               _buildOpenStatusSwitch(),
+              const Padding(
+                padding: EdgeInsets.symmetric(vertical: 8),
+                child: Divider(color: _lineColor, height: 1),
+              ),
+              _buildPrivateChatSwitch(),
               const Padding(
                 padding: EdgeInsets.symmetric(vertical: 8),
                 child: Divider(color: _lineColor, height: 1),
@@ -388,6 +397,40 @@ class _ShopProfilePageState extends State<ShopProfilePage> {
           activeColor: Colors.white,
           activeTrackColor: _warmOrange,
           onChanged: _saving ? null : _updateBusinessStatus,
+        ),
+      ],
+    );
+  }
+
+  Widget _buildPrivateChatSwitch() {
+    return Row(
+      children: [
+        const Icon(Icons.chat_outlined, color: _warmOrange),
+        const SizedBox(width: 12),
+        const Expanded(
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text('允许私聊', style: TextStyle(fontWeight: FontWeight.w700)),
+              SizedBox(height: 2),
+              Text('开启后顾客可向店铺发起私聊', style: TextStyle(color: _mutedColor, fontSize: 12)),
+            ],
+          ),
+        ),
+        Switch(
+          value: _allowPrivateChat,
+          onChanged: _saving ? null : (value) async {
+            final previous = _allowPrivateChat;
+            setState(() => _allowPrivateChat = value);
+            try {
+              await shopApi.updatePrivateChatSetting(allowPrivateChat: value);
+            } on ApiException catch (error) {
+              if (mounted) {
+                setState(() => _allowPrivateChat = previous);
+                _showSnackBar(error.message);
+              }
+            }
+          },
         ),
       ],
     );

@@ -2,6 +2,7 @@ package com.order.menu.module.order.service;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
@@ -12,6 +13,7 @@ import com.order.menu.module.dish.mapper.DishOptionGroupMapper;
 import com.order.menu.module.dish.mapper.DishOptionItemMapper;
 import com.order.menu.module.dish.mapper.DishMapper;
 import com.order.menu.module.family.service.FamilyService;
+import com.order.menu.module.message.service.MessageService;
 import com.order.menu.module.order.dto.OrderDtos;
 import com.order.menu.module.order.entity.Order;
 import com.order.menu.module.order.entity.OrderItem;
@@ -101,7 +103,7 @@ class OrderServiceTest {
 
     private OrderService service() {
         return new OrderService(orderMapper, orderItemMapper, dishMapper, shopMapper, shopService, userMapper,
-                dishOptionGroupMapper, dishOptionItemMapper, familyService, wsPushService);
+                dishOptionGroupMapper, dishOptionItemMapper, familyService, wsPushService, mock(MessageService.class));
     }
 
     private Order acceptedOrder() {

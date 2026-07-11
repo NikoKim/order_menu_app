@@ -17,6 +17,7 @@ public class WsSessionRegistry {
 
     private final ConcurrentHashMap<Long, Set<WebSocketSession>> shopSessions = new ConcurrentHashMap<>();
     private final ConcurrentHashMap<Long, Set<WebSocketSession>> customerSessions = new ConcurrentHashMap<>();
+    private final ConcurrentHashMap<Long, Set<WebSocketSession>> userSessions = new ConcurrentHashMap<>();
 
     public void registerShop(Long shopId, WebSocketSession session) {
         shopSessions
@@ -30,9 +31,17 @@ public class WsSessionRegistry {
                 .add(session);
     }
 
+    /** Registers either account role by its user identity for chat and notifications. */
+    public void registerUser(Long userId, WebSocketSession session) {
+        userSessions
+                .computeIfAbsent(userId, key -> ConcurrentHashMap.newKeySet())
+                .add(session);
+    }
+
     public void unregister(WebSocketSession session) {
         shopSessions.values().forEach(set -> set.remove(session));
         customerSessions.values().forEach(set -> set.remove(session));
+        userSessions.values().forEach(set -> set.remove(session));
     }
 
     public void sendToShop(Long shopId, WsMessage message) {
@@ -41,6 +50,10 @@ public class WsSessionRegistry {
 
     public void sendToCustomer(Long customerId, WsMessage message) {
         send(customerSessions.get(customerId), message);
+    }
+
+    public void sendToUser(Long userId, WsMessage message) {
+        send(userSessions.get(userId), message);
     }
 
     private void send(Set<WebSocketSession> sessions, WsMessage message) {

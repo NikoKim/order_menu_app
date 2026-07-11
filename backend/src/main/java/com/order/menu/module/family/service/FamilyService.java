@@ -6,6 +6,7 @@ import com.order.menu.common.exception.ErrorCode;
 import com.order.menu.module.family.dto.FamilyDtos;
 import com.order.menu.module.family.entity.FamilyMember;
 import com.order.menu.module.family.mapper.FamilyMemberMapper;
+import com.order.menu.module.message.service.MessageService;
 import com.order.menu.module.shop.entity.Shop;
 import com.order.menu.module.shop.mapper.ShopMapper;
 import com.order.menu.module.shop.service.ShopService;
@@ -25,6 +26,7 @@ public class FamilyService {
     private final ShopService shopService;
     private final UserMapper userMapper;
     private final WsPushService wsPushService;
+    private final MessageService messageService;
 
     public FamilyDtos.MyFamiliesResponse myFamilies(Long userId) {
         List<FamilyDtos.FamilyResponse> families = familyMemberMapper.selectList(new LambdaQueryWrapper<FamilyMember>()
@@ -67,17 +69,25 @@ public class FamilyService {
 
         if ("PENDING".equals(member.getStatus())) {
             wsPushService.pushFamilyMemberApplied(member);
+            messageService.createShopNotification(member.getShopId(), "FAMILY", "New family application",
+                    "A customer requested to join the family", familyPayload(member));
         } else if ("APPROVED".equals(member.getStatus())) {
             wsPushService.pushFamilyMemberApproved(member);
+            messageService.createNotification(member.getUserId(), "FAMILY", "Family membership approved",
+                    "You joined the family", familyPayload(member));
+            messageService.onFamilyMemberApproved(member);
         }
 
         return toResponse(member);
     }
 
     public void leave(Long userId, Long shopId) {
-        familyMemberMapper.delete(new LambdaQueryWrapper<FamilyMember>()
+        int deleted = familyMemberMapper.delete(new LambdaQueryWrapper<FamilyMember>()
                 .eq(FamilyMember::getUserId, userId)
                 .eq(FamilyMember::getShopId, shopId));
+        if (deleted > 0) {
+            messageService.onFamilyMemberLeft(shopId, userId);
+        }
     }
 
     public boolean isApprovedMember(Long userId, Long shopId) {
@@ -104,6 +114,9 @@ public class FamilyService {
         member.setStatus("APPROVED");
         familyMemberMapper.updateById(member);
         wsPushService.pushFamilyMemberApproved(member);
+        messageService.createNotification(member.getUserId(), "FAMILY", "Family membership approved",
+                "Your family application was approved", familyPayload(member));
+        messageService.onFamilyMemberApproved(member);
         return toMemberResponse(member);
     }
 
@@ -113,7 +126,10 @@ public class FamilyService {
         Long shopId = member.getShopId();
         Long userId = member.getUserId();
         familyMemberMapper.deleteById(member.getId());
+        messageService.onFamilyMemberLeft(shopId, userId);
         wsPushService.pushFamilyMemberRejected(deletedMemberId, shopId, userId);
+        messageService.createNotification(userId, "FAMILY", "Family membership rejected",
+                "Your family application was rejected", "{\"memberId\":" + deletedMemberId + ",\"shopId\":" + shopId + "}");
     }
 
     private FamilyMember requireOwnedMember(Long ownerUserId, Long memberId) {
@@ -146,5 +162,9 @@ public class FamilyService {
                 user == null ? null : user.getPhone(),
                 user == null ? null : user.getAvatarUrl(),
                 member.getStatus());
+    }
+
+    private String familyPayload(FamilyMember member) {
+        return "{\"memberId\":" + member.getId() + ",\"shopId\":" + member.getShopId() + "}";
     }
 }

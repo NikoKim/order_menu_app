@@ -19,7 +19,7 @@ class AppFooter extends StatelessWidget {
               crossAxisAlignment: WrapCrossAlignment.center,
               children: [
                 const Text(
-                  '2026 @NikoKim NJU v1.2.3b',
+                  '2026 @NikoKim NJU v2.1.1',
                   style: TextStyle(color: mutedColor, fontSize: 11),
                 ),
                 InkWell(

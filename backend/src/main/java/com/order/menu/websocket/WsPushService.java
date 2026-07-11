@@ -29,6 +29,13 @@ public class WsPushService {
         registry.sendToCustomer(customerUserId, WsMessage.of(module, action, data));
     }
 
+    public void pushToUser(Long userId, String module, String action, Map<String, Object> data) {
+        if (userId == null) {
+            return;
+        }
+        registry.sendToUser(userId, WsMessage.of(module, action, data));
+    }
+
     public void pushShopBadgeChanged(Long shopId, String reason) {
         pushToShop(shopId, "NOTIFICATION", "BADGE_CHANGED", Map.of(
                 "shopId", shopId,

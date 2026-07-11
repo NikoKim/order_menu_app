@@ -6,6 +6,7 @@ import '../models/shop_api_models.dart';
 import '../services/shop_api_service.dart';
 import '../services/websocket_service.dart';
 import 'dish_manage_page.dart';
+import 'chat_list_page.dart';
 import 'feedback_manage_page.dart';
 import 'order_manage_page.dart';
 import 'showcase_manage_page.dart';
@@ -475,6 +476,14 @@ class _ShortcutGrid extends StatelessWidget {
                       );
                     }
                   },
+                ),
+              ),
+              SizedBox(
+                width: itemWidth,
+                child: const _GridShortcutItem(
+                  icon: Icons.chat_bubble_outline,
+                  title: '聊天',
+                  targetPage: ChatListPage(),
                 ),
               ),
               SizedBox(

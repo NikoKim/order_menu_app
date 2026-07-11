@@ -1,4 +1,6 @@
 import 'dart:convert';
+import 'dart:async';
+import 'dart:io';
 
 import 'package:http/http.dart' as http;
 
@@ -37,7 +39,10 @@ class ShopApiService {
     _token = token;
   }
 
-  Future<Map<String, dynamic>> checkUpdate(String appCode, int currentVersionCode) async {
+  Future<Map<String, dynamic>> checkUpdate(
+    String appCode,
+    int currentVersionCode,
+  ) async {
     try {
       // 注意：authenticated 设为 false，因为检查更新不需要也不应该被 Token 拦截
       final data = await _request<Map<String, dynamic>>(
@@ -76,6 +81,125 @@ class ShopApiService {
     _token = null;
     await AuthSession.clear();
   }
+
+  Future<CurrentUser> fetchCurrentUser() async {
+    final data = await _request<Map<String, dynamic>>('GET', '/users/me');
+    return CurrentUser.fromJson(data);
+  }
+
+  Future<CurrentUser> updatePrivateChatSetting({
+    required bool allowPrivateChat,
+  }) async {
+    final current = await fetchCurrentUser();
+    final data = await _request<Map<String, dynamic>>(
+      'PUT',
+      '/users/me',
+      body: {
+        'nickname': current.nickname,
+        'phone': current.phone,
+        'avatarUrl': current.avatarUrl,
+        'allowPrivateChat': allowPrivateChat,
+      },
+    );
+    return CurrentUser.fromJson(data);
+  }
+
+  Future<List<ChatConversation>> fetchConversations() async {
+    final data = await _request<List<dynamic>>(
+      'GET',
+      '/messages/conversations',
+    );
+    return data
+        .whereType<Map<String, dynamic>>()
+        .map(ChatConversation.fromJson)
+        .toList();
+  }
+
+  Future<ChatMessages> fetchChatMessages(int conversationId) async {
+    final data = await _request<Map<String, dynamic>>(
+      'GET',
+      '/messages/conversations/$conversationId/messages',
+    );
+    return ChatMessages.fromJson(data);
+  }
+
+  Future<ChatMessage> sendChatMessage(
+    int conversationId,
+    String content,
+  ) async {
+    final data = await _request<Map<String, dynamic>>(
+      'POST',
+      '/messages/conversations/$conversationId/messages',
+      body: {'content': content.trim()},
+    );
+    return ChatMessage.fromJson(data);
+  }
+
+  Future<FamilyGroup> createFamilyGroup() async {
+    final data = await _request<Map<String, dynamic>>(
+      'POST',
+      '/messages/family-groups',
+    );
+    return FamilyGroup.fromJson(data);
+  }
+
+  Future<FamilyGroup> fetchFamilyGroup(int conversationId) async {
+    final data = await _request<Map<String, dynamic>>(
+      'GET',
+      '/messages/family-groups/$conversationId',
+    );
+    return FamilyGroup.fromJson(data);
+  }
+
+  Future<FamilyGroup> updateFamilyGroup(
+    int conversationId, {
+    String? name,
+    String? announcement,
+    String? coverImageUrl,
+  }) async {
+    final data = await _request<Map<String, dynamic>>(
+      'PUT',
+      '/messages/family-groups/$conversationId',
+      body: {
+        'name': name,
+        'announcement': announcement,
+        'coverImageUrl': coverImageUrl,
+      },
+    );
+    return FamilyGroup.fromJson(data);
+  }
+
+  Future<void> dissolveFamilyGroup(int conversationId) => _request<void>(
+    'POST',
+    '/messages/family-groups/$conversationId/dissolve',
+  );
+  Future<void> restoreFamilyGroup(int conversationId) =>
+      _request<void>('POST', '/messages/family-groups/$conversationId/restore');
+  Future<void> removeFamilyGroupMember(int conversationId, int userId) =>
+      _request<void>(
+        'POST',
+        '/messages/family-groups/$conversationId/members/$userId/remove',
+      );
+  Future<void> setFamilyGroupMuted(int conversationId, bool muted) =>
+      _request<void>(
+        'PUT',
+        '/messages/family-groups/$conversationId/mute',
+        body: {'muted': muted},
+      );
+
+  Future<List<UserNotification>> fetchMessageNotifications() async {
+    final data = await _request<List<dynamic>>(
+      'GET',
+      '/messages/notifications',
+    );
+    return data
+        .whereType<Map<String, dynamic>>()
+        .map(UserNotification.fromJson)
+        .toList();
+  }
+
+  Future<void> markAllMessageNotificationsRead() =>
+      _request<void>('PUT', '/messages/notifications/read-all');
 
   Future<ShopInfo> fetchMyShop() async {
     final data = await _request<Map<String, dynamic>>('GET', '/shop/me');
@@ -203,11 +327,7 @@ class ShopApiService {
   }
 
   Future<void> updateShowcaseDishes(List<int> dishIds) async {
-    await _request<void>(
-      'PUT',
-      '/shop/dishes/showcase',
-      body: dishIds,
-    );
+    await _request<void>('PUT', '/shop/dishes/showcase', body: dishIds);
   }
 
   Future<PageResult<OrderSummary>> fetchOrders({
@@ -354,25 +474,33 @@ class ShopApiService {
     final uri = _uri(path, query);
     final headers = await _headers(authenticated: authenticated);
     late final http.Response response;
-    switch (method) {
-      case 'GET':
-        response = await _client.get(uri, headers: headers);
-      case 'POST':
-        response = await _client.post(
-          uri,
-          headers: headers,
-          body: body == null ? null : jsonEncode(body),
-        );
-      case 'PUT':
-        response = await _client.put(
-          uri,
-          headers: headers,
-          body: body == null ? null : jsonEncode(body),
-        );
-      case 'DELETE':
-        response = await _client.delete(uri, headers: headers);
-      default:
-        throw ApiException('不支持的请求方法 $method');
+    try {
+      switch (method) {
+        case 'GET':
+          response = await _client.get(uri, headers: headers);
+        case 'POST':
+          response = await _client.post(
+            uri,
+            headers: headers,
+            body: body == null ? null : jsonEncode(body),
+          );
+        case 'PUT':
+          response = await _client.put(
+            uri,
+            headers: headers,
+            body: body == null ? null : jsonEncode(body),
+          );
+        case 'DELETE':
+          response = await _client.delete(uri, headers: headers);
+        default:
+          throw ApiException('不支持的请求方法 $method');
+      }
+    } on SocketException {
+      throw const ApiException('网络连接失败，请检查网络后重试');
+    } on TimeoutException {
+      throw const ApiException('请求超时，请稍后重试');
+    } on http.ClientException {
+      throw const ApiException('网络连接失败，请检查网络后重试');
     }
 
     final decoded = _decode(response);

@@ -1,7 +1,9 @@
 package com.order.menu.module.auth.service;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 import com.baomidou.mybatisplus.core.conditions.Wrapper;
@@ -44,5 +46,20 @@ class AuthServiceTest {
         org.mockito.Mockito.verify(userMapper).selectCount(wrapper.capture());
         AbstractWrapper<User, ?, ?> query = (AbstractWrapper<User, ?, ?>) wrapper.getValue();
         assertEquals(7, query.getExpression().getNormal().size());
+    }
+
+    @Test
+    void customerRegisterPersistsEnabledChatPermissionsByDefault() {
+        when(userMapper.selectCount(any(Wrapper.class))).thenReturn(0L);
+        when(passwordEncoder.encode("secret123")).thenReturn("hash");
+
+        AuthService service = new AuthService(userMapper, passwordEncoder, jwtTokenProvider, userService);
+        service.registerCustomer(new AuthDtos.CustomerRegisterRequest("nikokim", "secret123"));
+
+        ArgumentCaptor<User> userCaptor = ArgumentCaptor.forClass(User.class);
+        verify(userMapper).insert(userCaptor.capture());
+        User savedUser = userCaptor.getValue();
+        assertTrue(savedUser.getAllowPrivateChat());
+        assertTrue(savedUser.getAutoJoinFamilyChat());
     }
 }

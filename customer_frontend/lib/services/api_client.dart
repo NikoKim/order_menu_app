@@ -261,16 +261,38 @@ class AuthController extends ChangeNotifier {
     String? nickname,
     String? phone,
     String? avatarUrl,
+    bool? allowPrivateChat,
+    bool? autoJoinFamilyChat,
   }) async {
     final updated = await api.put<CustomerUser>(
       '/users/me',
       (json) => CustomerUser.fromJson(json as Map<String, dynamic>),
-      body: {'nickname': nickname, 'phone': phone, 'avatarUrl': avatarUrl},
+      body: {
+        'nickname': nickname,
+        'phone': phone,
+        'avatarUrl': avatarUrl,
+        'allowPrivateChat': allowPrivateChat,
+        'autoJoinFamilyChat': autoJoinFamilyChat,
+      },
     );
     user = updated;
     await _persistUser();
     notifyListeners();
     return updated;
+  }
+
+  Future<CustomerUser> updateChatSettings({
+    required bool allowPrivateChat,
+    required bool autoJoinFamilyChat,
+  }) {
+    final current = user;
+    return updateMe(
+      nickname: current?.nickname,
+      phone: current?.phone,
+      avatarUrl: current?.avatarUrl,
+      allowPrivateChat: allowPrivateChat,
+      autoJoinFamilyChat: autoJoinFamilyChat,
+    );
   }
 
   Future<String> uploadAvatar(String filePath) async {
@@ -335,6 +357,8 @@ class AuthController extends ChangeNotifier {
             'role': user!.role,
             'avatarUrl': user!.avatarUrl,
             'phone': user!.phone,
+            'allowPrivateChat': user!.allowPrivateChat,
+            'autoJoinFamilyChat': user!.autoJoinFamilyChat,
           }),
         );
       }
@@ -464,6 +488,93 @@ class CustomerApi {
       body: {'shopId': shopId, 'content': content},
     );
   }
+
+  Future<List<ChatConversation>> conversations() {
+    return api.get('/messages/conversations', (json) {
+      final items = json as List? ?? const [];
+      return items
+          .whereType<Map<String, dynamic>>()
+          .map(ChatConversation.fromJson)
+          .toList();
+    });
+  }
+
+  Future<NotificationList> notifications() => api.get(
+    '/messages/notifications',
+    (json) => NotificationList.fromJson(json as Map<String, dynamic>),
+  );
+
+  Future<int> unreadNotificationCount() =>
+      api.get('/messages/notifications/unread-count', (json) => _asInt(json));
+
+  Future<void> markNotificationRead(int notificationId) =>
+      api.put('/messages/notifications/$notificationId/read', (_) {});
+
+  Future<void> markAllNotificationsRead() =>
+      api.put('/messages/notifications/read-all', (_) {});
+
+  Future<ChatConversation> startChatWithShop(int shopId) => api.post(
+    '/messages/direct/shops/$shopId',
+    (json) => ChatConversation.fromJson(json as Map<String, dynamic>),
+  );
+
+  Future<ChatConversation> startChatWithCustomer(int userId) => api.post(
+    '/messages/direct/users/$userId',
+    (json) => ChatConversation.fromJson(json as Map<String, dynamic>),
+  );
+
+  Future<List<ChatUser>> searchChatCustomers(String nickname) {
+    return api.get('/messages/users', (json) {
+      final items = json as List? ?? const [];
+      return items
+          .whereType<Map<String, dynamic>>()
+          .map(ChatUser.fromJson)
+          .toList();
+    }, query: {'nickname': nickname.trim()});
+  }
+
+  Future<ChatMessages> chatMessages(int conversationId) => api.get(
+    '/messages/conversations/$conversationId/messages',
+    (json) => ChatMessages.fromJson(json as Map<String, dynamic>),
+  );
+
+  Future<ChatMessage> sendChatMessage(int conversationId, String content) =>
+      api.post(
+        '/messages/conversations/$conversationId/messages',
+        (json) => ChatMessage.fromJson(json as Map<String, dynamic>),
+        body: {'content': content.trim()},
+      );
+
+  Future<FamilyGroup> familyGroup(int conversationId) => api.get(
+    '/messages/family-groups/$conversationId',
+    (json) => FamilyGroup.fromJson(json as Map<String, dynamic>),
+  );
+
+  Future<FamilyGroup> familyGroupByShop(int shopId) => api.get(
+    '/messages/family-groups/by-shop/$shopId',
+    (json) => FamilyGroup.fromJson(json as Map<String, dynamic>),
+  );
+
+  Future<void> joinFamilyGroup(int conversationId) =>
+      api.post('/messages/family-groups/$conversationId/join', (_) {});
+
+  Future<void> leaveFamilyGroup(int conversationId) =>
+      api.post('/messages/family-groups/$conversationId/leave', (_) {});
+
+  Future<void> setFamilyGroupMuted(int conversationId, bool muted) => api.put(
+    '/messages/family-groups/$conversationId/mute',
+    (_) {},
+    body: {'muted': muted},
+  );
+
+  Future<ChatMessage> shareDish({
+    required int conversationId,
+    required int dishId,
+  }) => api.post(
+    '/messages/dish-shares',
+    (json) => ChatMessage.fromJson(json as Map<String, dynamic>),
+    body: {'conversationId': conversationId, 'dishId': dishId},
+  );
 
   Future<PageResult<FeedbackEntry>> myFeedback() {
     return api.get(

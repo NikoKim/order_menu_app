@@ -43,14 +43,31 @@ public class UserService {
             }
             user.setNickname(nickname);
         }
-        user.setPhone(emptyToNull(request.phone()));
-        user.setAvatarUrl(emptyToNull(request.avatarUrl()));
+        if (request.phone() != null) {
+            user.setPhone(emptyToNull(request.phone()));
+        }
+        if (request.avatarUrl() != null) {
+            user.setAvatarUrl(emptyToNull(request.avatarUrl()));
+        }
+        if (request.allowPrivateChat() != null) {
+            user.setAllowPrivateChat(request.allowPrivateChat());
+        }
+        if (request.autoJoinFamilyChat() != null) {
+            user.setAutoJoinFamilyChat(request.autoJoinFamilyChat());
+        }
         userMapper.updateById(user);
         return toResponse(userMapper.selectById(user.getId()));
     }
 
     public UserDtos.CurrentUserResponse toResponse(User user) {
-        return new UserDtos.CurrentUserResponse(user.getId(), user.getNickname(), user.getRole(), user.getAvatarUrl(), user.getPhone());
+        return new UserDtos.CurrentUserResponse(
+                user.getId(),
+                user.getNickname(),
+                user.getRole(),
+                user.getAvatarUrl(),
+                user.getPhone(),
+                user.getAllowPrivateChat(),
+                user.getAutoJoinFamilyChat());
     }
 
     private String emptyToNull(String value) {

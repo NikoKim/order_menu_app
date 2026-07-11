@@ -33,6 +33,7 @@ class _ShopFamilyPageState extends State<ShopFamilyPage> {
   String? _familyImageUrl;
   ShopInfo? _shop;
   List<FamilyMemberInfo> _members = const [];
+  ChatConversation? _familyGroup;
   String? _error;
   StreamSubscription? _wsSubscription;
 
@@ -42,16 +43,17 @@ class _ShopFamilyPageState extends State<ShopFamilyPage> {
 
     _load();
 
-    _wsSubscription = ShopWebSocketService.instance
-        .streamForModule('FAMILY')
-        .listen((msg) {
+    _wsSubscription = ShopWebSocketService.instance.messageStream.listen((msg) {
       if (!mounted) return;
 
-      if ({
-        'MEMBER_APPLIED',
-        'MEMBER_APPROVED',
-        'MEMBER_REJECTED',
-      }.contains(msg.action)) {
+      final familyChanged =
+          msg.module == 'FAMILY' &&
+          {
+            'MEMBER_APPLIED',
+            'MEMBER_APPROVED',
+            'MEMBER_REJECTED',
+          }.contains(msg.action);
+      if (familyChanged || msg.module == 'CHAT') {
         _load(silent: true);
       }
     });
@@ -77,6 +79,16 @@ class _ShopFamilyPageState extends State<ShopFamilyPage> {
       final List<FamilyMemberInfo> members = shop.visibilityType == 'FAMILY'
           ? await shopApi.fetchFamilyMembers()
           : <FamilyMemberInfo>[];
+      final conversations = shop.visibilityType == 'FAMILY'
+          ? await shopApi.fetchConversations()
+          : const <ChatConversation>[];
+      ChatConversation? familyGroup;
+      for (final conversation in conversations) {
+        if (conversation.type == 'FAMILY_GROUP') {
+          familyGroup = conversation;
+          break;
+        }
+      }
 
       if (!mounted) return;
 
@@ -88,6 +100,7 @@ class _ShopFamilyPageState extends State<ShopFamilyPage> {
         _familyJoinMode = shop.familyJoinMode ?? 'OPEN';
         _familyImageUrl = shop.familyImageUrl;
         _members = members;
+        _familyGroup = familyGroup;
         _error = null;
       });
     } on ApiException catch (error) {
@@ -112,7 +125,10 @@ class _ShopFamilyPageState extends State<ShopFamilyPage> {
         backgroundColor: Colors.white,
         foregroundColor: _textColor,
         elevation: 0,
-        title: const Text('家庭管理', style: TextStyle(fontWeight: FontWeight.w700)),
+        title: const Text(
+          '家庭管理',
+          style: TextStyle(fontWeight: FontWeight.w700),
+        ),
       ),
       body: SafeArea(
         child: RefreshIndicator(
@@ -154,9 +170,212 @@ class _ShopFamilyPageState extends State<ShopFamilyPage> {
         const SizedBox(height: 16),
         _buildSettings(),
         const SizedBox(height: 16),
+        _buildFamilyGroupPanel(approvedCount),
+        const SizedBox(height: 16),
         _buildMemberSection(),
       ],
     );
+  }
+
+  Widget _buildFamilyGroupPanel(int approvedCount) {
+    if (!_isFamilyShop) return const SizedBox.shrink();
+    final group = _familyGroup;
+    final eligible = FamilyGroupEligibility.fromMembers(
+      approvedCount,
+    ).canCreate;
+    return _BaseCard(
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          const Row(
+            children: [
+              Icon(Icons.groups_outlined, color: _warmOrange),
+              SizedBox(width: 8),
+              Text(
+                '家庭群聊',
+                style: TextStyle(fontSize: 16, fontWeight: FontWeight.w800),
+              ),
+            ],
+          ),
+          const SizedBox(height: 10),
+          if (group == null) ...[
+            Text(
+              eligible ? '已满足创建条件，家庭成员会按其设置自动加入或收到邀请。' : '至少需要两位已审批家庭成员后才能创建。',
+              style: const TextStyle(color: _mutedColor, fontSize: 13),
+            ),
+            const SizedBox(height: 12),
+            OutlinedButton.icon(
+              onPressed: eligible && !_saving ? _createGroup : null,
+              icon: const Icon(Icons.group_add_outlined),
+              label: const Text('创建家庭群聊'),
+            ),
+          ] else ...[
+            Text(
+              group.title,
+              style: const TextStyle(fontWeight: FontWeight.w700),
+            ),
+            const SizedBox(height: 4),
+            Text(
+              group.isActive ? '群聊进行中' : '群聊已解散，历史消息已保留',
+              style: const TextStyle(color: _mutedColor, fontSize: 13),
+            ),
+            const SizedBox(height: 12),
+            if (!group.isActive) ...[
+              FilledButton.icon(
+                onPressed: eligible && !_saving
+                    ? () => _restoreGroup(group.id)
+                    : null,
+                icon: const Icon(Icons.restore),
+                label: const Text('恢复家庭群聊'),
+              ),
+              const SizedBox(height: 8),
+            ],
+            OutlinedButton.icon(
+              onPressed: () => _manageGroup(group),
+              icon: const Icon(Icons.manage_accounts_outlined),
+              label: const Text('管理家庭群聊'),
+            ),
+          ],
+        ],
+      ),
+    );
+  }
+
+  Future<void> _createGroup() async {
+    setState(() => _saving = true);
+    try {
+      await shopApi.createFamilyGroup();
+      if (mounted) {
+        _showSnackBar('家庭群聊已创建');
+        _load(silent: true);
+      }
+    } on ApiException catch (error) {
+      if (mounted) _showSnackBar(error.message);
+    } finally {
+      if (mounted) setState(() => _saving = false);
+    }
+  }
+
+  Future<void> _restoreGroup(int conversationId) async {
+    setState(() => _saving = true);
+    try {
+      await shopApi.restoreFamilyGroup(conversationId);
+      if (mounted) {
+        _showSnackBar('家庭群聊已恢复');
+        _load(silent: true);
+      }
+    } on ApiException catch (error) {
+      if (mounted) _showSnackBar(error.message);
+    } finally {
+      if (mounted) setState(() => _saving = false);
+    }
+  }
+
+  Future<void> _manageGroup(ChatConversation conversation) async {
+    FamilyGroup group;
+    try {
+      group = await shopApi.fetchFamilyGroup(conversation.id);
+    } on ApiException catch (error) {
+      if (mounted) _showSnackBar(error.message);
+      return;
+    }
+    if (!mounted) return;
+    final name = TextEditingController(text: group.name);
+    final announcement = TextEditingController(text: group.announcement ?? '');
+    await showModalBottomSheet<void>(
+      context: context,
+      isScrollControlled: true,
+      builder: (sheetContext) => Padding(
+        padding: EdgeInsets.fromLTRB(
+          16,
+          16,
+          16,
+          MediaQuery.viewInsetsOf(sheetContext).bottom + 16,
+        ),
+        child: SingleChildScrollView(
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              const Text(
+                '家庭群聊管理',
+                style: TextStyle(fontSize: 18, fontWeight: FontWeight.w800),
+              ),
+              const SizedBox(height: 12),
+              TextField(
+                controller: name,
+                decoration: const InputDecoration(labelText: '群名称'),
+              ),
+              const SizedBox(height: 10),
+              TextField(
+                controller: announcement,
+                minLines: 2,
+                maxLines: 4,
+                decoration: const InputDecoration(labelText: '群公告'),
+              ),
+              const SizedBox(height: 12),
+              if (group.canManage) ...[
+                FilledButton(
+                  onPressed: () async {
+                    await shopApi.updateFamilyGroup(
+                      group.id,
+                      name: name.text.trim(),
+                      announcement: announcement.text.trim(),
+                    );
+                    if (sheetContext.mounted) Navigator.pop(sheetContext);
+                    _load(silent: true);
+                  },
+                  child: const Text('保存群资料'),
+                ),
+                const SizedBox(height: 8),
+                OutlinedButton.icon(
+                  onPressed: () async {
+                    await shopApi.dissolveFamilyGroup(group.id);
+                    if (sheetContext.mounted) Navigator.pop(sheetContext);
+                    _load(silent: true);
+                  },
+                  icon: const Icon(Icons.group_off_outlined),
+                  label: const Text('解散家庭群聊'),
+                ),
+              ],
+              const SizedBox(height: 16),
+              const Text('群成员', style: TextStyle(fontWeight: FontWeight.w800)),
+              for (final member in group.members)
+                ListTile(
+                  contentPadding: EdgeInsets.zero,
+                  title: Text(member.nickname),
+                  subtitle: Text(
+                    member.role == 'OWNER' ? '群主' : member.memberStatus,
+                  ),
+                  trailing: member.role == 'OWNER' || !group.canManage
+                      ? null
+                      : IconButton(
+                          tooltip: '移出群聊',
+                          icon: const Icon(Icons.person_remove_outlined),
+                          onPressed: () async {
+                            await shopApi.removeFamilyGroupMember(
+                              group.id,
+                              member.userId,
+                            );
+                            if (sheetContext.mounted)
+                              Navigator.pop(sheetContext);
+                            _load(silent: true);
+                          },
+                        ),
+                ),
+            ],
+          ),
+        ),
+      ),
+    );
+    name.dispose();
+    announcement.dispose();
+  }
+
+  void _showSnackBar(String message) {
+    ScaffoldMessenger.of(context)
+      ..hideCurrentSnackBar()
+      ..showSnackBar(SnackBar(content: Text(message)));
   }
 
   Widget? _buildBottomBar() {
@@ -179,10 +398,15 @@ class _ShopFamilyPageState extends State<ShopFamilyPage> {
           child: FilledButton.icon(
             onPressed: _saving ? null : _save,
             icon: const Icon(Icons.save_outlined),
-            label: Text(_saving ? '保存中...' : '保存家庭设置', style: const TextStyle(fontSize: 16, fontWeight: FontWeight.w700)),
+            label: Text(
+              _saving ? '保存中...' : '保存家庭设置',
+              style: const TextStyle(fontSize: 16, fontWeight: FontWeight.w700),
+            ),
             style: FilledButton.styleFrom(
               backgroundColor: _warmOrange,
-              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
+              shape: RoundedRectangleBorder(
+                borderRadius: BorderRadius.circular(8),
+              ),
             ),
           ),
         ),
@@ -195,7 +419,9 @@ class _ShopFamilyPageState extends State<ShopFamilyPage> {
       child: Row(
         children: [
           GestureDetector(
-            onTap: _familyImageUrl?.isNotEmpty == true ? () => _previewImage(_familyImageUrl!) : null,
+            onTap: _familyImageUrl?.isNotEmpty == true
+                ? () => _previewImage(_familyImageUrl!)
+                : null,
             child: Container(
               width: 72,
               height: 72,
@@ -206,14 +432,18 @@ class _ShopFamilyPageState extends State<ShopFamilyPage> {
               ),
               child: _familyImageUrl?.isNotEmpty == true
                   ? Image.network(
-                _absoluteImageUrl(_familyImageUrl!),
-                fit: BoxFit.cover,
-                loadingBuilder: (context, child, progress) {
-                  if (progress == null) return child;
-                  return const _SkeletonBox(width: 72, height: 72);
-                },
-              )
-                  : const Icon(Icons.home_outlined, color: _warmOrange, size: 36),
+                      _absoluteImageUrl(_familyImageUrl!),
+                      fit: BoxFit.cover,
+                      loadingBuilder: (context, child, progress) {
+                        if (progress == null) return child;
+                        return const _SkeletonBox(width: 72, height: 72);
+                      },
+                    )
+                  : const Icon(
+                      Icons.home_outlined,
+                      color: _warmOrange,
+                      size: 36,
+                    ),
             ),
           ),
           const SizedBox(width: 16),
@@ -222,10 +452,16 @@ class _ShopFamilyPageState extends State<ShopFamilyPage> {
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
                 Text(
-                  _familyNameController.text.trim().isEmpty ? '未命名家庭' : _familyNameController.text.trim(),
+                  _familyNameController.text.trim().isEmpty
+                      ? '未命名家庭'
+                      : _familyNameController.text.trim(),
                   maxLines: 1,
                   overflow: TextOverflow.ellipsis,
-                  style: const TextStyle(color: _textColor, fontSize: 18, fontWeight: FontWeight.w800),
+                  style: const TextStyle(
+                    color: _textColor,
+                    fontSize: 18,
+                    fontWeight: FontWeight.w800,
+                  ),
                 ),
                 const SizedBox(height: 8),
                 Wrap(
@@ -234,11 +470,20 @@ class _ShopFamilyPageState extends State<ShopFamilyPage> {
                   children: [
                     _InfoPill(
                       icon: Icons.tag,
-                      text: _isFamilyShop ? '编号 ${_familyCode?.isNotEmpty == true ? _familyCode : '保存后生成'}' : '未开启家庭',
+                      text: _isFamilyShop
+                          ? '编号 ${_familyCode?.isNotEmpty == true ? _familyCode : '保存后生成'}'
+                          : '未开启家庭',
                     ),
-                    _InfoPill(icon: Icons.people_alt_outlined, text: '$approvedCount 位成员'),
+                    _InfoPill(
+                      icon: Icons.people_alt_outlined,
+                      text: '$approvedCount 位成员',
+                    ),
                     if (pendingCount > 0)
-                      _InfoPill(icon: Icons.hourglass_top, text: '$pendingCount 个申请', isHighlight: true),
+                      _InfoPill(
+                        icon: Icons.hourglass_top,
+                        text: '$pendingCount 个申请',
+                        isHighlight: true,
+                      ),
                   ],
                 ),
               ],
@@ -254,15 +499,28 @@ class _ShopFamilyPageState extends State<ShopFamilyPage> {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          const Text('基础设置', style: TextStyle(color: _textColor, fontSize: 16, fontWeight: FontWeight.w800)),
+          const Text(
+            '基础设置',
+            style: TextStyle(
+              color: _textColor,
+              fontSize: 16,
+              fontWeight: FontWeight.w800,
+            ),
+          ),
           const SizedBox(height: 16),
           SwitchListTile(
             contentPadding: EdgeInsets.zero,
             value: _isFamilyShop,
             activeColor: Colors.white,
             activeTrackColor: _warmOrange,
-            title: const Text('开启家庭店铺', style: TextStyle(fontWeight: FontWeight.w700)),
-            subtitle: const Text('开启后，顾客需要加入家庭才能在专属标签中看到本店', style: TextStyle(color: _mutedColor, fontSize: 13)),
+            title: const Text(
+              '开启家庭店铺',
+              style: TextStyle(fontWeight: FontWeight.w700),
+            ),
+            subtitle: const Text(
+              '开启后，顾客需要加入家庭才能在专属标签中看到本店',
+              style: TextStyle(color: _mutedColor, fontSize: 13),
+            ),
             onChanged: (value) => setState(() => _isFamilyShop = value),
           ),
           const Padding(
@@ -301,11 +559,15 @@ class _ShopFamilyPageState extends State<ShopFamilyPage> {
                 child: OutlinedButton.icon(
                   onPressed: _uploadFamilyImage,
                   icon: const Icon(Icons.image_outlined, size: 18),
-                  label: Text(_familyImageUrl?.isNotEmpty == true ? '更换家庭图片' : '上传家庭图片'),
+                  label: Text(
+                    _familyImageUrl?.isNotEmpty == true ? '更换家庭图片' : '上传家庭图片',
+                  ),
                   style: OutlinedButton.styleFrom(
                     foregroundColor: _warmOrange,
                     side: const BorderSide(color: _warmOrange),
-                    shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
+                    shape: RoundedRectangleBorder(
+                      borderRadius: BorderRadius.circular(8),
+                    ),
                   ),
                 ),
               ),
@@ -314,8 +576,13 @@ class _ShopFamilyPageState extends State<ShopFamilyPage> {
                 IconButton.outlined(
                   tooltip: '查看家庭图片',
                   onPressed: () => _previewImage(_familyImageUrl!),
-                  icon: const Icon(Icons.visibility_outlined, color: _mutedColor),
-                  style: IconButton.styleFrom(side: const BorderSide(color: _lineColor)),
+                  icon: const Icon(
+                    Icons.visibility_outlined,
+                    color: _mutedColor,
+                  ),
+                  style: IconButton.styleFrom(
+                    side: const BorderSide(color: _lineColor),
+                  ),
                 ),
               ],
             ],
@@ -342,16 +609,24 @@ class _ShopFamilyPageState extends State<ShopFamilyPage> {
       );
     }
 
-    final sorted = [..._members]..sort((a, b) {
-      if (a.isPending == b.isPending) return a.id.compareTo(b.id);
-      return a.isPending ? -1 : 1;
-    });
+    final sorted = [..._members]
+      ..sort((a, b) {
+        if (a.isPending == b.isPending) return a.id.compareTo(b.id);
+        return a.isPending ? -1 : 1;
+      });
 
     return _BaseCard(
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          const Text('家庭顾客', style: TextStyle(color: _textColor, fontSize: 16, fontWeight: FontWeight.w800)),
+          const Text(
+            '家庭顾客',
+            style: TextStyle(
+              color: _textColor,
+              fontSize: 16,
+              fontWeight: FontWeight.w800,
+            ),
+          ),
           const SizedBox(height: 16),
           for (final member in sorted)
             Padding(
@@ -360,7 +635,9 @@ class _ShopFamilyPageState extends State<ShopFamilyPage> {
                 member: member,
                 avatarUrl: _resolvedAvatarUrl(member.avatarUrl),
                 onInfo: () => _showMemberInfo(member),
-                onApprove: member.isPending ? () => _approveMember(member) : null,
+                onApprove: member.isPending
+                    ? () => _approveMember(member)
+                    : null,
                 onRemove: () => _removeMember(member),
               ),
             ),
@@ -406,7 +683,11 @@ class _ShopFamilyPageState extends State<ShopFamilyPage> {
   }
 
   Future<void> _uploadFamilyImage() async {
-    final image = await _imagePicker.pickImage(source: ImageSource.gallery, maxWidth: 1600, imageQuality: 85);
+    final image = await _imagePicker.pickImage(
+      source: ImageSource.gallery,
+      maxWidth: 1600,
+      imageQuality: 85,
+    );
     if (image == null) return;
 
     setState(() => _saving = true);
@@ -438,7 +719,10 @@ class _ShopFamilyPageState extends State<ShopFamilyPage> {
         title: const Text('移除顾客'),
         content: Text('确定将 ${member.displayName} 移出家庭吗？'),
         actions: [
-          TextButton(onPressed: () => Navigator.of(context).pop(false), child: const Text('取消', style: TextStyle(color: _mutedColor))),
+          TextButton(
+            onPressed: () => Navigator.of(context).pop(false),
+            child: const Text('取消', style: TextStyle(color: _mutedColor)),
+          ),
           FilledButton(
             onPressed: () => Navigator.of(context).pop(true),
             style: FilledButton.styleFrom(backgroundColor: Colors.redAccent),
@@ -474,11 +758,15 @@ class _ShopFamilyPageState extends State<ShopFamilyPage> {
                     radius: 28,
                     backgroundColor: _softOrange,
                     foregroundColor: _warmOrange,
-                    backgroundImage: _resolvedAvatarUrl(member.avatarUrl) == null
+                    backgroundImage:
+                        _resolvedAvatarUrl(member.avatarUrl) == null
                         ? null
                         : NetworkImage(_resolvedAvatarUrl(member.avatarUrl)!),
                     child: _resolvedAvatarUrl(member.avatarUrl) == null
-                        ? Text(member.displayName.characters.first, style: const TextStyle(fontSize: 20))
+                        ? Text(
+                            member.displayName.characters.first,
+                            style: const TextStyle(fontSize: 20),
+                          )
                         : null,
                   ),
                   const SizedBox(width: 16),
@@ -488,10 +776,19 @@ class _ShopFamilyPageState extends State<ShopFamilyPage> {
                       children: [
                         Text(
                           member.displayName,
-                          style: const TextStyle(fontSize: 18, fontWeight: FontWeight.w800),
+                          style: const TextStyle(
+                            fontSize: 18,
+                            fontWeight: FontWeight.w800,
+                          ),
                         ),
                         const SizedBox(height: 4),
-                        Text(member.statusText, style: const TextStyle(color: _mutedColor, fontSize: 13)),
+                        Text(
+                          member.statusText,
+                          style: const TextStyle(
+                            color: _mutedColor,
+                            fontSize: 13,
+                          ),
+                        ),
                       ],
                     ),
                   ),
@@ -500,7 +797,10 @@ class _ShopFamilyPageState extends State<ShopFamilyPage> {
               const SizedBox(height: 24),
               _InfoRow(label: '系统编号', value: '#${member.userId}'),
               _InfoRow(label: '用户昵称', value: member.displayName),
-              _InfoRow(label: '联系电话', value: member.phone?.isNotEmpty == true ? member.phone! : '未填写'),
+              _InfoRow(
+                label: '联系电话',
+                value: member.phone?.isNotEmpty == true ? member.phone! : '未填写',
+              ),
             ],
           ),
         ),
@@ -593,7 +893,14 @@ class _LabeledField extends StatelessWidget {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        Text(label, style: const TextStyle(color: _textColor, fontSize: 14, fontWeight: FontWeight.w600)),
+        Text(
+          label,
+          style: const TextStyle(
+            color: _textColor,
+            fontSize: 14,
+            fontWeight: FontWeight.w600,
+          ),
+        ),
         const SizedBox(height: 8),
         child,
       ],
@@ -620,7 +927,11 @@ InputDecoration _inputDecoration(String hintText) {
 }
 
 class _InfoPill extends StatelessWidget {
-  const _InfoPill({required this.icon, required this.text, this.isHighlight = false});
+  const _InfoPill({
+    required this.icon,
+    required this.text,
+    this.isHighlight = false,
+  });
   final IconData icon;
   final String text;
   final bool isHighlight;
@@ -630,7 +941,9 @@ class _InfoPill extends StatelessWidget {
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
       decoration: BoxDecoration(
-        color: isHighlight ? _warmOrange.withValues(alpha: 0.1) : const Color(0xFFF5F6F8),
+        color: isHighlight
+            ? _warmOrange.withValues(alpha: 0.1)
+            : const Color(0xFFF5F6F8),
         borderRadius: BorderRadius.circular(6),
       ),
       child: Row(
@@ -680,8 +993,12 @@ class _MemberTile extends StatelessWidget {
           CircleAvatar(
             backgroundColor: _softOrange,
             foregroundColor: _warmOrange,
-            backgroundImage: avatarUrl == null ? null : NetworkImage(avatarUrl!),
-            child: avatarUrl == null ? Text(member.displayName.characters.first) : null,
+            backgroundImage: avatarUrl == null
+                ? null
+                : NetworkImage(avatarUrl!),
+            child: avatarUrl == null
+                ? Text(member.displayName.characters.first)
+                : null,
           ),
           const SizedBox(width: 12),
           Expanded(
@@ -692,7 +1009,10 @@ class _MemberTile extends StatelessWidget {
                   member.displayName,
                   maxLines: 1,
                   overflow: TextOverflow.ellipsis,
-                  style: const TextStyle(fontWeight: FontWeight.w700, fontSize: 15),
+                  style: const TextStyle(
+                    fontWeight: FontWeight.w700,
+                    fontSize: 15,
+                  ),
                 ),
                 const SizedBox(height: 4),
                 Text(
@@ -710,18 +1030,30 @@ class _MemberTile extends StatelessWidget {
               IconButton(
                 tooltip: '查看信息',
                 onPressed: onInfo,
-                icon: const Icon(Icons.info_outline, color: _mutedColor, size: 20),
+                icon: const Icon(
+                  Icons.info_outline,
+                  color: _mutedColor,
+                  size: 20,
+                ),
               ),
               if (onApprove != null)
                 IconButton(
                   tooltip: '同意加入',
                   onPressed: onApprove,
-                  icon: const Icon(Icons.check_circle, color: Color(0xFF20A464), size: 22),
+                  icon: const Icon(
+                    Icons.check_circle,
+                    color: Color(0xFF20A464),
+                    size: 22,
+                  ),
                 ),
               IconButton(
                 tooltip: '移除',
                 onPressed: onRemove,
-                icon: const Icon(Icons.person_remove_outlined, color: Colors.redAccent, size: 20),
+                icon: const Icon(
+                  Icons.person_remove_outlined,
+                  color: Colors.redAccent,
+                  size: 20,
+                ),
               ),
             ],
           ),
@@ -744,10 +1076,20 @@ class _InfoRow extends StatelessWidget {
         children: [
           SizedBox(
             width: 80,
-            child: Text(label, style: const TextStyle(color: _mutedColor, fontSize: 14)),
+            child: Text(
+              label,
+              style: const TextStyle(color: _mutedColor, fontSize: 14),
+            ),
           ),
           Expanded(
-            child: Text(value, style: const TextStyle(color: _textColor, fontWeight: FontWeight.w600, fontSize: 15)),
+            child: Text(
+              value,
+              style: const TextStyle(
+                color: _textColor,
+                fontWeight: FontWeight.w600,
+                fontSize: 15,
+              ),
+            ),
           ),
         ],
       ),
@@ -756,7 +1098,11 @@ class _InfoRow extends StatelessWidget {
 }
 
 class _EmptyMembers extends StatelessWidget {
-  const _EmptyMembers({required this.icon, required this.title, required this.message});
+  const _EmptyMembers({
+    required this.icon,
+    required this.title,
+    required this.message,
+  });
   final IconData icon;
   final String title;
   final String message;
@@ -771,9 +1117,16 @@ class _EmptyMembers extends StatelessWidget {
           children: [
             Icon(icon, color: const Color(0xFFE0E0E0), size: 48),
             const SizedBox(height: 16),
-            Text(title, style: const TextStyle(fontWeight: FontWeight.w800, fontSize: 16)),
+            Text(
+              title,
+              style: const TextStyle(fontWeight: FontWeight.w800, fontSize: 16),
+            ),
             const SizedBox(height: 8),
-            Text(message, textAlign: TextAlign.center, style: const TextStyle(color: _mutedColor, fontSize: 13)),
+            Text(
+              message,
+              textAlign: TextAlign.center,
+              style: const TextStyle(color: _mutedColor, fontSize: 13),
+            ),
           ],
         ),
       ),
@@ -790,13 +1143,21 @@ class _ErrorPanel extends StatelessWidget {
   Widget build(BuildContext context) {
     return Container(
       padding: const EdgeInsets.all(16),
-      decoration: BoxDecoration(color: _softOrange, borderRadius: BorderRadius.circular(12)),
+      decoration: BoxDecoration(
+        color: _softOrange,
+        borderRadius: BorderRadius.circular(12),
+      ),
       child: Row(
         children: [
           const Icon(Icons.info_outline, color: _warmOrange),
           const SizedBox(width: 12),
-          Expanded(child: Text(message, style: const TextStyle(color: _textColor))),
-          TextButton(onPressed: onRetry, child: const Text('重试', style: TextStyle(color: _warmOrange))),
+          Expanded(
+            child: Text(message, style: const TextStyle(color: _textColor)),
+          ),
+          TextButton(
+            onPressed: onRetry,
+            child: const Text('重试', style: TextStyle(color: _warmOrange)),
+          ),
         ],
       ),
     );
@@ -808,21 +1169,32 @@ class _SkeletonBox extends StatefulWidget {
   final double height;
   final double borderRadius;
 
-  const _SkeletonBox({required this.width, required this.height, this.borderRadius = 8});
+  const _SkeletonBox({
+    required this.width,
+    required this.height,
+    this.borderRadius = 8,
+  });
 
   @override
   State<_SkeletonBox> createState() => _SkeletonBoxState();
 }
 
-class _SkeletonBoxState extends State<_SkeletonBox> with SingleTickerProviderStateMixin {
+class _SkeletonBoxState extends State<_SkeletonBox>
+    with SingleTickerProviderStateMixin {
   late AnimationController _controller;
   late Animation<Color?> _colorTween;
 
   @override
   void initState() {
     super.initState();
-    _controller = AnimationController(vsync: this, duration: const Duration(milliseconds: 1000))..repeat(reverse: true);
-    _colorTween = ColorTween(begin: const Color(0xFFF0F0F0), end: const Color(0xFFE0E0E0)).animate(_controller);
+    _controller = AnimationController(
+      vsync: this,
+      duration: const Duration(milliseconds: 1000),
+    )..repeat(reverse: true);
+    _colorTween = ColorTween(
+      begin: const Color(0xFFF0F0F0),
+      end: const Color(0xFFE0E0E0),
+    ).animate(_controller);
   }
 
   @override
@@ -839,7 +1211,10 @@ class _SkeletonBoxState extends State<_SkeletonBox> with SingleTickerProviderSta
         return Container(
           width: widget.width,
           height: widget.height,
-          decoration: BoxDecoration(color: _colorTween.value, borderRadius: BorderRadius.circular(widget.borderRadius)),
+          decoration: BoxDecoration(
+            color: _colorTween.value,
+            borderRadius: BorderRadius.circular(widget.borderRadius),
+          ),
         );
       },
     );
@@ -849,12 +1224,16 @@ class _SkeletonBoxState extends State<_SkeletonBox> with SingleTickerProviderSta
 extension on FamilyMemberInfo {
   bool get isPending => status == 'PENDING';
   bool get isApproved => status == 'APPROVED';
-  String get displayName => nickname?.trim().isNotEmpty == true ? nickname!.trim() : '顾客$userId';
+  String get displayName =>
+      nickname?.trim().isNotEmpty == true ? nickname!.trim() : '顾客$userId';
   String get statusText {
     switch (status) {
-      case 'APPROVED': return '已加入';
-      case 'PENDING': return '待审核';
-      default: return '已拒绝';
+      case 'APPROVED':
+        return '已加入';
+      case 'PENDING':
+        return '待审核';
+      default:
+        return '已拒绝';
     }
   }
 }

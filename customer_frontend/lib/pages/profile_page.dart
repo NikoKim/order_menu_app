@@ -8,6 +8,8 @@ import 'edit_profile_page.dart';
 import 'feedback_page.dart';
 import 'my_families_page.dart';
 import 'orders_page.dart';
+import 'chat_settings_page.dart';
+import 'message_center_page.dart';
 
 class ProfilePage extends StatelessWidget {
   const ProfilePage({super.key, required this.api});
@@ -53,6 +55,22 @@ class ProfilePage extends StatelessWidget {
               const SizedBox(height: 16),
               _MenuSection(
                 children: [
+                  _ProfileMenuTile(
+                    icon: Icons.notifications_active_outlined,
+                    title: '消息通知',
+                    subtitle: '查看订单、家庭和反馈处理提醒',
+                    enabled: loggedIn,
+                    destination: const MessageCenterPage(),
+                  ),
+                  const _SectionDivider(),
+                  _ProfileMenuTile(
+                    icon: Icons.lock_outline,
+                    title: '聊天设置',
+                    subtitle: '管理私聊和家庭群聊权限',
+                    enabled: loggedIn,
+                    destination: const ChatSettingsPage(),
+                  ),
+                  const _SectionDivider(),
                   _ProfileMenuTile(
                     icon: Icons.receipt_long_outlined,
                     title: '我的订单',

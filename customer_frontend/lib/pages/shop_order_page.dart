@@ -8,6 +8,7 @@ import '../widgets/app_footer.dart';
 import 'auth_page.dart';
 import 'checkout_page.dart';
 import 'dish_detail_page.dart';
+import 'chat_detail_page.dart';
 
 class ShopOrderPage extends StatefulWidget {
   const ShopOrderPage({super.key, required this.shopId});
@@ -291,6 +292,22 @@ class _ShopOrderPageState extends State<ShopOrderPage> {
             backgroundColor: Colors.white,
             surfaceTintColor: Colors.white,
             elevation: 0,
+            actions: [
+              if (menu != null && AppScope.of(context).auth.isLoggedIn)
+                IconButton(
+                  tooltip: '联系商家',
+                  icon: const Icon(Icons.chat_bubble_outline),
+                  onPressed: () async {
+                    try {
+                      final conversation = await _api.startChatWithShop(menu.shop.id);
+                      if (!context.mounted) return;
+                      await Navigator.of(context).push(MaterialPageRoute(builder: (_) => ChatDetailPage(conversation: conversation)));
+                    } on ApiException catch (error) {
+                      if (context.mounted) ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(error.message)));
+                    }
+                  },
+                ),
+            ],
           ),
           body: switch (snapshot.connectionState) {
             ConnectionState.waiting => const _MenuSkeleton(),

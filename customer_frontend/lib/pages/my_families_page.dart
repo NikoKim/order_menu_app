@@ -7,6 +7,7 @@ import '../models.dart';
 import '../services/api_client.dart';
 import '../services/customer_websocket_service.dart';
 import '../widgets/app_footer.dart';
+import 'family_group_info_page.dart';
 
 class MyFamiliesPage extends StatefulWidget {
   const MyFamiliesPage({super.key, required this.api});
@@ -173,6 +174,7 @@ class _MyFamiliesPageState extends State<MyFamiliesPage> {
                       for (final family in families) ...[
                         _FamilyCard(
                           family: family,
+                          api: widget.api,
                           onLeave: () => _leave(family),
                         ),
                         const SizedBox(height: 12),
@@ -191,9 +193,14 @@ class _MyFamiliesPageState extends State<MyFamiliesPage> {
 }
 
 class _FamilyCard extends StatelessWidget {
-  const _FamilyCard({required this.family, required this.onLeave});
+  const _FamilyCard({
+    required this.family,
+    required this.api,
+    required this.onLeave,
+  });
 
   final FamilyInfo family;
+  final CustomerApi api;
   final VoidCallback onLeave;
 
   @override
@@ -301,6 +308,26 @@ class _FamilyCard extends StatelessWidget {
             ),
           ),
           const SizedBox(width: 8),
+          if (family.isApproved)
+            FutureBuilder<FamilyGroup>(
+              future: api.familyGroupByShop(family.shopId),
+              builder: (context, snapshot) {
+                final group = snapshot.data;
+                if (group == null) return const SizedBox.shrink();
+                return IconButton(
+                  tooltip: '家庭群聊',
+                  onPressed: () => Navigator.of(context).push(
+                    MaterialPageRoute(
+                      builder: (_) => FamilyGroupInfoPage(
+                        conversationId: group.id,
+                        shopId: family.shopId,
+                      ),
+                    ),
+                  ),
+                  icon: const Icon(Icons.groups_outlined),
+                );
+              },
+            ),
           TextButton(onPressed: onLeave, child: const Text('退出')),
         ],
       ),

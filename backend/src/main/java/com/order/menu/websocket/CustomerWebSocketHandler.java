@@ -25,6 +25,7 @@ public class CustomerWebSocketHandler extends TextWebSocketHandler {
         session.getAttributes().put("customerUserId", customerUserId);
 
         registry.registerCustomer(customerUserId, session);
+        registry.registerUser(customerUserId, session);
     }
 
     @Override

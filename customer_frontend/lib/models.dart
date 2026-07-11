@@ -19,6 +19,8 @@ class CustomerUser {
     required this.role,
     this.avatarUrl,
     this.phone,
+    this.allowPrivateChat = true,
+    this.autoJoinFamilyChat = true,
   });
 
   factory CustomerUser.fromJson(Map<String, dynamic> json) {
@@ -28,6 +30,8 @@ class CustomerUser {
       role: json['role']?.toString() ?? 'CUSTOMER',
       avatarUrl: json['avatarUrl']?.toString(),
       phone: json['phone']?.toString(),
+      allowPrivateChat: json['allowPrivateChat'] != false,
+      autoJoinFamilyChat: json['autoJoinFamilyChat'] != false,
     );
   }
 
@@ -36,6 +40,297 @@ class CustomerUser {
   final String role;
   final String? avatarUrl;
   final String? phone;
+  final bool allowPrivateChat;
+  final bool autoJoinFamilyChat;
+}
+
+class ChatConversation {
+  const ChatConversation({
+    required this.id,
+    required this.type,
+    required this.status,
+    this.name,
+    this.coverImageUrl,
+    this.lastMessageAt,
+    this.lastMessageContent,
+    this.unreadCount = 0,
+    this.muted = false,
+    this.directUserId,
+    this.directUserNickname,
+    this.directUserAvatarUrl,
+  });
+
+  factory ChatConversation.fromJson(Map<String, dynamic> json) {
+    return ChatConversation(
+      id: _asInt(json['id']),
+      type: json['type']?.toString() ?? 'DIRECT',
+      status: json['status']?.toString() ?? 'ACTIVE',
+      name: json['name']?.toString(),
+      coverImageUrl: json['coverImageUrl']?.toString(),
+      lastMessageAt: json['lastMessageAt']?.toString(),
+      lastMessageContent: (json['lastMessageContent'] ?? json['lastMessage'])
+          ?.toString(),
+      unreadCount: _asInt(json['unreadCount']),
+      muted: json['muted'] == true,
+      directUserId: json['directUserId'] == null
+          ? null
+          : _asInt(json['directUserId']),
+      directUserNickname: json['directUserNickname']?.toString(),
+      directUserAvatarUrl: json['directUserAvatarUrl']?.toString(),
+    );
+  }
+
+  final int id;
+  final String type;
+  final String status;
+  final String? name;
+  final String? coverImageUrl;
+  final String? lastMessageAt;
+  final String? lastMessageContent;
+  final int unreadCount;
+  final bool muted;
+  final int? directUserId;
+  final String? directUserNickname;
+  final String? directUserAvatarUrl;
+
+  bool get isDirect => type == 'DIRECT';
+  bool get isActive => status == 'ACTIVE';
+  String get title =>
+      isDirect ? (directUserNickname ?? '私聊') : (name ?? '家庭群聊');
+  String? get imageUrl => isDirect ? directUserAvatarUrl : coverImageUrl;
+  bool get showUnreadBadge => unreadCount > 0 && !muted;
+}
+
+class ChatMessage {
+  const ChatMessage({
+    required this.id,
+    required this.conversationId,
+    required this.senderUserId,
+    required this.type,
+    required this.content,
+    required this.createdAt,
+    this.dishId,
+    this.shopId,
+    this.dishName,
+    this.dishImageUrl,
+    this.dishPrice,
+    this.senderNickname,
+    this.senderAvatarUrl,
+    this.dishDescription,
+    this.dishSales,
+  });
+
+  factory ChatMessage.fromJson(Map<String, dynamic> json) => ChatMessage(
+    id: _asInt(json['id']),
+    conversationId: _asInt(json['conversationId']),
+    senderUserId: _asInt(json['senderUserId']),
+    type: json['type']?.toString() ?? 'TEXT',
+    content: json['content']?.toString() ?? '',
+    createdAt: json['createdAt']?.toString() ?? '',
+    dishId: json['dishId'] == null ? null : _asInt(json['dishId']),
+    shopId: json['shopId'] == null ? null : _asInt(json['shopId']),
+    dishName: json['dishName']?.toString(),
+    dishImageUrl: json['dishImageUrl']?.toString(),
+    dishPrice: json['dishPrice'] == null ? null : _asDouble(json['dishPrice']),
+    senderNickname: json['senderNickname']?.toString(),
+    senderAvatarUrl: json['senderAvatarUrl']?.toString(),
+    dishDescription: json['dishDescription']?.toString(),
+    dishSales: json['dishSalesCount'] == null
+        ? (json['dishSales'] == null ? null : _asInt(json['dishSales']))
+        : _asInt(json['dishSalesCount']),
+  );
+
+  final int id;
+  final int conversationId;
+  final int senderUserId;
+  final String type;
+  final String content;
+  final String createdAt;
+  final int? dishId;
+  final int? shopId;
+  final String? dishName;
+  final String? dishImageUrl;
+  final double? dishPrice;
+  final String? senderNickname;
+  final String? senderAvatarUrl;
+  final String? dishDescription;
+  final int? dishSales;
+
+  bool get isDishShare => type == 'DISH_SHARE';
+}
+
+bool shouldShowChatTimestamp(DateTime? previousTimestamp, DateTime timestamp) {
+  if (previousTimestamp == null) return true;
+  return timestamp.difference(previousTimestamp).inSeconds >= 60;
+}
+
+class FamilyGroupMember {
+  const FamilyGroupMember({
+    required this.userId,
+    required this.nickname,
+    required this.role,
+    required this.memberStatus,
+    required this.muted,
+    this.avatarUrl,
+  });
+  factory FamilyGroupMember.fromJson(Map<String, dynamic> json) =>
+      FamilyGroupMember(
+        userId: _asInt(json['userId']),
+        nickname: json['nickname']?.toString() ?? '',
+        avatarUrl: json['avatarUrl']?.toString(),
+        role: json['role']?.toString() ?? 'MEMBER',
+        memberStatus: json['memberStatus']?.toString() ?? 'ACTIVE',
+        muted: json['muted'] == true,
+      );
+  final int userId;
+  final String nickname;
+  final String? avatarUrl;
+  final String role;
+  final String memberStatus;
+  final bool muted;
+}
+
+class FamilyGroup {
+  const FamilyGroup({
+    required this.id,
+    required this.shopId,
+    required this.name,
+    required this.status,
+    required this.members,
+    this.coverImageUrl,
+    this.announcement,
+  });
+  factory FamilyGroup.fromJson(Map<String, dynamic> json) {
+    final rawMembers = json['members'];
+    return FamilyGroup(
+      id: _asInt(json['id']),
+      shopId: _asInt(json['shopId']),
+      name: json['name']?.toString() ?? '家庭群聊',
+      status: json['status']?.toString() ?? 'ACTIVE',
+      coverImageUrl: json['coverImageUrl']?.toString(),
+      announcement: json['announcement']?.toString(),
+      members: rawMembers is List
+          ? rawMembers
+                .whereType<Map<String, dynamic>>()
+                .map(FamilyGroupMember.fromJson)
+                .toList()
+          : const [],
+    );
+  }
+  final int id;
+  final int shopId;
+  final String name;
+  final String? coverImageUrl;
+  final String? announcement;
+  final String status;
+  final List<FamilyGroupMember> members;
+  bool get isActive => status == 'ACTIVE';
+}
+
+class ChatMessages {
+  const ChatMessages({required this.conversation, required this.messages});
+
+  factory ChatMessages.fromJson(Map<String, dynamic> json) {
+    final rawMessages = json['messages'];
+    return ChatMessages(
+      conversation: ChatConversation.fromJson(
+        json['conversation'] as Map<String, dynamic>,
+      ),
+      messages: rawMessages is List
+          ? rawMessages
+                .whereType<Map<String, dynamic>>()
+                .map(ChatMessage.fromJson)
+                .toList()
+          : const [],
+    );
+  }
+
+  final ChatConversation conversation;
+  final List<ChatMessage> messages;
+}
+
+class ChatUser {
+  const ChatUser({required this.id, required this.nickname, this.avatarUrl});
+
+  factory ChatUser.fromJson(Map<String, dynamic> json) => ChatUser(
+    id: _asInt(json['id']),
+    nickname: json['nickname']?.toString() ?? '',
+    avatarUrl: json['avatarUrl']?.toString(),
+  );
+
+  final int id;
+  final String nickname;
+  final String? avatarUrl;
+}
+
+class UserNotification {
+  const UserNotification({
+    required this.id,
+    required this.userId,
+    required this.type,
+    required this.title,
+    required this.content,
+    required this.createdAt,
+    this.payload,
+    this.readAt,
+  });
+
+  factory UserNotification.fromJson(Map<String, dynamic> json) =>
+      UserNotification(
+        id: _asInt(json['id']),
+        userId: _asInt(json['userId']),
+        type: json['type']?.toString() ?? '',
+        title: json['title']?.toString() ?? '',
+        content: json['content']?.toString() ?? '',
+        payload: json['payload']?.toString(),
+        readAt: json['readAt']?.toString(),
+        createdAt: json['createdAt']?.toString() ?? '',
+      );
+
+  final int id;
+  final int userId;
+  final String type;
+  final String title;
+  final String content;
+  final String? payload;
+  final String? readAt;
+  final String createdAt;
+
+  bool get isUnread => readAt == null || readAt!.isEmpty;
+
+  UserNotification markRead() => UserNotification(
+    id: id,
+    userId: userId,
+    type: type,
+    title: title,
+    content: content,
+    payload: payload,
+    readAt: DateTime.now().toIso8601String(),
+    createdAt: createdAt,
+  );
+}
+
+class NotificationList {
+  const NotificationList({
+    required this.notifications,
+    required this.unreadCount,
+  });
+
+  factory NotificationList.fromJson(Map<String, dynamic> json) {
+    final rawNotifications = json['notifications'];
+    return NotificationList(
+      notifications: rawNotifications is List
+          ? rawNotifications
+                .whereType<Map<String, dynamic>>()
+                .map(UserNotification.fromJson)
+                .toList()
+          : const [],
+      unreadCount: _asInt(json['unreadCount']),
+    );
+  }
+
+  final List<UserNotification> notifications;
+  final int unreadCount;
 }
 
 class Shop {
@@ -72,9 +367,9 @@ class Shop {
       familyImageUrl: json['familyImageUrl']?.toString(),
       previewDishes: previewDishesJson is List
           ? previewDishesJson
-          .whereType<Map<String, dynamic>>()
-          .map(Dish.fromJson)
-          .toList()
+                .whereType<Map<String, dynamic>>()
+                .map(Dish.fromJson)
+                .toList()
           : null,
     );
   }
@@ -304,6 +599,7 @@ class FamilyInfo {
     this.shopName,
     this.familyImageUrl,
     this.joinMode,
+    this.groupConversationId,
   });
 
   factory FamilyInfo.fromJson(Map<String, dynamic> json) {
@@ -315,6 +611,10 @@ class FamilyInfo {
       familyImageUrl: json['familyImageUrl']?.toString(),
       joinMode: json['joinMode']?.toString(),
       memberStatus: json['memberStatus']?.toString() ?? '',
+      groupConversationId:
+          json['groupConversationId'] == null && json['conversationId'] == null
+          ? null
+          : _asInt(json['groupConversationId'] ?? json['conversationId']),
     );
   }
 
@@ -325,6 +625,7 @@ class FamilyInfo {
   final String? familyImageUrl;
   final String? joinMode;
   final String memberStatus;
+  final int? groupConversationId;
 
   bool get isApproved => memberStatus == 'APPROVED';
 }

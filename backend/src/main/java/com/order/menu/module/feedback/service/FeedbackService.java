@@ -9,6 +9,7 @@ import com.order.menu.common.response.PageResponse;
 import com.order.menu.module.feedback.dto.FeedbackDtos;
 import com.order.menu.module.feedback.entity.Feedback;
 import com.order.menu.module.feedback.mapper.FeedbackMapper;
+import com.order.menu.module.message.service.MessageService;
 import com.order.menu.module.shop.entity.Shop;
 import com.order.menu.module.shop.service.ShopService;
 import com.order.menu.module.user.entity.User;
@@ -25,6 +26,7 @@ public class FeedbackService {
     private final ShopService shopService;
     private final UserMapper userMapper;
     private final WsPushService wsPushService;
+    private final MessageService messageService;
 
     public FeedbackDtos.FeedbackResponse create(Long userId, FeedbackDtos.FeedbackRequest request) {
         if (request.shopId() != null) {
@@ -39,6 +41,8 @@ public class FeedbackService {
 
         if (feedback.getShopId() != null) {
             wsPushService.pushFeedbackCreated(feedback);
+            messageService.createShopNotification(feedback.getShopId(), "FEEDBACK", "New feedback",
+                    "A customer sent feedback", feedbackPayload(feedback));
         }
 
         return toResponse(feedback);
@@ -72,6 +76,8 @@ public class FeedbackService {
         feedbackMapper.updateById(feedback);
         Feedback updated = feedbackMapper.selectById(feedbackId);
         wsPushService.pushFeedbackReplied(updated);
+        messageService.createNotification(updated.getUserId(), "FEEDBACK", "Feedback replied",
+                "The shop replied to your feedback", feedbackPayload(updated));
         return toResponse(updated);
     }
 
@@ -109,5 +115,9 @@ public class FeedbackService {
                 nickname,
                 avatarUrl
         );
+    }
+
+    private String feedbackPayload(Feedback feedback) {
+        return "{\"feedbackId\":" + feedback.getId() + ",\"shopId\":" + feedback.getShopId() + "}";
     }
 }

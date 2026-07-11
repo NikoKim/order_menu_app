@@ -48,6 +48,7 @@ public class SecurityConfig {
                         .requestMatchers("/api/shop/**").hasRole("SHOP")
                         .requestMatchers("/api/upload/shop", "/api/upload/menu", "/api/upload/family").hasRole("SHOP")
                         .requestMatchers("/api/orders/**", "/api/feedback/**", "/api/families/**").hasRole("CUSTOMER")
+                        .requestMatchers("/api/messages/**").authenticated()
                         .anyRequest().authenticated())
                 .exceptionHandling(ex -> ex
                         .authenticationEntryPoint((request, response, authException) -> writeError(response, ErrorCode.UNAUTHORIZED, "未登录或登录已过期"))

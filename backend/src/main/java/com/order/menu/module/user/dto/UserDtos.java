@@ -7,12 +7,22 @@ public final class UserDtos {
     }
 
     public record UpdateMeRequest(
-            @Size(max = 50, message = "昵称不能超过50个字符") String nickname,
-            @Size(max = 30, message = "手机号不能超过30个字符") String phone,
-            @Size(max = 255, message = "头像地址不能超过255个字符") String avatarUrl
+            @Size(max = 50, message = "Nickname must not exceed 50 characters") String nickname,
+            @Size(max = 30, message = "Phone must not exceed 30 characters") String phone,
+            @Size(max = 255, message = "Avatar URL must not exceed 255 characters") String avatarUrl,
+            Boolean allowPrivateChat,
+            Boolean autoJoinFamilyChat
     ) {
     }
 
-    public record CurrentUserResponse(Long id, String nickname, String role, String avatarUrl, String phone) {
+    public record CurrentUserResponse(
+            Long id,
+            String nickname,
+            String role,
+            String avatarUrl,
+            String phone,
+            Boolean allowPrivateChat,
+            Boolean autoJoinFamilyChat
+    ) {
     }
 }

@@ -17,6 +17,8 @@ public class User {
     private String avatarUrl;
     private String phone;
     private Integer status;
+    private Boolean allowPrivateChat = true;
+    private Boolean autoJoinFamilyChat = true;
     private LocalDateTime createdAt;
     private LocalDateTime updatedAt;
 }

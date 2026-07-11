@@ -14,6 +14,7 @@ import com.order.menu.module.dish.mapper.DishMapper;
 import com.order.menu.module.dish.mapper.DishOptionGroupMapper;
 import com.order.menu.module.dish.mapper.DishOptionItemMapper;
 import com.order.menu.module.family.service.FamilyService;
+import com.order.menu.module.message.service.MessageService;
 import com.order.menu.module.order.dto.OrderDtos;
 import com.order.menu.module.order.entity.Order;
 import com.order.menu.module.order.entity.OrderItem;
@@ -50,6 +51,7 @@ public class OrderService {
     private final DishOptionItemMapper dishOptionItemMapper;
     private final FamilyService familyService;
     private final WsPushService wsPushService;
+    private final MessageService messageService;
 
     @Transactional
     public OrderDtos.OrderSubmitResponse create(Long customerUserId, OrderDtos.CreateOrderRequest request) {
@@ -99,6 +101,8 @@ public class OrderService {
         }
 
         wsPushService.pushOrderCreated(order);
+        messageService.createShopNotification(order.getShopId(), "ORDER", "New order",
+                "Order " + order.getOrderNo() + " was submitted", orderPayload(order));
 
         return new OrderDtos.OrderSubmitResponse(order.getId(), order.getOrderNo(), order.getStatus(), order.getTotalAmount());
     }
@@ -168,6 +172,7 @@ public class OrderService {
         orderMapper.updateById(order);
 
         wsPushService.pushOrderAccepted(order);
+        notifyCustomerOrderStatus(order, "Order accepted");
     }
 
     @Transactional
@@ -184,6 +189,7 @@ public class OrderService {
         restoreStock(order);
 
         wsPushService.pushOrderRejected(order);
+        notifyCustomerOrderStatus(order, "Order rejected");
     }
 
     public void complete(Long ownerUserId, Long orderId) {
@@ -206,6 +212,7 @@ public class OrderService {
         }
 
         wsPushService.pushOrderCompleted(order);
+        notifyCustomerOrderStatus(order, "Order completed");
     }
 
     private Dish requireOnSaleDish(Long shopId, Long dishId) {
@@ -309,6 +316,15 @@ public class OrderService {
 
     private String trimToNull(String value) {
         return StringUtils.hasText(value) ? value.trim() : null;
+    }
+
+    private void notifyCustomerOrderStatus(Order order, String title) {
+        messageService.createNotification(order.getCustomerUserId(), "ORDER", title,
+                "Order " + order.getOrderNo() + " status: " + order.getStatus(), orderPayload(order));
+    }
+
+    private String orderPayload(Order order) {
+        return "{\"orderId\":" + order.getId() + ",\"shopId\":" + order.getShopId() + "}";
     }
 
     private OrderDtos.OrderSummaryResponse toSummary(Order order) {
