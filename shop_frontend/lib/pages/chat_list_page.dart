@@ -6,6 +6,7 @@ import '../models/shop_api_models.dart';
 import '../services/api_config.dart';
 import '../services/shop_api_service.dart';
 import '../services/websocket_service.dart';
+import '../services/latest_request.dart';
 import 'chat_detail_page.dart';
 import 'message_center_page.dart';
 
@@ -19,14 +20,17 @@ class ChatListPage extends StatefulWidget {
 class _ChatListPageState extends State<ChatListPage>
     with WidgetsBindingObserver {
   late Future<List<ChatConversation>> _future;
+  final _conversationRequests = LatestRequest();
+  List<ChatConversation>? _cachedConversations;
   StreamSubscription? _chatSubscription;
   StreamSubscription? _notificationSubscription;
+  StreamSubscription<bool>? _connectionSubscription;
 
   @override
   void initState() {
     super.initState();
     WidgetsBinding.instance.addObserver(this);
-    _future = shopApi.fetchConversations();
+    _future = _requestConversations();
     _chatSubscription = ShopWebSocketService.instance
         .streamForModule('CHAT')
         .listen((_) => _reload());
@@ -37,6 +41,9 @@ class _ChatListPageState extends State<ChatListPage>
               event.action == 'CREATED' || event.action == 'READ_CHANGED',
         )
         .listen((_) => _reload());
+    _connectionSubscription = ShopWebSocketService.instance.connectionStream
+        .where((connected) => connected)
+        .listen((_) => _reload());
   }
 
   @override
@@ -46,8 +53,24 @@ class _ChatListPageState extends State<ChatListPage>
     }
   }
 
+  Future<List<ChatConversation>> _requestConversations() async {
+    final generation = _conversationRequests.begin();
+    try {
+      final conversations = await shopApi.fetchConversations();
+      if (_conversationRequests.isLatest(generation)) {
+        _cachedConversations = conversations;
+        return conversations;
+      }
+      return _cachedConversations ?? conversations;
+    } catch (_) {
+      final cached = _cachedConversations;
+      if (cached != null) return cached;
+      rethrow;
+    }
+  }
+
   Future<void> _reload() async {
-    final future = shopApi.fetchConversations();
+    final future = _requestConversations();
     if (mounted) {
       setState(() {
         _future = future;
@@ -56,11 +79,27 @@ class _ChatListPageState extends State<ChatListPage>
     await future;
   }
 
+  void _markReadLocally(int conversationId) {
+    final cached = _cachedConversations;
+    if (cached == null) return;
+    _conversationRequests.begin();
+    setState(() {
+      _cachedConversations = cached
+          .map(
+            (conversation) => conversation.id == conversationId
+                ? conversation.markedRead()
+                : conversation,
+          )
+          .toList();
+    });
+  }
+
   @override
   void dispose() {
     WidgetsBinding.instance.removeObserver(this);
     _chatSubscription?.cancel();
     _notificationSubscription?.cancel();
+    _connectionSubscription?.cancel();
     super.dispose();
   }
 
@@ -83,9 +122,10 @@ class _ChatListPageState extends State<ChatListPage>
       child: FutureBuilder<List<ChatConversation>>(
         future: _future,
         builder: (context, snapshot) {
-          if (snapshot.connectionState != ConnectionState.done)
+          if (snapshot.connectionState != ConnectionState.done &&
+              _cachedConversations == null)
             return const Center(child: CircularProgressIndicator());
-          if (snapshot.hasError) {
+          if (snapshot.hasError && _cachedConversations == null) {
             return ListView(
               children: [
                 const SizedBox(height: 180),
@@ -98,7 +138,10 @@ class _ChatListPageState extends State<ChatListPage>
               ],
             );
           }
-          final conversations = snapshot.data ?? const <ChatConversation>[];
+          final conversations =
+              _cachedConversations ??
+              snapshot.data ??
+              const <ChatConversation>[];
           if (conversations.isEmpty) {
             return ListView(
               children: const [
@@ -132,18 +175,22 @@ class _ChatListPageState extends State<ChatListPage>
                   maxLines: 1,
                   overflow: TextOverflow.ellipsis,
                 ),
-                trailing: Column(
-                  mainAxisAlignment: MainAxisAlignment.center,
-                  crossAxisAlignment: CrossAxisAlignment.end,
-                  children: [
-                    _ConversationTime(value: conversation.lastMessageAt),
-                    if (conversation.shouldShowUnreadBadge) ...[
-                      const SizedBox(height: 5),
-                      _UnreadBadge(count: conversation.unreadCount),
+                trailing: SizedBox(
+                  width: 58,
+                  child: Column(
+                    mainAxisAlignment: MainAxisAlignment.center,
+                    crossAxisAlignment: CrossAxisAlignment.end,
+                    children: [
+                      _ConversationTime(value: conversation.lastMessageAt),
+                      if (conversation.shouldShowUnreadBadge) ...[
+                        const SizedBox(height: 5),
+                        _UnreadBadge(count: conversation.unreadCount),
+                      ],
                     ],
-                  ],
+                  ),
                 ),
                 onTap: () async {
+                  _markReadLocally(conversation.id);
                   await Navigator.of(context).push(
                     MaterialPageRoute(
                       builder: (_) =>
@@ -212,18 +259,8 @@ class _ConversationTime extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final time = value == null ? null : DateTime.tryParse(value!);
-    if (time == null) return const SizedBox(width: 24);
-    final local = time.toLocal();
-    final today = DateTime.now();
-    final text =
-        local.year == today.year &&
-            local.month == today.month &&
-            local.day == today.day
-        ? TimeOfDay.fromDateTime(local).format(context)
-        : '${local.month}/${local.day}';
     return Text(
-      text,
+      formatChatListTime(value),
       style: Theme.of(
         context,
       ).textTheme.labelSmall?.copyWith(color: Colors.grey),

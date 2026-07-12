@@ -6,6 +6,7 @@ import '../models/shop_api_models.dart';
 import '../services/api_config.dart';
 import '../services/shop_api_service.dart';
 import '../services/websocket_service.dart';
+import '../services/latest_request.dart';
 
 class ChatDetailPage extends StatefulWidget {
   const ChatDetailPage({super.key, required this.conversation});
@@ -19,8 +20,13 @@ class ChatDetailPage extends StatefulWidget {
 class _ChatDetailPageState extends State<ChatDetailPage> {
   late Future<_ChatDetailData> _future;
   final _input = TextEditingController();
+  final _scrollController = ScrollController();
+  final _messageRequests = LatestRequest();
   StreamSubscription? _subscription;
+  StreamSubscription<bool>? _connectionSubscription;
   bool _sending = false;
+  _ChatDetailData? _cachedData;
+  int _renderedMessageCount = -1;
 
   @override
   void initState() {
@@ -32,11 +38,18 @@ class _ChatDetailPageState extends State<ChatDetailPage> {
           final id = int.tryParse(
             '${event.data['conversationId'] ?? event.data['id'] ?? ''}',
           );
-          if (id == widget.conversation.id) _reload();
+          if (event.action == 'MESSAGE_CREATED' &&
+              id == widget.conversation.id) {
+            _reload();
+          }
         });
+    _connectionSubscription = ShopWebSocketService.instance.connectionStream
+        .where((connected) => connected)
+        .listen((_) => _reload());
   }
 
   Future<_ChatDetailData> _load() async {
+    final generation = _messageRequests.begin();
     final messagesFuture = shopApi.fetchChatMessages(widget.conversation.id);
     final currentUserFuture = shopApi.fetchCurrentUser();
     final shopFuture = shopApi.fetchMyShop();
@@ -46,12 +59,23 @@ class _ChatDetailPageState extends State<ChatDetailPage> {
               .fetchFamilyGroup(widget.conversation.id)
               .then<FamilyGroup?>((value) => value)
               .catchError((_) => null);
-    return _ChatDetailData(
-      messages: await messagesFuture,
-      currentUser: await currentUserFuture,
-      shop: await shopFuture,
-      group: await groupFuture,
-    );
+    try {
+      final data = _ChatDetailData(
+        messages: await messagesFuture,
+        currentUser: await currentUserFuture,
+        shop: await shopFuture,
+        group: await groupFuture,
+      );
+      if (_messageRequests.isLatest(generation)) {
+        _cachedData = data;
+        return data;
+      }
+      return _cachedData ?? data;
+    } catch (_) {
+      final cached = _cachedData;
+      if (cached != null) return cached;
+      rethrow;
+    }
   }
 
   Future<void> _reload() async {
@@ -69,9 +93,33 @@ class _ChatDetailPageState extends State<ChatDetailPage> {
     if (content.isEmpty || _sending || !active) return;
     setState(() => _sending = true);
     try {
-      await shopApi.sendChatMessage(widget.conversation.id, content);
+      final sent = await shopApi.sendChatMessage(
+        widget.conversation.id,
+        content,
+      );
       _input.clear();
-      await _reload();
+      final cached = _cachedData;
+      if (cached != null && mounted) {
+        _messageRequests.begin();
+        final messages =
+            cached.messages.messages.any((message) => message.id == sent.id)
+            ? cached.messages.messages
+            : [...cached.messages.messages, sent];
+        final updated = _ChatDetailData(
+          messages: ChatMessages(
+            conversation: cached.messages.conversation,
+            messages: messages,
+          ),
+          currentUser: cached.currentUser,
+          shop: cached.shop,
+          group: cached.group,
+        );
+        _cachedData = updated;
+        setState(() => _future = Future.value(updated));
+        _reload();
+      } else {
+        await _reload();
+      }
     } catch (error) {
       if (mounted) {
         final message = error is ApiException
@@ -89,8 +137,26 @@ class _ChatDetailPageState extends State<ChatDetailPage> {
   @override
   void dispose() {
     _subscription?.cancel();
+    _connectionSubscription?.cancel();
     _input.dispose();
+    _scrollController.dispose();
     super.dispose();
+  }
+
+  void _scheduleScrollToBottom({required bool animate}) {
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted || !_scrollController.hasClients) return;
+      final target = _scrollController.position.maxScrollExtent;
+      if (animate) {
+        _scrollController.animateTo(
+          target,
+          duration: const Duration(milliseconds: 180),
+          curve: Curves.easeOut,
+        );
+      } else {
+        _scrollController.jumpTo(target);
+      }
+    });
   }
 
   @override
@@ -99,9 +165,10 @@ class _ChatDetailPageState extends State<ChatDetailPage> {
     body: FutureBuilder<_ChatDetailData>(
       future: _future,
       builder: (context, snapshot) {
-        if (snapshot.connectionState != ConnectionState.done)
+        if (snapshot.connectionState != ConnectionState.done &&
+            _cachedData == null)
           return const Center(child: CircularProgressIndicator());
-        if (snapshot.hasError) {
+        if (snapshot.hasError && _cachedData == null) {
           return Center(
             child: TextButton(
               onPressed: _reload,
@@ -109,8 +176,14 @@ class _ChatDetailPageState extends State<ChatDetailPage> {
             ),
           );
         }
-        final data = snapshot.data!;
+        final data = snapshot.data ?? _cachedData!;
         final conversation = data.messages.conversation;
+        final messageCount = data.messages.messages.length;
+        if (_renderedMessageCount != messageCount) {
+          final animate = _renderedMessageCount >= 0;
+          _renderedMessageCount = messageCount;
+          _scheduleScrollToBottom(animate: animate);
+        }
         return Column(
           children: [
             if (!conversation.isActive)
@@ -125,6 +198,7 @@ class _ChatDetailPageState extends State<ChatDetailPage> {
                 conversation: conversation,
                 group: data.group,
                 shop: data.shop,
+                controller: _scrollController,
               ),
             ),
             SafeArea(
@@ -183,6 +257,7 @@ class _MessageList extends StatelessWidget {
     required this.conversation,
     required this.group,
     required this.shop,
+    required this.controller,
   });
 
   final List<ChatMessage> messages;
@@ -190,11 +265,13 @@ class _MessageList extends StatelessWidget {
   final ChatConversation conversation;
   final FamilyGroup? group;
   final ShopInfo shop;
+  final ScrollController controller;
 
   @override
   Widget build(BuildContext context) {
     if (messages.isEmpty) return const Center(child: Text('开始聊天吧'));
     return ListView.builder(
+      controller: controller,
       padding: const EdgeInsets.fromLTRB(12, 16, 12, 8),
       itemCount: messages.length,
       itemBuilder: (context, index) {

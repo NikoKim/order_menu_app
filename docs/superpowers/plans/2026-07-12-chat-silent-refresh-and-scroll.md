@@ -42,6 +42,7 @@
 - [ ] Add failing tests proving an older generation cannot replace a newer generation.
 - [ ] Implement a small request-generation guard.
 - [ ] Replace list `FutureBuilder` refresh swapping with cached state and silent guarded reloads.
+- [ ] Clear the selected conversation's unread count optimistically before opening its detail page, then reconcile silently.
 - [ ] Run targeted tests.
 
 ### Task 3: Silent Detail Refresh And Auto-Scroll
@@ -66,4 +67,3 @@
 - [ ] Run `mvn test` from `backend`.
 - [ ] Run `flutter test` and non-fatal-warning analysis from both Flutter projects.
 - [ ] Run `git diff --check` and review every requested behavior.
-

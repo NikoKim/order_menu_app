@@ -46,6 +46,8 @@ class MessageServiceTest {
     private UserMapper userMapper;
     @Mock
     private ShopMapper shopMapper;
+    @Mock
+    private WsPushService wsPushService;
 
     @Test
     void createDirectRejectsRecipientWhoDisablesPrivateChat() {
@@ -164,6 +166,25 @@ class MessageServiceTest {
     }
 
     @Test
+    void eitherParticipantCannotSendSecondMessageBeforeTheOtherReplies() {
+        Conversation conversation = directConversation(9L, 2L);
+        conversation.setDirectKey("1:2");
+        when(conversationMapper.selectById(9L)).thenReturn(conversation);
+        when(conversationMemberMapper.selectList(any())).thenReturn(List.of(
+                member(9L, 1L), member(9L, 2L)));
+        when(userMapper.selectById(2L)).thenReturn(user(2L, true));
+        ChatMessage unanswered = new ChatMessage();
+        unanswered.setSenderUserId(1L);
+        when(chatMessageMapper.selectList(any())).thenReturn(List.of(unanswered));
+
+        BusinessException error = assertThrows(BusinessException.class,
+                () -> service().sendMessage(1L, 9L, new MessageDtos.SendMessageRequest("again")));
+
+        assertEquals(ErrorCode.FORBIDDEN, error.getCode());
+        verify(chatMessageMapper, never()).insert(any(ChatMessage.class));
+    }
+
+    @Test
     void sendMessageRejectsDirectConversationWhenRecipientDisablesPrivateChat() {
         Conversation conversation = directConversation(9L, 1L);
         conversation.setDirectKey("1:2");
@@ -177,6 +198,28 @@ class MessageServiceTest {
 
         assertEquals(ErrorCode.FORBIDDEN, error.getCode());
         verify(chatMessageMapper, never()).insert(any(ChatMessage.class));
+    }
+
+    @Test
+    void sendMessageAllowsReplyWhenDisabledRecipientStartedTheConversation() {
+        Conversation conversation = directConversation(9L, 1L);
+        conversation.setDirectKey("1:2");
+        when(conversationMapper.selectById(9L)).thenReturn(conversation);
+        when(conversationMemberMapper.selectList(any())).thenReturn(List.of(
+                member(9L, 1L), member(9L, 2L)));
+        when(userMapper.selectById(1L)).thenReturn(user(1L, false));
+        when(userMapper.selectById(2L)).thenReturn(user(2L, true));
+        ChatMessage firstMessage = new ChatMessage();
+        firstMessage.setSenderUserId(1L);
+        when(chatMessageMapper.selectList(any())).thenReturn(List.of(firstMessage));
+        when(chatMessageMapper.insert(any(ChatMessage.class))).thenAnswer(invocation -> {
+            invocation.<ChatMessage>getArgument(0).setId(42L);
+            return 1;
+        });
+
+        service().sendMessage(2L, 9L, new MessageDtos.SendMessageRequest("reply"));
+
+        verify(chatMessageMapper).insert(any(ChatMessage.class));
     }
 
     @Test
@@ -296,11 +339,16 @@ class MessageServiceTest {
 
         assertEquals(12L, viewer.getLastReadMessageId());
         verify(conversationMemberMapper).updateById(viewer);
+        verify(wsPushService).pushToUser(
+                org.mockito.ArgumentMatchers.eq(1L),
+                org.mockito.ArgumentMatchers.eq("CHAT"),
+                org.mockito.ArgumentMatchers.eq("CONVERSATION_UPDATED"),
+                any());
     }
 
     private MessageService service() {
         return new MessageService(conversationMapper, conversationMemberMapper, chatMessageMapper, userMapper, shopMapper,
-                mock(FamilyMemberMapper.class), mock(DishMapper.class), mock(UserNotificationMapper.class), mock(WsPushService.class));
+                mock(FamilyMemberMapper.class), mock(DishMapper.class), mock(UserNotificationMapper.class), wsPushService);
     }
 
     private User user(Long id, boolean allowPrivateChat) {

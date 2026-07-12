@@ -10,6 +10,8 @@ Conversation list and detail pages keep successful API data as local state. Only
 
 Every page increments a request generation before loading. A response updates state only when its generation is still current, preventing a slower stale request from restoring old previews or unread badges.
 
+Conversation list rendering reads directly from stable local state rather than a changing `FutureBuilder` snapshot. Opening a conversation immediately clears that conversation's unread count in the local list; the successful detail read and a silent server reconciliation then confirm the value. Older list responses cannot restore the cleared badge.
+
 ## Detail Scrolling
 
 Both detail pages own a `ScrollController`. After the first successful load, an optimistic outgoing append, or a successful incoming-message reconciliation, a post-frame callback animates or jumps to `maxScrollExtent`. Empty conversations remain stable. Controllers and subscriptions are disposed with the page.
@@ -27,4 +29,3 @@ The conversation initiator may create only one outgoing message until the other 
 - Backend tests verify the first-message limit for both text and dish shares and verify sends after a reply.
 - Flutter tests cover request-generation behavior and scroll scheduling helpers.
 - Full backend and both Flutter suites plus analysis run after implementation.
-

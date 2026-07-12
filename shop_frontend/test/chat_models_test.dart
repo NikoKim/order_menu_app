@@ -50,6 +50,24 @@ void main() {
     expect(conversation.shouldShowUnreadBadge, isFalse);
   });
 
+  test('marking a conversation read clears only its unread state', () {
+    final conversation = ChatConversation.fromJson({
+      'id': 6,
+      'type': 'DIRECT',
+      'status': 'ACTIVE',
+      'directUserNickname': 'Alice',
+      'lastMessageContent': 'hello',
+      'unreadCount': 2,
+    });
+
+    final read = conversation.markedRead();
+
+    expect(read.unreadCount, 0);
+    expect(read.shouldShowUnreadBadge, isFalse);
+    expect(read.title, 'Alice');
+    expect(read.lastMessageContent, 'hello');
+  });
+
   test('family group creation is available only with two approved members', () {
     expect(FamilyGroupEligibility.fromMembers(1).canCreate, isFalse);
     expect(FamilyGroupEligibility.fromMembers(2).canCreate, isTrue);
@@ -104,5 +122,14 @@ void main() {
       ApiConfig.resolveImageUrl('https://cdn.example.test/avatar.png'),
       'https://cdn.example.test/avatar.png',
     );
+  });
+
+  test('formats conversation list timestamps relative to today', () {
+    final now = DateTime(2026, 7, 12, 18, 30);
+
+    expect(formatChatListTime('2026-07-12T08:05:00', now: now), '08:05');
+    expect(formatChatListTime('2026-07-11T08:05:00', now: now), '07/11');
+    expect(formatChatListTime('2025-07-11T08:05:00', now: now), '2025/07/11');
+    expect(formatChatListTime(null, now: now), '');
   });
 }

@@ -14,6 +14,7 @@ import 'package:path_provider/path_provider.dart';
 import 'package:open_filex/open_filex.dart';
 
 import 'services/customer_websocket_service.dart';
+import 'services/latest_request.dart';
 
 void main() {
   runApp(const OrderMenuCustomerApp());
@@ -139,7 +140,9 @@ class _CustomerShellState extends State<CustomerShell> {
   late CustomerApi _customerApi;
   String? _webSocketToken;
   StreamSubscription<CustomerWsMessage>? _chatBadgeSubscription;
+  StreamSubscription<bool>? _connectionSubscription;
   int _unreadChats = 0;
+  final _chatBadgeRequests = LatestRequest();
 
   @override
   void didChangeDependencies() {
@@ -147,6 +150,11 @@ class _CustomerShellState extends State<CustomerShell> {
     _customerApi = CustomerApi(AppScope.of(context).api);
     _chatBadgeSubscription ??= CustomerWebSocketService.instance
         .streamForModule('CHAT')
+        .listen((_) => _refreshChatBadge());
+    _connectionSubscription ??= CustomerWebSocketService
+        .instance
+        .connectionStream
+        .where((connected) => connected)
         .listen((_) => _refreshChatBadge());
 
     if (!_hasCheckedUpdate) {
@@ -195,31 +203,22 @@ class _CustomerShellState extends State<CustomerShell> {
 
   Future<void> _refreshChatBadge() async {
     if (!AppScope.of(context).auth.isLoggedIn) return;
+    final generation = _chatBadgeRequests.begin();
     try {
       final conversations = await _customerApi.conversations();
       final count = conversations
           .where((item) => !item.muted)
           .fold<int>(0, (total, item) => total + item.unreadCount);
-      if (mounted) setState(() => _unreadChats = count);
-    } catch (_) {}
-  }
-
-  Future<void> _markAllChatsRead() async {
-    try {
-      final conversations = await _customerApi.conversations();
-      for (final item in conversations.where((item) => item.unreadCount > 0)) {
-        await _customerApi.chatMessages(item.id);
+      if (mounted && _chatBadgeRequests.isLatest(generation)) {
+        setState(() => _unreadChats = count);
       }
-    } catch (_) {
-      // Opening the chat tab must remain usable while offline.
-    } finally {
-      if (mounted) setState(() => _unreadChats = 0);
-    }
+    } catch (_) {}
   }
 
   @override
   void dispose() {
     _chatBadgeSubscription?.cancel();
+    _connectionSubscription?.cancel();
     CustomerWebSocketService.instance.disconnect();
     super.dispose();
   }
@@ -503,7 +502,7 @@ class _CustomerShellState extends State<CustomerShell> {
               setState(() {
                 _currentIndex = index;
               });
-              if (loggedIn && index == 1) _markAllChatsRead();
+              if (loggedIn && index == 1) _refreshChatBadge();
             },
             destinations: [
               const NavigationDestination(

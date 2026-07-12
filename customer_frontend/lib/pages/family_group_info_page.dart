@@ -95,7 +95,7 @@ class _FamilyGroupInfoPageState extends State<FamilyGroupInfoPage> {
             if (!active && group.isActive)
               ListTile(
                 leading: const Icon(Icons.group_add_outlined),
-                title: const Text('申请加入家庭群聊'),
+                title: const Text('加入家庭群聊'),
                 onTap: _working
                     ? null
                     : () => _perform(() async {

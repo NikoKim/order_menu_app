@@ -69,12 +69,12 @@ public class FamilyService {
 
         if ("PENDING".equals(member.getStatus())) {
             wsPushService.pushFamilyMemberApplied(member);
-            messageService.createShopNotification(member.getShopId(), "FAMILY", "New family application",
-                    "A customer requested to join the family", familyPayload(member));
+            messageService.createShopNotification(member.getShopId(), "FAMILY", "家庭新成员加入申请",
+                    "一位顾客请求加入你的家庭，请前去家庭管理页面查看", familyPayload(member));
         } else if ("APPROVED".equals(member.getStatus())) {
             wsPushService.pushFamilyMemberApproved(member);
-            messageService.createNotification(member.getUserId(), "FAMILY", "Family membership approved",
-                    "You joined the family", familyPayload(member));
+            messageService.createNotification(member.getUserId(), "FAMILY", "已加入家庭",
+                    "你已加入该家庭", familyPayload(member));
             messageService.onFamilyMemberApproved(member);
         }
 
@@ -114,8 +114,8 @@ public class FamilyService {
         member.setStatus("APPROVED");
         familyMemberMapper.updateById(member);
         wsPushService.pushFamilyMemberApproved(member);
-        messageService.createNotification(member.getUserId(), "FAMILY", "Family membership approved",
-                "Your family application was approved", familyPayload(member));
+        messageService.createNotification(member.getUserId(), "FAMILY", "家庭申请已通过",
+                "你的家庭申请已通过，已加入家庭", familyPayload(member));
         messageService.onFamilyMemberApproved(member);
         return toMemberResponse(member);
     }
@@ -128,8 +128,8 @@ public class FamilyService {
         familyMemberMapper.deleteById(member.getId());
         messageService.onFamilyMemberLeft(shopId, userId);
         wsPushService.pushFamilyMemberRejected(deletedMemberId, shopId, userId);
-        messageService.createNotification(userId, "FAMILY", "Family membership rejected",
-                "Your family application was rejected", "{\"memberId\":" + deletedMemberId + ",\"shopId\":" + shopId + "}");
+        messageService.createNotification(userId, "FAMILY", "家庭申请被拒绝",
+                "你的加入家庭申请被拒绝", "{\"memberId\":" + deletedMemberId + ",\"shopId\":" + shopId + "}");
     }
 
     private FamilyMember requireOwnedMember(Long ownerUserId, Long memberId) {

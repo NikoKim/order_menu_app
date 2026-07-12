@@ -61,8 +61,10 @@ class ShopWebSocketService {
   int _retryCount = 0;
 
   final _messageController = StreamController<WsMessage>.broadcast();
+  final _connectionController = StreamController<bool>.broadcast();
 
   Stream<WsMessage> get messageStream => _messageController.stream;
+  Stream<bool> get connectionStream => _connectionController.stream;
 
   Stream<WsMessage> streamForModule(String module) {
     return messageStream.where((msg) => msg.module == module);
@@ -94,6 +96,7 @@ class ShopWebSocketService {
 
     try {
       _channel = WebSocketChannel.connect(uri);
+      await _channel!.ready;
 
       _subscription = _channel!.stream.listen(
         _onData,
@@ -105,7 +108,7 @@ class ShopWebSocketService {
         cancelOnError: true,
       );
 
-      _connected = true;
+      _setConnected(true);
       _connecting = false;
       _retryCount = 0;
 
@@ -115,7 +118,7 @@ class ShopWebSocketService {
     } catch (e) {
       debugPrint('Shop WS 连接失败: $e');
       _connecting = false;
-      _connected = false;
+      _setConnected(false);
       _scheduleReconnect();
     }
   }
@@ -169,7 +172,7 @@ class ShopWebSocketService {
   void _onDisconnected() {
     if (_manualClosed) return;
 
-    _connected = false;
+    _setConnected(false);
     _connecting = false;
     _heartbeatTimer?.cancel();
 
@@ -200,7 +203,7 @@ class ShopWebSocketService {
     } catch (_) {}
 
     _channel = null;
-    _connected = false;
+    _setConnected(false);
     _connecting = false;
   }
 
@@ -212,5 +215,12 @@ class ShopWebSocketService {
   void dispose() {
     disconnect();
     _messageController.close();
+    _connectionController.close();
+  }
+
+  void _setConnected(bool value) {
+    if (_connected == value) return;
+    _connected = value;
+    _connectionController.add(value);
   }
 }

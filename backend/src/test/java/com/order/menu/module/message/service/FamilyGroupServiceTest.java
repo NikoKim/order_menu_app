@@ -76,6 +76,25 @@ class FamilyGroupServiceTest {
     }
 
     @Test
+    void createFamilyGroupActivatesAutoJoinMember() {
+        when(shopMapper.selectOne(any())).thenReturn(shop(8L, 1L));
+        when(familyMemberMapper.selectCount(any())).thenReturn(2L);
+        when(conversationMapper.selectOne(any())).thenReturn(null);
+        when(familyMemberMapper.selectList(any())).thenReturn(List.of(familyMember(2L)));
+        when(userMapper.selectById(2L)).thenReturn(user(2L, true));
+        when(conversationMapper.insert(any(Conversation.class))).thenAnswer(invocation -> {
+            invocation.<Conversation>getArgument(0).setId(44L);
+            return 1;
+        });
+
+        service().createFamilyGroup(1L);
+
+        ArgumentCaptor<ConversationMember> captor = ArgumentCaptor.forClass(ConversationMember.class);
+        verify(conversationMemberMapper, org.mockito.Mockito.times(2)).insert(captor.capture());
+        assertEquals("ACTIVE", captor.getAllValues().get(1).getMemberStatus());
+    }
+
+    @Test
     void ownerCanRemoveGroupMemberWithoutChangingFamilyMembership() {
         Conversation conversation = familyConversation(44L, 8L, 1L);
         when(conversationMapper.selectById(44L)).thenReturn(conversation);
@@ -149,10 +168,29 @@ class FamilyGroupServiceTest {
         Conversation conversation = directConversation(51L, "1:3");
         when(conversationMapper.selectById(51L)).thenReturn(conversation);
         when(conversationMemberMapper.selectList(any())).thenReturn(List.of(activeMember(51L, 1L), activeMember(51L, 3L)));
+        when(userMapper.selectById(3L)).thenReturn(user(3L, true));
         when(dishMapper.selectById(9L)).thenReturn(dish(9L, 8L));
         when(shopMapper.selectById(8L)).thenReturn(shop(8L, 1L));
         when(familyMemberMapper.selectCount(any())).thenReturn(0L);
 
+        BusinessException error = assertThrows(BusinessException.class,
+                () -> service().shareDish(1L, new MessageDtos.ShareDishRequest(51L, 9L)));
+
+        assertEquals(ErrorCode.FORBIDDEN, error.getCode());
+        verify(chatMessageMapper, never()).insert(any(ChatMessage.class));
+    }
+
+    @Test
+    void directChatInitiatorCannotShareSecondMessageBeforeReply() {
+        Conversation conversation = directConversation(51L, "1:2");
+        conversation.setOwnerUserId(1L);
+        when(conversationMapper.selectById(51L)).thenReturn(conversation);
+        when(conversationMemberMapper.selectList(any())).thenReturn(List.of(
+                activeMember(51L, 1L), activeMember(51L, 2L)));
+        when(userMapper.selectById(2L)).thenReturn(user(2L, true));
+        ChatMessage unanswered = new ChatMessage();
+        unanswered.setSenderUserId(1L);
+        when(chatMessageMapper.selectList(any())).thenReturn(List.of(unanswered));
         BusinessException error = assertThrows(BusinessException.class,
                 () -> service().shareDish(1L, new MessageDtos.ShareDishRequest(51L, 9L)));
 

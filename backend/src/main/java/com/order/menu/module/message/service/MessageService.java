@@ -300,6 +300,10 @@ public class MessageService {
         if (!ACTIVE.equals(conversation.getStatus())) {
             throw new BusinessException(ErrorCode.FORBIDDEN, "This conversation is no longer active");
         }
+        if (DIRECT.equals(conversation.getType())) {
+            assertDirectRecipientAllowsPrivateChat(conversation, userId);
+            assertDirectMessageAllowed(conversation, userId);
+        }
         Dish dish = dishMapper.selectById(request.dishId());
         if (dish == null) {
             throw new BusinessException(ErrorCode.NOT_FOUND, "Dish not found");
@@ -627,9 +631,6 @@ public class MessageService {
     }
 
     private void assertDirectMessageAllowed(Conversation conversation, Long userId) {
-        if (conversation.getOwnerUserId() == null || !conversation.getOwnerUserId().equals(userId)) {
-            return;
-        }
         List<ChatMessage> history = chatMessageMapper.selectList(new LambdaQueryWrapper<ChatMessage>()
                 .eq(ChatMessage::getConversationId, conversation.getId())
                 .orderByAsc(ChatMessage::getCreatedAt)
@@ -650,7 +651,16 @@ public class MessageService {
         }
         User recipient = requireEnabledUser(recipientUserId);
         if (Boolean.FALSE.equals(recipient.getAllowPrivateChat())) {
-            throw new BusinessException(ErrorCode.FORBIDDEN, "The recipient does not allow private chat");
+            boolean recipientStartedContact = chatMessageMapper.selectList(new LambdaQueryWrapper<ChatMessage>()
+                            .eq(ChatMessage::getConversationId, conversation.getId())
+                            .eq(ChatMessage::getSenderUserId, recipientUserId)
+                            .last("limit 1"))
+                    .stream()
+                    .findAny()
+                    .isPresent();
+            if (!recipientStartedContact) {
+                throw new BusinessException(ErrorCode.FORBIDDEN, "The recipient does not allow private chat");
+            }
         }
     }
 
@@ -745,6 +755,7 @@ public class MessageService {
                 && (viewer.getLastReadMessageId() == null || latest.getId() > viewer.getLastReadMessageId())) {
             viewer.setLastReadMessageId(latest.getId());
             conversationMemberMapper.updateById(viewer);
+            pushConversationUpdated(conversationId);
         }
     }
 

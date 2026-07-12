@@ -47,6 +47,7 @@ class CustomerWebSocketService {
   static final CustomerWebSocketService instance = CustomerWebSocketService._();
 
   final _messageController = StreamController<CustomerWsMessage>.broadcast();
+  final _connectionController = StreamController<bool>.broadcast();
   WebSocketChannel? _channel;
   StreamSubscription? _subscription;
   Timer? _heartbeatTimer;
@@ -58,6 +59,7 @@ class CustomerWebSocketService {
   int _retryCount = 0;
 
   Stream<CustomerWsMessage> get messageStream => _messageController.stream;
+  Stream<bool> get connectionStream => _connectionController.stream;
 
   bool get isConnected => _connected;
 
@@ -74,6 +76,7 @@ class CustomerWebSocketService {
 
     try {
       _channel = WebSocketChannel.connect(_uriForToken(token));
+      await _channel!.ready;
       _subscription = _channel!.stream.listen(
         _onData,
         onDone: _onDisconnected,
@@ -83,13 +86,13 @@ class CustomerWebSocketService {
         },
         cancelOnError: true,
       );
-      _connected = true;
+      _setConnected(true);
       _connecting = false;
       _retryCount = 0;
       _startHeartbeat();
     } catch (error) {
       debugPrint('Customer WebSocket connection failed: $error');
-      _connected = false;
+      _setConnected(false);
       _connecting = false;
       _scheduleReconnect();
     }
@@ -135,7 +138,7 @@ class CustomerWebSocketService {
 
   void _onDisconnected() {
     if (_manualClosed) return;
-    _connected = false;
+    _setConnected(false);
     _connecting = false;
     _heartbeatTimer?.cancel();
     _scheduleReconnect();
@@ -158,7 +161,7 @@ class CustomerWebSocketService {
       await _channel?.sink.close();
     } catch (_) {}
     _channel = null;
-    _connected = false;
+    _setConnected(false);
     _connecting = false;
   }
 
@@ -166,6 +169,12 @@ class CustomerWebSocketService {
     _manualClosed = true;
     _token = null;
     _closeCurrent();
+  }
+
+  void _setConnected(bool value) {
+    if (_connected == value) return;
+    _connected = value;
+    _connectionController.add(value);
   }
 
   Uri _uriForToken(String token) {

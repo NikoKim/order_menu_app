@@ -3,6 +3,7 @@ import 'dart:io';
 
 import 'package:flutter/material.dart';
 import 'package:shop_frontend/services/websocket_service.dart';
+import 'package:shop_frontend/services/latest_request.dart';
 
 import 'models/shop_api_models.dart';
 import 'pages/dashboard_page.dart';
@@ -94,6 +95,8 @@ class _ShopShellState extends State<ShopShell> {
   int _pendingFeedback = 0;
   int _unreadChats = 0;
   StreamSubscription? _wsSubscription;
+  StreamSubscription<bool>? _connectionSubscription;
+  final _chatBadgeRequests = LatestRequest();
 
   bool _hasCheckedUpdate = false;
 
@@ -123,6 +126,14 @@ class _ShopShellState extends State<ShopShell> {
         _loadChatBadge();
       }
     });
+    _connectionSubscription = ShopWebSocketService.instance.connectionStream
+        .where((connected) => connected)
+        .listen((_) {
+          if (_loggedIn) {
+            _loadNotifications();
+            _loadChatBadge();
+          }
+        });
   }
 
   Future<void> _checkAppUpdate() async {
@@ -378,6 +389,7 @@ class _ShopShellState extends State<ShopShell> {
   @override
   void dispose() {
     _wsSubscription?.cancel();
+    _connectionSubscription?.cancel();
     ShopWebSocketService.instance.disconnect();
     super.dispose();
   }
@@ -433,26 +445,16 @@ class _ShopShellState extends State<ShopShell> {
 
   Future<void> _loadChatBadge() async {
     if (!_loggedIn) return;
+    final generation = _chatBadgeRequests.begin();
     try {
       final conversations = await shopApi.fetchConversations();
       final count = conversations
           .where((item) => !item.muted)
           .fold<int>(0, (total, item) => total + item.unreadCount);
-      if (mounted) setState(() => _unreadChats = count);
-    } catch (_) {}
-  }
-
-  Future<void> _markAllChatsRead() async {
-    try {
-      final conversations = await shopApi.fetchConversations();
-      for (final item in conversations.where((item) => item.unreadCount > 0)) {
-        await shopApi.fetchChatMessages(item.id);
+      if (mounted && _chatBadgeRequests.isLatest(generation)) {
+        setState(() => _unreadChats = count);
       }
-    } catch (_) {
-      // Keep navigation responsive while offline.
-    } finally {
-      if (mounted) setState(() => _unreadChats = 0);
-    }
+    } catch (_) {}
   }
 
   @override
@@ -491,7 +493,7 @@ class _ShopShellState extends State<ShopShell> {
         onDestinationSelected: (value) {
           setState(() => _index = value);
           _loadNotifications();
-          if (value == 2) _markAllChatsRead();
+          if (value == 2) _loadChatBadge();
         },
         destinations: [
           const NavigationDestination(

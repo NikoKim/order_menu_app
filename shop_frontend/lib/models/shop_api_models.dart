@@ -110,6 +110,21 @@ class ChatConversation {
       isDirect ? (directUserNickname ?? '私聊') : (name ?? '家庭群聊');
   String? get imageUrl => isDirect ? directUserAvatarUrl : coverImageUrl;
   bool get shouldShowUnreadBadge => unreadCount > 0 && !muted;
+
+  ChatConversation markedRead() => ChatConversation(
+    id: id,
+    type: type,
+    status: status,
+    name: name,
+    coverImageUrl: coverImageUrl,
+    directUserId: directUserId,
+    directUserNickname: directUserNickname,
+    directUserAvatarUrl: directUserAvatarUrl,
+    lastMessageAt: lastMessageAt,
+    lastMessageContent: lastMessageContent,
+    unreadCount: 0,
+    muted: muted,
+  );
 }
 
 class ChatMessage {
@@ -172,6 +187,21 @@ class ChatMessage {
 bool shouldShowChatTimestamp(DateTime current, DateTime? previous) {
   return previous == null ||
       current.difference(previous).abs() > const Duration(minutes: 1);
+}
+
+String formatChatListTime(String? value, {DateTime? now}) {
+  final parsed = value == null ? null : DateTime.tryParse(value);
+  if (parsed == null) return '';
+  final local = parsed.toLocal();
+  final today = now ?? DateTime.now();
+  String twoDigits(int number) => number.toString().padLeft(2, '0');
+  if (local.year == today.year &&
+      local.month == today.month &&
+      local.day == today.day) {
+    return '${twoDigits(local.hour)}:${twoDigits(local.minute)}';
+  }
+  final monthAndDay = '${twoDigits(local.month)}/${twoDigits(local.day)}';
+  return local.year == today.year ? monthAndDay : '${local.year}/$monthAndDay';
 }
 
 class ChatMessages {

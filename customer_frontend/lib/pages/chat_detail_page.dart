@@ -6,6 +6,7 @@ import '../main.dart';
 import '../models.dart';
 import '../services/api_client.dart';
 import '../services/customer_websocket_service.dart';
+import '../services/latest_request.dart';
 import 'family_group_info_page.dart';
 
 class ChatDetailPage extends StatefulWidget {
@@ -19,10 +20,14 @@ class _ChatDetailPageState extends State<ChatDetailPage> {
   late final CustomerApi _api;
   late Future<ChatMessages> _messagesFuture;
   final _input = TextEditingController();
+  final _scrollController = ScrollController();
+  final _messageRequests = LatestRequest();
   StreamSubscription<CustomerWsMessage>? _wsSubscription;
+  StreamSubscription<bool>? _connectionSubscription;
   bool _sending = false;
   bool _initialized = false;
   ChatMessages? _cachedMessages;
+  int _renderedMessageCount = -1;
 
   @override
   void didChangeDependencies() {
@@ -37,14 +42,29 @@ class _ChatDetailPageState extends State<ChatDetailPage> {
           final id = int.tryParse(
             '${event.data['conversationId'] ?? event.data['id'] ?? ''}',
           );
-          if (id == widget.conversation.id && mounted) _reload();
+          if (event.action == 'MESSAGE_CREATED' &&
+              id == widget.conversation.id &&
+              mounted) {
+            _reload();
+          }
+        });
+    _connectionSubscription ??= CustomerWebSocketService
+        .instance
+        .connectionStream
+        .where((connected) => connected)
+        .listen((_) {
+          if (mounted) _reload();
         });
   }
 
   Future<ChatMessages> _loadMessages() async {
+    final generation = _messageRequests.begin();
     final result = await _api.chatMessages(widget.conversation.id);
-    _cachedMessages = result;
-    return result;
+    if (_messageRequests.isLatest(generation)) {
+      _cachedMessages = result;
+      return result;
+    }
+    return _cachedMessages ?? result;
   }
 
   void _reload() {
@@ -67,6 +87,7 @@ class _ChatDetailPageState extends State<ChatDetailPage> {
       _input.clear();
       final cached = _cachedMessages;
       if (cached != null && mounted) {
+        _messageRequests.begin();
         final updated = ChatMessages(
           conversation: cached.conversation,
           messages: [...cached.messages, sent],
@@ -89,6 +110,7 @@ class _ChatDetailPageState extends State<ChatDetailPage> {
         );
         if (delivered) {
           _input.clear();
+          _messageRequests.begin();
           _cachedMessages = recovered;
           if (mounted) {
             setState(() {
@@ -111,8 +133,26 @@ class _ChatDetailPageState extends State<ChatDetailPage> {
   @override
   void dispose() {
     _wsSubscription?.cancel();
+    _connectionSubscription?.cancel();
     _input.dispose();
+    _scrollController.dispose();
     super.dispose();
+  }
+
+  void _scheduleScrollToBottom({required bool animate}) {
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted || !_scrollController.hasClients) return;
+      final target = _scrollController.position.maxScrollExtent;
+      if (animate) {
+        _scrollController.animateTo(
+          target,
+          duration: const Duration(milliseconds: 180),
+          curve: Curves.easeOut,
+        );
+      } else {
+        _scrollController.jumpTo(target);
+      }
+    });
   }
 
   @override
@@ -147,10 +187,11 @@ class _ChatDetailPageState extends State<ChatDetailPage> {
             child: FutureBuilder<ChatMessages>(
               future: _messagesFuture,
               builder: (context, snapshot) {
-                if (snapshot.connectionState != ConnectionState.done) {
+                if (snapshot.connectionState != ConnectionState.done &&
+                    _cachedMessages == null) {
                   return const Center(child: CircularProgressIndicator());
                 }
-                if (snapshot.hasError) {
+                if (snapshot.hasError && _cachedMessages == null) {
                   return Center(
                     child: TextButton(
                       onPressed: _reload,
@@ -158,9 +199,15 @@ class _ChatDetailPageState extends State<ChatDetailPage> {
                     ),
                   );
                 }
-                final messages = snapshot.data!.messages;
+                final messages = (snapshot.data ?? _cachedMessages)!.messages;
+                if (_renderedMessageCount != messages.length) {
+                  final animate = _renderedMessageCount >= 0;
+                  _renderedMessageCount = messages.length;
+                  _scheduleScrollToBottom(animate: animate);
+                }
                 if (messages.isEmpty) return const Center(child: Text('开始聊天吧'));
                 return ListView.builder(
+                  controller: _scrollController,
                   padding: const EdgeInsets.all(16),
                   itemCount: messages.length,
                   itemBuilder: (context, index) {

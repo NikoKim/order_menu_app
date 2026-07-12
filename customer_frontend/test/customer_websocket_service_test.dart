@@ -2,6 +2,13 @@ import 'package:customer_frontend/services/customer_websocket_service.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 void main() {
+  test('exposes connection changes for reconciliation after reconnect', () {
+    expect(
+      CustomerWebSocketService.instance.connectionStream,
+      isA<Stream<bool>>(),
+    );
+  });
+
   test('parses a websocket message with a numeric timestamp', () {
     final message = CustomerWsMessage.fromJson({
       'module': 'ORDER',
