@@ -126,13 +126,31 @@ class ChatMessage {
     required this.createdAt,
     this.dishId,
     this.shopId,
+    this.shopName,
     this.dishName,
     this.dishImageUrl,
     this.dishPrice,
     this.senderNickname,
     this.senderAvatarUrl,
+    this.quotedMessageId,
+    this.quotedType,
+    this.quotedContent,
+    this.quotedSenderName,
+    this.quotedMessage,
+    this.recalledAt,
     this.dishDescription,
     this.dishSales,
+    this.orderId,
+    this.orderNo,
+    this.orderCreatedAt,
+    this.orderStatus,
+    this.orderShopName,
+    this.orderItems = const [],
+    this.orderTotalAmount,
+    this.orderRemark,
+    this.deliveryStatus = 'DELIVERED',
+    this.deliveryFailed = false,
+    this.failureReason,
   });
 
   factory ChatMessage.fromJson(Map<String, dynamic> json) => ChatMessage(
@@ -144,15 +162,46 @@ class ChatMessage {
     createdAt: json['createdAt']?.toString() ?? '',
     dishId: json['dishId'] == null ? null : _asInt(json['dishId']),
     shopId: json['shopId'] == null ? null : _asInt(json['shopId']),
+    shopName: json['shopName']?.toString(),
     dishName: json['dishName']?.toString(),
     dishImageUrl: json['dishImageUrl']?.toString(),
     dishPrice: json['dishPrice'] == null ? null : _asDouble(json['dishPrice']),
     senderNickname: json['senderNickname']?.toString(),
     senderAvatarUrl: json['senderAvatarUrl']?.toString(),
+    quotedMessageId: json['quotedMessageId'] == null
+        ? null
+        : _asInt(json['quotedMessageId']),
+    quotedType: json['quotedType']?.toString(),
+    quotedContent: json['quotedContent']?.toString(),
+    quotedSenderName: json['quotedSenderName']?.toString(),
+    quotedMessage: json['quotedMessage'] is Map<String, dynamic>
+        ? QuotedChatMessage.fromJson(
+            json['quotedMessage'] as Map<String, dynamic>,
+          )
+        : null,
+    recalledAt: json['recalledAt']?.toString(),
     dishDescription: json['dishDescription']?.toString(),
     dishSales: json['dishSalesCount'] == null
         ? (json['dishSales'] == null ? null : _asInt(json['dishSales']))
         : _asInt(json['dishSalesCount']),
+    orderId: json['orderId'] == null ? null : _asInt(json['orderId']),
+    orderNo: json['orderNo']?.toString(),
+    orderCreatedAt: json['orderCreatedAt']?.toString(),
+    orderStatus: json['orderStatus']?.toString(),
+    orderShopName: json['orderShopName']?.toString(),
+    orderItems: json['orderItems'] is List
+        ? (json['orderItems'] as List)
+              .whereType<Map<String, dynamic>>()
+              .map(OrderShareItem.fromJson)
+              .toList()
+        : const [],
+    orderTotalAmount: json['orderTotalAmount'] == null
+        ? null
+        : _asDouble(json['orderTotalAmount']),
+    orderRemark: json['orderRemark']?.toString(),
+    deliveryStatus: json['deliveryStatus']?.toString() ?? 'DELIVERED',
+    deliveryFailed: json['deliveryFailed'] == true,
+    failureReason: json['failureReason']?.toString(),
   );
 
   final int id;
@@ -163,15 +212,186 @@ class ChatMessage {
   final String createdAt;
   final int? dishId;
   final int? shopId;
+  final String? shopName;
   final String? dishName;
   final String? dishImageUrl;
   final double? dishPrice;
   final String? senderNickname;
   final String? senderAvatarUrl;
+  final int? quotedMessageId;
+  final String? quotedType;
+  final String? quotedContent;
+  final String? quotedSenderName;
+  final QuotedChatMessage? quotedMessage;
+  final String? recalledAt;
   final String? dishDescription;
   final int? dishSales;
+  final int? orderId;
+  final String? orderNo;
+  final String? orderCreatedAt;
+  final String? orderStatus;
+  final String? orderShopName;
+  final List<OrderShareItem> orderItems;
+  final double? orderTotalAmount;
+  final String? orderRemark;
+  final String deliveryStatus;
+  final bool deliveryFailed;
+  final String? failureReason;
 
   bool get isDishShare => type == 'DISH_SHARE';
+  bool get isOrderShare => type == 'ORDER_SHARE';
+  bool get isSystem => type == 'SYSTEM';
+  bool get isRecalled => recalledAt != null && recalledAt!.isNotEmpty;
+}
+
+class OrderShareItem {
+  const OrderShareItem({
+    required this.dishName,
+    required this.quantity,
+    this.dishImageUrl,
+    this.unitPrice,
+    this.subtotalAmount,
+    this.selectedOptions,
+  });
+
+  factory OrderShareItem.fromJson(Map<String, dynamic> json) => OrderShareItem(
+    dishName: json['dishName']?.toString() ?? '',
+    quantity: _asInt(json['quantity']),
+    dishImageUrl: json['dishImageUrl']?.toString(),
+    unitPrice: json['unitPrice'] == null ? null : _asDouble(json['unitPrice']),
+    subtotalAmount: json['subtotalAmount'] == null
+        ? null
+        : _asDouble(json['subtotalAmount']),
+    selectedOptions: json['selectedOptions']?.toString(),
+  );
+
+  final String dishName;
+  final int quantity;
+  final String? dishImageUrl;
+  final double? unitPrice;
+  final double? subtotalAmount;
+  final String? selectedOptions;
+}
+
+class QuotedChatMessage {
+  const QuotedChatMessage({
+    required this.id,
+    required this.type,
+    required this.content,
+    this.dishId,
+    this.shopId,
+    this.shopName,
+    this.dishName,
+    this.dishImageUrl,
+    this.dishPrice,
+    this.dishDescription,
+    this.dishSales,
+    this.orderId,
+    this.orderNo,
+    this.orderCreatedAt,
+    this.orderStatus,
+    this.orderShopName,
+    this.orderItems = const [],
+    this.orderTotalAmount,
+    this.orderRemark,
+  });
+
+  factory QuotedChatMessage.fromJson(Map<String, dynamic> json) =>
+      QuotedChatMessage(
+        id: _asInt(json['id']),
+        type: json['type']?.toString() ?? 'TEXT',
+        content: json['content']?.toString() ?? '',
+        dishId: json['dishId'] == null ? null : _asInt(json['dishId']),
+        shopId: json['shopId'] == null ? null : _asInt(json['shopId']),
+        shopName: json['shopName']?.toString(),
+        dishName: json['dishName']?.toString(),
+        dishImageUrl: json['dishImageUrl']?.toString(),
+        dishPrice: json['dishPrice'] == null
+            ? null
+            : _asDouble(json['dishPrice']),
+        dishDescription: json['dishDescription']?.toString(),
+        dishSales: json['dishSalesCount'] == null
+            ? null
+            : _asInt(json['dishSalesCount']),
+        orderId: json['orderId'] == null ? null : _asInt(json['orderId']),
+        orderNo: json['orderNo']?.toString(),
+        orderCreatedAt: json['orderCreatedAt']?.toString(),
+        orderStatus: json['orderStatus']?.toString(),
+        orderShopName: json['orderShopName']?.toString(),
+        orderItems: json['orderItems'] is List
+            ? (json['orderItems'] as List)
+                  .whereType<Map<String, dynamic>>()
+                  .map(OrderShareItem.fromJson)
+                  .toList()
+            : const [],
+        orderTotalAmount: json['orderTotalAmount'] == null
+            ? null
+            : _asDouble(json['orderTotalAmount']),
+        orderRemark: json['orderRemark']?.toString(),
+      );
+
+  final int id;
+  final String type;
+  final String content;
+  final int? dishId;
+  final int? shopId;
+  final String? shopName;
+  final String? dishName;
+  final String? dishImageUrl;
+  final double? dishPrice;
+  final String? dishDescription;
+  final int? dishSales;
+  final int? orderId;
+  final String? orderNo;
+  final String? orderCreatedAt;
+  final String? orderStatus;
+  final String? orderShopName;
+  final List<OrderShareItem> orderItems;
+  final double? orderTotalAmount;
+  final String? orderRemark;
+
+  ChatMessage toChatMessage() => ChatMessage(
+    id: id,
+    conversationId: 0,
+    senderUserId: 0,
+    type: type,
+    content: content,
+    createdAt: '',
+    dishId: dishId,
+    shopId: shopId,
+    shopName: shopName,
+    dishName: dishName,
+    dishImageUrl: dishImageUrl,
+    dishPrice: dishPrice,
+    dishDescription: dishDescription,
+    dishSales: dishSales,
+    orderId: orderId,
+    orderNo: orderNo,
+    orderCreatedAt: orderCreatedAt,
+    orderStatus: orderStatus,
+    orderShopName: orderShopName,
+    orderItems: orderItems,
+    orderTotalAmount: orderTotalAmount,
+    orderRemark: orderRemark,
+  );
+}
+
+class ChatBlock {
+  const ChatBlock({
+    required this.userId,
+    required this.blockedByMe,
+    required this.blockedMe,
+  });
+
+  factory ChatBlock.fromJson(Map<String, dynamic> json) => ChatBlock(
+    userId: _asInt(json['userId']),
+    blockedByMe: json['blockedByMe'] == true,
+    blockedMe: json['blockedMe'] == true,
+  );
+
+  final int userId;
+  final bool blockedByMe;
+  final bool blockedMe;
 }
 
 bool shouldShowChatTimestamp(DateTime? previousTimestamp, DateTime timestamp) {
@@ -193,6 +413,26 @@ String formatChatListTime(String? value, {DateTime? now}) {
   final monthAndDay = '${twoDigits(local.month)}/${twoDigits(local.day)}';
   return local.year == today.year ? monthAndDay : '${local.year}/$monthAndDay';
 }
+
+String formatChatMessageTime(DateTime value, {DateTime? now}) {
+  final local = value.toLocal();
+  final current = now ?? DateTime.now();
+  String two(int number) => number.toString().padLeft(2, '0');
+  final time = '${two(local.hour)}:${two(local.minute)}';
+  final day = DateTime(local.year, local.month, local.day);
+  final today = DateTime(current.year, current.month, current.day);
+  if (day == today) return time;
+  if (day == today.subtract(const Duration(days: 1))) return '昨天 $time';
+  return '${local.month}月${local.day}日 $time';
+}
+
+String familyMemberStatusLabel(String status) => switch (status) {
+  'ACTIVE' => '已加入',
+  'PENDING' => '待处理',
+  'LEFT' => '已退出',
+  'REMOVED' => '已移出',
+  _ => status,
+};
 
 class FamilyGroupMember {
   const FamilyGroupMember({
@@ -229,6 +469,7 @@ class FamilyGroup {
     required this.members,
     this.coverImageUrl,
     this.announcement,
+    this.joinApprovalRequired = false,
   });
   factory FamilyGroup.fromJson(Map<String, dynamic> json) {
     final rawMembers = json['members'];
@@ -239,6 +480,7 @@ class FamilyGroup {
       status: json['status']?.toString() ?? 'ACTIVE',
       coverImageUrl: json['coverImageUrl']?.toString(),
       announcement: json['announcement']?.toString(),
+      joinApprovalRequired: json['joinApprovalRequired'] == true,
       members: rawMembers is List
           ? rawMembers
                 .whereType<Map<String, dynamic>>()
@@ -252,6 +494,7 @@ class FamilyGroup {
   final String name;
   final String? coverImageUrl;
   final String? announcement;
+  final bool joinApprovalRequired;
   final String status;
   final List<FamilyGroupMember> members;
   bool get isActive => status == 'ACTIVE';

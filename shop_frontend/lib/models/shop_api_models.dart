@@ -137,6 +137,7 @@ class ChatMessage {
     required this.createdAt,
     this.dishId,
     this.shopId,
+    this.shopName,
     this.dishName,
     this.dishImageUrl,
     this.dishPrice,
@@ -144,6 +145,23 @@ class ChatMessage {
     this.dishSalesCount,
     this.senderNickname,
     this.senderAvatarUrl,
+    this.quotedMessageId,
+    this.quotedType,
+    this.quotedContent,
+    this.quotedSenderName,
+    this.quotedMessage,
+    this.deliveryStatus = 'DELIVERED',
+    this.deliveryFailed = false,
+    this.failureReason,
+    this.orderId,
+    this.orderNo,
+    this.orderCreatedAt,
+    this.orderStatus,
+    this.orderShopName,
+    this.orderItems = const [],
+    this.orderTotalAmount,
+    this.orderRemark,
+    this.recalledAt,
   });
   factory ChatMessage.fromJson(Map<String, dynamic> json) => ChatMessage(
     id: _asInt(json['id']),
@@ -154,6 +172,7 @@ class ChatMessage {
     createdAt: _asString(json['createdAt']),
     dishId: json['dishId'] == null ? null : _asInt(json['dishId']),
     shopId: json['shopId'] == null ? null : _asInt(json['shopId']),
+    shopName: json['shopName']?.toString(),
     dishName: json['dishName']?.toString(),
     dishImageUrl: json['dishImageUrl']?.toString(),
     dishPrice: json['dishPrice'] == null ? null : _asDouble(json['dishPrice']),
@@ -163,6 +182,37 @@ class ChatMessage {
         : _asInt(json['dishSalesCount']),
     senderNickname: json['senderNickname']?.toString(),
     senderAvatarUrl: json['senderAvatarUrl']?.toString(),
+    quotedMessageId: json['quotedMessageId'] == null
+        ? null
+        : _asInt(json['quotedMessageId']),
+    quotedType: json['quotedType']?.toString(),
+    quotedContent: json['quotedContent']?.toString(),
+    quotedSenderName: json['quotedSenderName']?.toString(),
+    quotedMessage: json['quotedMessage'] is Map<String, dynamic>
+        ? ChatMessage.fromJson({
+            ...(json['quotedMessage'] as Map<String, dynamic>),
+            'conversationId': json['conversationId'] ?? 0,
+            'senderUserId': 0,
+            'createdAt': '',
+          })
+        : null,
+    deliveryStatus: _asString(json['deliveryStatus'], fallback: 'DELIVERED'),
+    deliveryFailed: json['deliveryFailed'] == true,
+    failureReason: json['failureReason']?.toString(),
+    orderId: json['orderId'] == null ? null : _asInt(json['orderId']),
+    orderNo: json['orderNo']?.toString(),
+    orderCreatedAt: json['orderCreatedAt']?.toString(),
+    orderStatus: json['orderStatus']?.toString(),
+    orderShopName: json['orderShopName']?.toString(),
+    orderItems: (json['orderItems'] as List? ?? const [])
+        .whereType<Map<String, dynamic>>()
+        .map(OrderShareItem.fromJson)
+        .toList(),
+    orderTotalAmount: json['orderTotalAmount'] == null
+        ? null
+        : _asDouble(json['orderTotalAmount']),
+    orderRemark: json['orderRemark']?.toString(),
+    recalledAt: json['recalledAt']?.toString(),
   );
   final int id;
   final int conversationId;
@@ -172,6 +222,7 @@ class ChatMessage {
   final String createdAt;
   final int? dishId;
   final int? shopId;
+  final String? shopName;
   final String? dishName;
   final String? dishImageUrl;
   final double? dishPrice;
@@ -179,8 +230,28 @@ class ChatMessage {
   final int? dishSalesCount;
   final String? senderNickname;
   final String? senderAvatarUrl;
+  final int? quotedMessageId;
+  final String? quotedType;
+  final String? quotedContent;
+  final String? quotedSenderName;
+  final ChatMessage? quotedMessage;
+  final String deliveryStatus;
+  final bool deliveryFailed;
+  final String? failureReason;
+  final int? orderId;
+  final String? orderNo;
+  final String? orderCreatedAt;
+  final String? orderStatus;
+  final String? orderShopName;
+  final List<OrderShareItem> orderItems;
+  final double? orderTotalAmount;
+  final String? orderRemark;
+  final String? recalledAt;
 
   bool get isDishShare => type == 'DISH_SHARE';
+  bool get isOrderShare => type == 'ORDER_SHARE';
+  bool get isSystem => type == 'SYSTEM';
+  bool get isRecalled => recalledAt != null && recalledAt!.isNotEmpty;
   DateTime? get sentAt => DateTime.tryParse(createdAt);
 }
 
@@ -203,6 +274,26 @@ String formatChatListTime(String? value, {DateTime? now}) {
   final monthAndDay = '${twoDigits(local.month)}/${twoDigits(local.day)}';
   return local.year == today.year ? monthAndDay : '${local.year}/$monthAndDay';
 }
+
+String formatChatMessageTime(DateTime value, {DateTime? now}) {
+  final local = value.toLocal();
+  final current = now ?? DateTime.now();
+  String two(int number) => number.toString().padLeft(2, '0');
+  final time = '${two(local.hour)}:${two(local.minute)}';
+  final day = DateTime(local.year, local.month, local.day);
+  final today = DateTime(current.year, current.month, current.day);
+  if (day == today) return time;
+  if (day == today.subtract(const Duration(days: 1))) return '昨天 $time';
+  return '${local.month}月${local.day}日 $time';
+}
+
+String familyMemberStatusLabel(String status) => switch (status) {
+  'ACTIVE' => '已加入',
+  'PENDING' => '待处理',
+  'LEFT' => '已退出',
+  'REMOVED' => '已移出',
+  _ => status,
+};
 
 class ChatMessages {
   const ChatMessages({required this.conversation, required this.messages});
@@ -254,6 +345,7 @@ class FamilyGroup {
     required this.members,
     this.coverImageUrl,
     this.announcement,
+    this.joinApprovalRequired = false,
   });
   factory FamilyGroup.fromJson(Map<String, dynamic> json) => FamilyGroup(
     id: _asInt(json['id']),
@@ -262,6 +354,7 @@ class FamilyGroup {
     status: _asString(json['status'], fallback: 'ACTIVE'),
     coverImageUrl: json['coverImageUrl']?.toString(),
     announcement: json['announcement']?.toString(),
+    joinApprovalRequired: json['joinApprovalRequired'] == true,
     members: (json['members'] as List? ?? const [])
         .whereType<Map<String, dynamic>>()
         .map(FamilyGroupMember.fromJson)
@@ -274,6 +367,7 @@ class FamilyGroup {
   final List<FamilyGroupMember> members;
   final String? coverImageUrl;
   final String? announcement;
+  final bool joinApprovalRequired;
   bool get canManage => status == 'ACTIVE';
 }
 
@@ -298,7 +392,7 @@ class UserNotification {
         id: _asInt(json['id']),
         title: _asString(json['title']),
         content: _asString(json['content']),
-        read: json['read'] == true,
+        read: json['read'] == true || json['readAt'] != null,
         createdAt: _asString(json['createdAt']),
       );
   final int id;
@@ -712,6 +806,45 @@ class FamilyMemberInfo {
   final String? phone;
   final String? avatarUrl;
   final String status;
+
+  FamilyMemberInfo withStatus(String value) => FamilyMemberInfo(
+    id: id,
+    userId: userId,
+    status: value,
+    nickname: nickname,
+    phone: phone,
+    avatarUrl: avatarUrl,
+  );
+}
+
+class OrderShareItem {
+  const OrderShareItem({required this.dishName, required this.quantity});
+
+  factory OrderShareItem.fromJson(Map<String, dynamic> json) => OrderShareItem(
+    dishName: _asString(json['dishName']),
+    quantity: _asInt(json['quantity']),
+  );
+
+  final String dishName;
+  final int quantity;
+}
+
+class ChatBlockState {
+  const ChatBlockState({
+    required this.userId,
+    required this.blockedByMe,
+    required this.blockedMe,
+  });
+
+  factory ChatBlockState.fromJson(Map<String, dynamic> json) => ChatBlockState(
+    userId: _asInt(json['userId']),
+    blockedByMe: json['blockedByMe'] == true,
+    blockedMe: json['blockedMe'] == true,
+  );
+
+  final int userId;
+  final bool blockedByMe;
+  final bool blockedMe;
 }
 
 int _asInt(Object? value, {int fallback = 0}) {

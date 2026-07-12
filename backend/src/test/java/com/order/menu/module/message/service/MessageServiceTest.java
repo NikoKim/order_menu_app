@@ -14,9 +14,11 @@ import com.order.menu.common.exception.BusinessException;
 import com.order.menu.common.exception.ErrorCode;
 import com.order.menu.module.message.dto.MessageDtos;
 import com.order.menu.module.message.entity.ChatMessage;
+import com.order.menu.module.message.entity.ChatBlock;
 import com.order.menu.module.message.entity.Conversation;
 import com.order.menu.module.message.entity.ConversationMember;
 import com.order.menu.module.message.mapper.ChatMessageMapper;
+import com.order.menu.module.message.mapper.ChatBlockMapper;
 import com.order.menu.module.message.mapper.ConversationMapper;
 import com.order.menu.module.message.mapper.ConversationMemberMapper;
 import com.order.menu.module.message.mapper.UserNotificationMapper;
@@ -24,10 +26,16 @@ import com.order.menu.module.family.mapper.FamilyMemberMapper;
 import com.order.menu.module.dish.mapper.DishMapper;
 import com.order.menu.module.shop.entity.Shop;
 import com.order.menu.module.shop.mapper.ShopMapper;
+import com.order.menu.module.order.entity.Order;
+import com.order.menu.module.order.entity.OrderItem;
+import com.order.menu.module.order.mapper.OrderMapper;
+import com.order.menu.module.order.mapper.OrderItemMapper;
 import com.order.menu.module.user.entity.User;
 import com.order.menu.module.user.mapper.UserMapper;
 import com.order.menu.websocket.WsPushService;
 import java.util.List;
+import java.math.BigDecimal;
+import java.time.LocalDateTime;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.Mock;
@@ -42,6 +50,12 @@ class MessageServiceTest {
     private ConversationMemberMapper conversationMemberMapper;
     @Mock
     private ChatMessageMapper chatMessageMapper;
+    @Mock
+    private ChatBlockMapper chatBlockMapper;
+    @Mock
+    private OrderMapper orderMapper;
+    @Mock
+    private OrderItemMapper orderItemMapper;
     @Mock
     private UserMapper userMapper;
     @Mock
@@ -346,9 +360,220 @@ class MessageServiceTest {
                 any());
     }
 
+    @Test
+    void senderCanRecallOwnMessageWithinThreeMinutes() {
+        Conversation conversation = directConversation(9L, 1L);
+        ChatMessage message = new ChatMessage();
+        message.setId(12L);
+        message.setConversationId(9L);
+        message.setSenderUserId(1L);
+        message.setType("TEXT");
+        message.setContent("hello");
+        message.setCreatedAt(LocalDateTime.now().minusMinutes(1));
+        when(conversationMapper.selectById(9L)).thenReturn(conversation);
+        when(conversationMemberMapper.selectList(any())).thenReturn(List.of(member(9L, 1L)));
+        when(chatMessageMapper.selectById(12L)).thenReturn(message);
+        when(userMapper.selectById(1L)).thenReturn(user(1L, true));
+
+        MessageDtos.ChatMessageResponse response = service().recallMessage(1L, 9L, 12L);
+
+        assertEquals(12L, response.id());
+        verify(chatMessageMapper).updateById(message);
+    }
+
+    @Test
+    void messageCannotBeRecalledAfterThreeMinutes() {
+        Conversation conversation = directConversation(9L, 1L);
+        ChatMessage message = new ChatMessage();
+        message.setId(12L);
+        message.setConversationId(9L);
+        message.setSenderUserId(1L);
+        message.setCreatedAt(LocalDateTime.now().minusMinutes(4));
+        when(conversationMapper.selectById(9L)).thenReturn(conversation);
+        when(conversationMemberMapper.selectList(any())).thenReturn(List.of(member(9L, 1L)));
+        when(chatMessageMapper.selectById(12L)).thenReturn(message);
+
+        BusinessException error = assertThrows(BusinessException.class,
+                () -> service().recallMessage(1L, 9L, 12L));
+
+        assertEquals(ErrorCode.FORBIDDEN, error.getCode());
+        verify(chatMessageMapper, never()).updateById(any(ChatMessage.class));
+    }
+
+    @Test
+    void messageBlockedByRecipientIsVisibleAsFailedOnlyToSender() {
+        Conversation conversation = directConversation(9L, 1L);
+        conversation.setDirectKey("1:2");
+        when(conversationMapper.selectById(9L)).thenReturn(conversation);
+        when(conversationMemberMapper.selectList(any())).thenReturn(List.of(member(9L, 1L), member(9L, 2L)));
+        when(chatBlockMapper.selectCount(any())).thenReturn(0L, 1L);
+        when(chatMessageMapper.insert(any(ChatMessage.class))).thenAnswer(invocation -> {
+            invocation.<ChatMessage>getArgument(0).setId(77L);
+            return 1;
+        });
+        when(userMapper.selectById(1L)).thenReturn(user(1L, true));
+
+        MessageDtos.ChatMessageResponse response = service()
+                .sendMessage(1L, 9L, new MessageDtos.SendMessageRequest("hello"));
+
+        assertEquals("FAILED_BLOCKED", response.deliveryStatus());
+        assertEquals(true, response.deliveryFailed());
+        assertEquals("对方已将您拉黑，无法发送消息", response.failureReason());
+        verify(wsPushService).pushToUser(org.mockito.ArgumentMatchers.eq(1L),
+                org.mockito.ArgumentMatchers.eq("CHAT"),
+                org.mockito.ArgumentMatchers.eq("MESSAGE_CREATED"), any());
+        verify(wsPushService, never()).pushToUser(org.mockito.ArgumentMatchers.eq(2L),
+                org.mockito.ArgumentMatchers.eq("CHAT"),
+                org.mockito.ArgumentMatchers.eq("MESSAGE_CREATED"), any());
+        verify(conversationMapper, never()).updateById(any(Conversation.class));
+    }
+
+    @Test
+    void blockedRecipientCannotLoadFailedMessage() {
+        Conversation conversation = directConversation(9L, 1L);
+        conversation.setDirectKey("1:2");
+        conversation.setLastMessageAt(LocalDateTime.now());
+        ChatMessage failed = new ChatMessage();
+        failed.setId(77L);
+        failed.setConversationId(9L);
+        failed.setSenderUserId(1L);
+        failed.setType("TEXT");
+        failed.setContent("hello");
+        failed.setDeliveryStatus("FAILED_BLOCKED");
+        failed.setDeliveryFailureReason("对方已将您拉黑，无法发送消息");
+        failed.setCreatedAt(LocalDateTime.now());
+        when(conversationMapper.selectById(9L)).thenReturn(conversation);
+        when(conversationMemberMapper.selectList(any())).thenReturn(List.of(member(9L, 2L)));
+        when(chatMessageMapper.selectList(any())).thenReturn(List.of(failed));
+        when(userMapper.selectById(1L)).thenReturn(user(1L, true));
+
+        MessageDtos.ConversationMessagesResponse response = service().messages(2L, 9L);
+
+        assertEquals(List.of(), response.messages());
+        assertEquals(null, response.conversation().lastMessageContent());
+        assertEquals(null, response.conversation().lastMessageAt());
+        verify(conversationMemberMapper, never()).updateById(any(ConversationMember.class));
+    }
+
+    @Test
+    void blockRelationCanBeCreatedQueriedAndRemoved() {
+        when(userMapper.selectById(1L)).thenReturn(user(1L, true));
+        when(userMapper.selectById(2L)).thenReturn(user(2L, true));
+        when(chatBlockMapper.selectCount(any())).thenReturn(1L, 0L);
+
+        MessageDtos.ChatBlockResponse response = service().chatBlock(1L, 2L);
+        service().blockUser(1L, 2L);
+        service().unblockUser(1L, 2L);
+
+        assertEquals(true, response.blockedByMe());
+        assertEquals(false, response.blockedMe());
+        verify(chatBlockMapper).insert(any(ChatBlock.class));
+        verify(chatBlockMapper).delete(any());
+    }
+
+    @Test
+    void orderSharePersistsOwnerOrderSnapshot() {
+        Conversation conversation = directConversation(9L, 1L);
+        conversation.setDirectKey("1:2");
+        when(conversationMapper.selectById(9L)).thenReturn(conversation);
+        when(conversationMemberMapper.selectList(any())).thenReturn(List.of(member(9L, 1L), member(9L, 2L)));
+        Order order = new Order();
+        order.setId(31L);
+        order.setOrderNo("202607130001");
+        order.setCustomerUserId(1L);
+        order.setShopId(8L);
+        order.setStatus("COMPLETED");
+        order.setTotalAmount(new BigDecimal("25.50"));
+        order.setRemark("少辣");
+        order.setCreatedAt(LocalDateTime.now().minusHours(1));
+        when(orderMapper.selectById(31L)).thenReturn(order);
+        Shop shop = new Shop();
+        shop.setId(8L);
+        shop.setName("幸福小馆");
+        when(shopMapper.selectById(8L)).thenReturn(shop);
+        OrderItem item = new OrderItem();
+        item.setDishName("宫保鸡丁");
+        item.setQuantity(1);
+        item.setUnitPrice(new BigDecimal("25.50"));
+        item.setSubtotalAmount(new BigDecimal("25.50"));
+        when(orderItemMapper.selectList(any())).thenReturn(List.of(item));
+        when(chatMessageMapper.insert(any(ChatMessage.class))).thenAnswer(invocation -> {
+            invocation.<ChatMessage>getArgument(0).setId(88L);
+            return 1;
+        });
+        when(userMapper.selectById(1L)).thenReturn(user(1L, true));
+        when(userMapper.selectById(2L)).thenReturn(user(2L, true));
+
+        MessageDtos.ChatMessageResponse response = service().shareOrder(1L,
+                new MessageDtos.ShareOrderRequest(9L, 31L));
+
+        assertEquals("ORDER_SHARE", response.type());
+        assertEquals(31L, response.orderId());
+        assertEquals("202607130001", response.orderNo());
+        assertEquals("幸福小馆", response.orderShopName());
+        assertEquals("宫保鸡丁", response.orderItems().get(0).dishName());
+    }
+
+    @Test
+    void quotedOrderCardContainsCompleteSnapshotIncludingOrderNumber() {
+        Conversation conversation = directConversation(9L, 1L);
+        conversation.setDirectKey("1:2");
+        ChatMessage orderShare = new ChatMessage();
+        orderShare.setId(51L);
+        orderShare.setConversationId(9L);
+        orderShare.setSenderUserId(2L);
+        orderShare.setType("ORDER_SHARE");
+        orderShare.setOrderId(31L);
+        orderShare.setOrderNo("202607130001");
+        orderShare.setOrderCreatedAt(LocalDateTime.now().minusHours(1));
+        orderShare.setOrderStatus("COMPLETED");
+        orderShare.setOrderShopName("幸福小馆");
+        orderShare.setOrderItemsJson("[{\"dishName\":\"宫保鸡丁\",\"unitPrice\":25.50,\"quantity\":1,\"subtotalAmount\":25.50}]");
+        orderShare.setOrderTotalAmount(new BigDecimal("25.50"));
+        orderShare.setOrderRemark("少辣");
+        when(conversationMapper.selectById(9L)).thenReturn(conversation);
+        when(conversationMemberMapper.selectList(any())).thenReturn(List.of(member(9L, 1L), member(9L, 2L)));
+        when(chatMessageMapper.selectById(51L)).thenReturn(orderShare);
+        when(chatMessageMapper.insert(any(ChatMessage.class))).thenAnswer(invocation -> {
+            invocation.<ChatMessage>getArgument(0).setId(52L);
+            return 1;
+        });
+        when(userMapper.selectById(1L)).thenReturn(user(1L, true));
+        when(userMapper.selectById(2L)).thenReturn(user(2L, true));
+
+        MessageDtos.ChatMessageResponse response = service().sendMessage(1L, 9L,
+                new MessageDtos.SendMessageRequest("收到", 51L));
+
+        assertEquals(51L, response.quotedMessageId());
+        assertEquals("ORDER_SHARE", response.quotedMessage().type());
+        assertEquals(31L, response.quotedMessage().orderId());
+        assertEquals("202607130001", response.quotedMessage().orderNo());
+        assertEquals("幸福小馆", response.quotedMessage().orderShopName());
+        assertEquals("宫保鸡丁", response.quotedMessage().orderItems().get(0).dishName());
+        assertEquals(new BigDecimal("25.50"), response.quotedMessage().orderTotalAmount());
+        assertEquals("少辣", response.quotedMessage().orderRemark());
+    }
+
+    @Test
+    void orderShareRejectsOrderOwnedByAnotherCustomer() {
+        when(conversationMapper.selectById(9L)).thenReturn(directConversation(9L, 1L));
+        when(conversationMemberMapper.selectList(any())).thenReturn(List.of(member(9L, 1L)));
+        Order order = new Order();
+        order.setId(31L);
+        order.setCustomerUserId(2L);
+        when(orderMapper.selectById(31L)).thenReturn(order);
+
+        BusinessException error = assertThrows(BusinessException.class,
+                () -> service().shareOrder(1L, new MessageDtos.ShareOrderRequest(9L, 31L)));
+
+        assertEquals(ErrorCode.FORBIDDEN, error.getCode());
+        verify(chatMessageMapper, never()).insert(any(ChatMessage.class));
+    }
+
     private MessageService service() {
-        return new MessageService(conversationMapper, conversationMemberMapper, chatMessageMapper, userMapper, shopMapper,
-                mock(FamilyMemberMapper.class), mock(DishMapper.class), mock(UserNotificationMapper.class), wsPushService);
+        return new MessageService(conversationMapper, conversationMemberMapper, chatMessageMapper, null, chatBlockMapper,
+                userMapper, shopMapper, mock(FamilyMemberMapper.class), mock(DishMapper.class), orderMapper,
+                orderItemMapper, mock(UserNotificationMapper.class), wsPushService);
     }
 
     private User user(Long id, boolean allowPrivateChat) {

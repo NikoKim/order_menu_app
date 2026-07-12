@@ -4,6 +4,8 @@ import '../app_mock_data.dart';
 import '../models.dart';
 import '../services/api_client.dart';
 import '../widgets/app_footer.dart';
+import '../widgets/app_notice.dart';
+import 'order_share_page.dart';
 
 class OrderDetailPage extends StatefulWidget {
   const OrderDetailPage({super.key, required this.orderId, required this.api});
@@ -36,27 +38,28 @@ class _OrderDetailPageState extends State<OrderDetailPage> {
     try {
       await widget.api.cancelOrder(order.id);
       if (!mounted) return;
-      ScaffoldMessenger.of(context)
-        ..hideCurrentSnackBar()
-        ..showSnackBar(
-          const SnackBar(
-            content: Text('订单已取消'),
-            behavior: SnackBarBehavior.floating,
-          ),
-        );
+      AppNotice.show(context, '订单已取消');
       _reload();
     } catch (error) {
       if (!mounted) return;
-      ScaffoldMessenger.of(context)
-        ..hideCurrentSnackBar()
-        ..showSnackBar(
-          SnackBar(
-            content: Text(error.toString()),
-            behavior: SnackBarBehavior.floating,
-          ),
-        );
+      AppNotice.show(context, error.toString());
     } finally {
       if (mounted) setState(() => _canceling = false);
+    }
+  }
+
+  Future<void> _share() async {
+    try {
+      final order = await _detailFuture;
+      if (!mounted) return;
+      final shared = await Navigator.of(context).push<bool>(
+        MaterialPageRoute(
+          builder: (_) => OrderSharePage(order: order, api: widget.api),
+        ),
+      );
+      if (mounted && shared == true) AppNotice.show(context, '订单已分享');
+    } catch (error) {
+      if (mounted) AppNotice.show(context, error.toString());
     }
   }
 
@@ -71,6 +74,13 @@ class _OrderDetailPageState extends State<OrderDetailPage> {
         surfaceTintColor: Colors.transparent,
         elevation: 0,
         scrolledUnderElevation: 0,
+        actions: [
+          IconButton(
+            onPressed: _share,
+            tooltip: '分享订单',
+            icon: const Icon(Icons.ios_share_outlined),
+          ),
+        ],
       ),
       body: RefreshIndicator(
         onRefresh: () async => _reload(),
@@ -95,9 +105,9 @@ class _OrderDetailPageState extends State<OrderDetailPage> {
             final order = snapshot.data!;
             final canCancel =
                 order.status == 'SUBMITTED' ||
-                    order.status == 'ACCEPTED' ||
-                    order.status == 'PENDING' ||
-                    order.status == 'CONFIRMED';
+                order.status == 'ACCEPTED' ||
+                order.status == 'PENDING' ||
+                order.status == 'CONFIRMED';
 
             return ListView(
               padding: const EdgeInsets.fromLTRB(16, 8, 16, 24),
@@ -109,7 +119,11 @@ class _OrderDetailPageState extends State<OrderDetailPage> {
                   icon: Icons.storefront_outlined,
                   child: Column(
                     children: [
-                      for (var index = 0; index < order.items.length; index++) ...[
+                      for (
+                        var index = 0;
+                        index < order.items.length;
+                        index++
+                      ) ...[
                         _OrderItemRow(item: order.items[index]),
                         if (index != order.items.length - 1)
                           const Divider(height: 20, color: pageLineColor),
@@ -168,13 +182,13 @@ class _OrderDetailPageState extends State<OrderDetailPage> {
                       onPressed: _canceling ? null : () => _cancel(order),
                       icon: _canceling
                           ? const SizedBox(
-                        width: 16,
-                        height: 16,
-                        child: CircularProgressIndicator(
-                          strokeWidth: 2,
-                          color: warmOrange,
-                        ),
-                      )
+                              width: 16,
+                              height: 16,
+                              child: CircularProgressIndicator(
+                                strokeWidth: 2,
+                                color: warmOrange,
+                              ),
+                            )
                           : const Icon(Icons.cancel_outlined),
                       label: Text(_canceling ? '取消中...' : '取消订单'),
                     ),
@@ -216,7 +230,11 @@ class _OrderStatusCard extends StatelessWidget {
                   color: softOrange,
                   borderRadius: BorderRadius.circular(10),
                 ),
-                child: const Icon(Icons.receipt_long_outlined, color: warmOrange, size: 22),
+                child: const Icon(
+                  Icons.receipt_long_outlined,
+                  color: warmOrange,
+                  size: 22,
+                ),
               ),
               const SizedBox(width: 12),
               Expanded(
@@ -301,7 +319,11 @@ class _OrderItemRow extends StatelessWidget {
 }
 
 class _InfoRow extends StatelessWidget {
-  const _InfoRow({required this.icon, required this.label, required this.value});
+  const _InfoRow({
+    required this.icon,
+    required this.label,
+    required this.value,
+  });
 
   final IconData icon;
   final String label;
@@ -432,7 +454,11 @@ class _OrderDetailSkeleton extends StatelessWidget {
                 ],
               ),
               const SizedBox(height: 16),
-              Container(height: 14, width: double.infinity, color: skeletonColor),
+              Container(
+                height: 14,
+                width: double.infinity,
+                color: skeletonColor,
+              ),
               const SizedBox(height: 10),
               Container(height: 14, width: 180, color: skeletonColor),
             ],
@@ -448,7 +474,9 @@ class _OrderDetailSkeleton extends StatelessWidget {
               for (var i = 0; i < 3; i++) ...[
                 Row(
                   children: [
-                    Expanded(child: Container(height: 16, color: skeletonColor)),
+                    Expanded(
+                      child: Container(height: 16, color: skeletonColor),
+                    ),
                     const SizedBox(width: 36),
                     Container(height: 16, width: 60, color: skeletonColor),
                   ],

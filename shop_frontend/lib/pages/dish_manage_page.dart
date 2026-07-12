@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 
 import '../models/shop_api_models.dart';
 import '../services/shop_api_service.dart';
+import '../widgets/app_notice.dart';
 import 'dish_edit_page.dart';
 
 const _warmOrange = Color(0xFFF28C28);
@@ -69,13 +70,16 @@ class _DishManagePageState extends State<DishManagePage> {
       final offSaleDishes = (results[2] as PageResult<DishInfo>).records;
 
       setState(() {
-        _categories = [...categories]..sort((a, b) => a.sortOrder.compareTo(b.sortOrder));
+        _categories = [...categories]
+          ..sort((a, b) => a.sortOrder.compareTo(b.sortOrder));
         _dishes = [...onSaleDishes, ...offSaleDishes];
         _loading = false;
 
         if (_selectedFilterKey.startsWith(_DishFilterKey.categoryPrefix)) {
           final selectedId = _categoryIdFromKey(_selectedFilterKey);
-          final exists = _categories.any((category) => category.id == selectedId);
+          final exists = _categories.any(
+            (category) => category.id == selectedId,
+          );
           if (!exists) _selectedFilterKey = _DishFilterKey.all;
         }
       });
@@ -115,12 +119,12 @@ class _DishManagePageState extends State<DishManagePage> {
             onPressed: _creatingCategory
                 ? null
                 : () {
-              FocusManager.instance.primaryFocus?.unfocus();
-              setState(() {
-                _showCategoryManagePanel = false;
-                _showCreateCategoryPanel = !_showCreateCategoryPanel;
-              });
-            },
+                    FocusManager.instance.primaryFocus?.unfocus();
+                    setState(() {
+                      _showCategoryManagePanel = false;
+                      _showCreateCategoryPanel = !_showCreateCategoryPanel;
+                    });
+                  },
             icon: const Icon(Icons.create_new_folder_outlined),
           ),
           IconButton(
@@ -128,12 +132,12 @@ class _DishManagePageState extends State<DishManagePage> {
             onPressed: _categories.isEmpty || _savingCategoryChange
                 ? null
                 : () {
-              FocusManager.instance.primaryFocus?.unfocus();
-              setState(() {
-                _showCreateCategoryPanel = false;
-                _showCategoryManagePanel = !_showCategoryManagePanel;
-              });
-            },
+                    FocusManager.instance.primaryFocus?.unfocus();
+                    setState(() {
+                      _showCreateCategoryPanel = false;
+                      _showCategoryManagePanel = !_showCategoryManagePanel;
+                    });
+                  },
             icon: const Icon(Icons.edit_note_rounded),
           ),
           IconButton(
@@ -143,8 +147,8 @@ class _DishManagePageState extends State<DishManagePage> {
             onPressed: _categories.isEmpty
                 ? null
                 : () => _openEditPage(
-              preferredCategoryId: _preferredCategoryIdForNewDish(),
-            ),
+                    preferredCategoryId: _preferredCategoryIdForNewDish(),
+                  ),
             icon: const Icon(Icons.add_circle_outline_rounded),
           ),
           IconButton(
@@ -194,41 +198,41 @@ class _DishManagePageState extends State<DishManagePage> {
           duration: const Duration(milliseconds: 160),
           child: _showCreateCategoryPanel
               ? Padding(
-            key: const ValueKey('create-category'),
-            padding: const EdgeInsets.only(bottom: 10),
-            child: _CreateCategoryPanel(
-              controller: _newCategoryController,
-              creating: _creatingCategory,
-              onCancel: () {
-                if (_creatingCategory) return;
-                FocusManager.instance.primaryFocus?.unfocus();
-                _newCategoryController.clear();
-                setState(() => _showCreateCategoryPanel = false);
-              },
-              onSave: _createCategoryInline,
-            ),
-          )
+                  key: const ValueKey('create-category'),
+                  padding: const EdgeInsets.only(bottom: 10),
+                  child: _CreateCategoryPanel(
+                    controller: _newCategoryController,
+                    creating: _creatingCategory,
+                    onCancel: () {
+                      if (_creatingCategory) return;
+                      FocusManager.instance.primaryFocus?.unfocus();
+                      _newCategoryController.clear();
+                      setState(() => _showCreateCategoryPanel = false);
+                    },
+                    onSave: _createCategoryInline,
+                  ),
+                )
               : const SizedBox.shrink(key: ValueKey('no-create-category')),
         ),
         AnimatedSwitcher(
           duration: const Duration(milliseconds: 160),
           child: _showCategoryManagePanel
               ? Padding(
-            key: const ValueKey('manage-category'),
-            padding: const EdgeInsets.only(bottom: 10),
-            child: _InlineCategoryManagePanel(
-              categories: _categories,
-              saving: _savingCategoryChange,
-              onClose: () {
-                if (_savingCategoryChange) return;
-                FocusManager.instance.primaryFocus?.unfocus();
-                setState(() => _showCategoryManagePanel = false);
-              },
-              onRename: _renameCategoryInline,
-              onDelete: _deleteCategoryInline,
-              onSaveOrder: _saveCategoryOrderInline,
-            ),
-          )
+                  key: const ValueKey('manage-category'),
+                  padding: const EdgeInsets.only(bottom: 10),
+                  child: _InlineCategoryManagePanel(
+                    categories: _categories,
+                    saving: _savingCategoryChange,
+                    onClose: () {
+                      if (_savingCategoryChange) return;
+                      FocusManager.instance.primaryFocus?.unfocus();
+                      setState(() => _showCategoryManagePanel = false);
+                    },
+                    onRename: _renameCategoryInline,
+                    onDelete: _deleteCategoryInline,
+                    onSaveOrder: _saveCategoryOrderInline,
+                  ),
+                )
               : const SizedBox.shrink(key: ValueKey('no-manage-category')),
         ),
         _SectionCard(
@@ -245,8 +249,8 @@ class _DishManagePageState extends State<DishManagePage> {
             onAddDish: _categories.isEmpty
                 ? null
                 : () => _openEditPage(
-              preferredCategoryId: _preferredCategoryIdForNewDish(),
-            ),
+                    preferredCategoryId: _preferredCategoryIdForNewDish(),
+                  ),
           )
         else
           for (int index = 0; index < filteredDishes.length; index++) ...[
@@ -285,7 +289,10 @@ class _DishManagePageState extends State<DishManagePage> {
     return int.tryParse(key.substring(_DishFilterKey.categoryPrefix.length));
   }
 
-  Future<CategoryInfo?> _renameCategoryInline(CategoryInfo category, String rawName) async {
+  Future<CategoryInfo?> _renameCategoryInline(
+    CategoryInfo category,
+    String rawName,
+  ) async {
     final normalizedName = rawName.trim();
     if (normalizedName.isEmpty) {
       _showSnackBar('请填写分类名称');
@@ -298,7 +305,7 @@ class _DishManagePageState extends State<DishManagePage> {
     if (normalizedName == category.name.trim()) return category;
 
     final duplicated = _categories.any(
-          (item) => item.id != category.id && item.name.trim() == normalizedName,
+      (item) => item.id != category.id && item.name.trim() == normalizedName,
     );
     if (duplicated) {
       _showSnackBar('该类别名称已存在');
@@ -315,10 +322,14 @@ class _DishManagePageState extends State<DishManagePage> {
       if (!mounted) return null;
 
       setState(() {
-        _categories = _categories
-            .map((item) => item.id == updatedCategory.id ? updatedCategory : item)
-            .toList()
-          ..sort((a, b) => a.sortOrder.compareTo(b.sortOrder));
+        _categories =
+            _categories
+                .map(
+                  (item) =>
+                      item.id == updatedCategory.id ? updatedCategory : item,
+                )
+                .toList()
+              ..sort((a, b) => a.sortOrder.compareTo(b.sortOrder));
       });
       _showSnackBar('分类名称已更新');
       return updatedCategory;
@@ -333,7 +344,9 @@ class _DishManagePageState extends State<DishManagePage> {
     }
   }
 
-  Future<bool> _saveCategoryOrderInline(List<CategoryInfo> orderedCategories) async {
+  Future<bool> _saveCategoryOrderInline(
+    List<CategoryInfo> orderedCategories,
+  ) async {
     if (orderedCategories.isEmpty) return true;
 
     setState(() => _savingCategoryChange = true);
@@ -375,7 +388,9 @@ class _DishManagePageState extends State<DishManagePage> {
       await shopApi.deleteCategory(category.id);
       if (!mounted) return false;
       setState(() {
-        _categories = _categories.where((item) => item.id != category.id).toList();
+        _categories = _categories
+            .where((item) => item.id != category.id)
+            .toList();
         if (_selectedFilterKey == _DishFilterKey.category(category.id)) {
           _selectedFilterKey = _DishFilterKey.all;
         }
@@ -406,7 +421,9 @@ class _DishManagePageState extends State<DishManagePage> {
       return categories;
     }
 
-    final index = categories.indexWhere((category) => category.id == preferredCategoryId);
+    final index = categories.indexWhere(
+      (category) => category.id == preferredCategoryId,
+    );
     if (index <= 0) {
       return categories;
     }
@@ -489,7 +506,9 @@ class _DishManagePageState extends State<DishManagePage> {
       _showSnackBar('分类名称不能超过30个字');
       return;
     }
-    final duplicated = _categories.any((category) => category.name.trim() == normalizedName);
+    final duplicated = _categories.any(
+      (category) => category.name.trim() == normalizedName,
+    );
     if (duplicated) {
       _showSnackBar('该类别名称已存在');
       return;
@@ -519,11 +538,7 @@ class _DishManagePageState extends State<DishManagePage> {
   }
 
   void _showSnackBar(String message) {
-    ScaffoldMessenger.of(context)
-      ..hideCurrentSnackBar()
-      ..showSnackBar(
-        SnackBar(content: Text(message), behavior: SnackBarBehavior.floating),
-      );
+    AppNotice.show(context, message);
   }
 }
 
@@ -536,7 +551,10 @@ class _DishFilterKey {
 }
 
 class _SectionCard extends StatelessWidget {
-  const _SectionCard({required this.child, this.padding = const EdgeInsets.all(14)});
+  const _SectionCard({
+    required this.child,
+    this.padding = const EdgeInsets.all(14),
+  });
 
   final Widget child;
   final EdgeInsetsGeometry padding;
@@ -555,7 +573,6 @@ class _SectionCard extends StatelessWidget {
     );
   }
 }
-
 
 class _CompactStatsBar extends StatelessWidget {
   const _CompactStatsBar({
@@ -576,11 +593,19 @@ class _CompactStatsBar extends StatelessWidget {
       padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
       child: Row(
         children: [
-          const Icon(Icons.restaurant_menu_rounded, color: _warmOrange, size: 20),
+          const Icon(
+            Icons.restaurant_menu_rounded,
+            color: _warmOrange,
+            size: 20,
+          ),
           const SizedBox(width: 8),
           const Text(
             '菜品',
-            style: TextStyle(color: _textColor, fontSize: 16, fontWeight: FontWeight.w900),
+            style: TextStyle(
+              color: _textColor,
+              fontSize: 16,
+              fontWeight: FontWeight.w900,
+            ),
           ),
           const Spacer(),
           _CompactStat(label: '全部', value: dishCount),
@@ -594,7 +619,11 @@ class _CompactStatsBar extends StatelessWidget {
 }
 
 class _CompactStat extends StatelessWidget {
-  const _CompactStat({required this.label, required this.value, this.highlight = false});
+  const _CompactStat({
+    required this.label,
+    required this.value,
+    this.highlight = false,
+  });
 
   final String label;
   final int value;
@@ -617,7 +646,11 @@ class _CompactStat extends StatelessWidget {
             ),
             TextSpan(
               text: ' $label',
-              style: const TextStyle(color: _mutedColor, fontSize: 11, fontWeight: FontWeight.w600),
+              style: const TextStyle(
+                color: _mutedColor,
+                fontSize: 11,
+                fontWeight: FontWeight.w600,
+              ),
             ),
           ],
         ),
@@ -684,7 +717,9 @@ class _CreateCategoryPanel extends StatelessWidget {
               backgroundColor: _warmOrange,
               minimumSize: const Size(56, 40),
               padding: const EdgeInsets.symmetric(horizontal: 12),
-              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+              shape: RoundedRectangleBorder(
+                borderRadius: BorderRadius.circular(10),
+              ),
             ),
             child: Text(creating ? '保存中' : '保存'),
           ),
@@ -830,13 +865,30 @@ class _EmptyDishPanel extends StatelessWidget {
           Container(
             width: 58,
             height: 58,
-            decoration: BoxDecoration(color: _softOrange, borderRadius: BorderRadius.circular(18)),
-            child: const Icon(Icons.restaurant_menu_rounded, size: 30, color: _warmOrange),
+            decoration: BoxDecoration(
+              color: _softOrange,
+              borderRadius: BorderRadius.circular(18),
+            ),
+            child: const Icon(
+              Icons.restaurant_menu_rounded,
+              size: 30,
+              color: _warmOrange,
+            ),
           ),
           const SizedBox(height: 14),
-          const Text('暂无相关菜品', style: TextStyle(color: _textColor, fontSize: 16, fontWeight: FontWeight.w900)),
+          const Text(
+            '暂无相关菜品',
+            style: TextStyle(
+              color: _textColor,
+              fontSize: 16,
+              fontWeight: FontWeight.w900,
+            ),
+          ),
           const SizedBox(height: 6),
-          const Text('可以切换分类，或新增一道菜品', style: TextStyle(color: _mutedColor, fontSize: 13)),
+          const Text(
+            '可以切换分类，或新增一道菜品',
+            style: TextStyle(color: _mutedColor, fontSize: 13),
+          ),
           if (onAddDish != null) ...[
             const SizedBox(height: 16),
             FilledButton.icon(
@@ -930,10 +982,16 @@ class _DishCard extends StatelessWidget {
             height: 34,
             child: PopupMenuButton<String>(
               padding: EdgeInsets.zero,
-              icon: const Icon(Icons.more_vert_rounded, color: _mutedColor, size: 20),
+              icon: const Icon(
+                Icons.more_vert_rounded,
+                color: _mutedColor,
+                size: 20,
+              ),
               color: Colors.white,
               surfaceTintColor: Colors.white,
-              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+              shape: RoundedRectangleBorder(
+                borderRadius: BorderRadius.circular(10),
+              ),
               onSelected: (value) {
                 switch (value) {
                   case 'edit':
@@ -949,8 +1007,17 @@ class _DishCard extends StatelessWidget {
               },
               itemBuilder: (context) => [
                 const PopupMenuItem(value: 'edit', child: Text('编辑菜品')),
-                PopupMenuItem(value: 'status', child: Text(dish.isOnSale ? '下架菜品' : '重新上架')),
-                const PopupMenuItem(value: 'delete', child: Text('删除菜品', style: TextStyle(color: Colors.redAccent))),
+                PopupMenuItem(
+                  value: 'status',
+                  child: Text(dish.isOnSale ? '下架菜品' : '重新上架'),
+                ),
+                const PopupMenuItem(
+                  value: 'delete',
+                  child: Text(
+                    '删除菜品',
+                    style: TextStyle(color: Colors.redAccent),
+                  ),
+                ),
               ],
             ),
           ),
@@ -972,16 +1039,20 @@ class _DishImage extends StatelessWidget {
       borderRadius: BorderRadius.circular(10),
       child: url != null && url.isNotEmpty
           ? Image.network(
-        _absoluteImageUrl(url),
-        width: 68,
-        height: 68,
-        fit: BoxFit.cover,
-        loadingBuilder: (context, child, loadingProgress) {
-          if (loadingProgress == null) return child;
-          return const _SkeletonBox(width: 68, height: 68, borderRadius: 12);
-        },
-        errorBuilder: (_, __, ___) => _placeholder(),
-      )
+              _absoluteImageUrl(url),
+              width: 68,
+              height: 68,
+              fit: BoxFit.cover,
+              loadingBuilder: (context, child, loadingProgress) {
+                if (loadingProgress == null) return child;
+                return const _SkeletonBox(
+                  width: 68,
+                  height: 68,
+                  borderRadius: 12,
+                );
+              },
+              errorBuilder: (_, __, ___) => _placeholder(),
+            )
           : _placeholder(),
     );
   }
@@ -991,7 +1062,11 @@ class _DishImage extends StatelessWidget {
       width: 68,
       height: 68,
       color: _softOrange,
-      child: const Icon(Icons.restaurant_menu_rounded, color: _warmOrange, size: 28),
+      child: const Icon(
+        Icons.restaurant_menu_rounded,
+        color: _warmOrange,
+        size: 28,
+      ),
     );
   }
 }
@@ -1011,7 +1086,11 @@ class _MiniTag extends StatelessWidget {
       ),
       child: Text(
         text,
-        style: const TextStyle(color: _mutedColor, fontSize: 10, fontWeight: FontWeight.w600),
+        style: const TextStyle(
+          color: _mutedColor,
+          fontSize: 10,
+          fontWeight: FontWeight.w600,
+        ),
       ),
     );
   }
@@ -1057,15 +1136,37 @@ class _ErrorPanel extends StatelessWidget {
           Container(
             width: 54,
             height: 54,
-            decoration: BoxDecoration(color: _softOrange, borderRadius: BorderRadius.circular(16)),
-            child: const Icon(Icons.wifi_off_outlined, color: _warmOrange, size: 28),
+            decoration: BoxDecoration(
+              color: _softOrange,
+              borderRadius: BorderRadius.circular(16),
+            ),
+            child: const Icon(
+              Icons.wifi_off_outlined,
+              color: _warmOrange,
+              size: 28,
+            ),
           ),
           const SizedBox(height: 12),
-          const Text('加载失败', style: TextStyle(color: _textColor, fontSize: 16, fontWeight: FontWeight.w900)),
+          const Text(
+            '加载失败',
+            style: TextStyle(
+              color: _textColor,
+              fontSize: 16,
+              fontWeight: FontWeight.w900,
+            ),
+          ),
           const SizedBox(height: 6),
-          Text(message, textAlign: TextAlign.center, style: const TextStyle(color: _mutedColor, fontSize: 13)),
+          Text(
+            message,
+            textAlign: TextAlign.center,
+            style: const TextStyle(color: _mutedColor, fontSize: 13),
+          ),
           const SizedBox(height: 16),
-          FilledButton(onPressed: onRetry, style: FilledButton.styleFrom(backgroundColor: _warmOrange), child: const Text('重试')),
+          FilledButton(
+            onPressed: onRetry,
+            style: FilledButton.styleFrom(backgroundColor: _warmOrange),
+            child: const Text('重试'),
+          ),
         ],
       ),
     );
@@ -1098,7 +1199,8 @@ class _SkeletonBox extends StatefulWidget {
   State<_SkeletonBox> createState() => _SkeletonBoxState();
 }
 
-class _SkeletonBoxState extends State<_SkeletonBox> with SingleTickerProviderStateMixin {
+class _SkeletonBoxState extends State<_SkeletonBox>
+    with SingleTickerProviderStateMixin {
   late final AnimationController _controller;
   late final Animation<Color?> _colorTween;
 
@@ -1152,15 +1254,18 @@ class _InlineCategoryManagePanel extends StatefulWidget {
   final List<CategoryInfo> categories;
   final bool saving;
   final VoidCallback onClose;
-  final Future<CategoryInfo?> Function(CategoryInfo category, String newName) onRename;
+  final Future<CategoryInfo?> Function(CategoryInfo category, String newName)
+  onRename;
   final Future<bool> Function(CategoryInfo category) onDelete;
   final Future<bool> Function(List<CategoryInfo> orderedCategories) onSaveOrder;
 
   @override
-  State<_InlineCategoryManagePanel> createState() => _InlineCategoryManagePanelState();
+  State<_InlineCategoryManagePanel> createState() =>
+      _InlineCategoryManagePanelState();
 }
 
-class _InlineCategoryManagePanelState extends State<_InlineCategoryManagePanel> {
+class _InlineCategoryManagePanelState
+    extends State<_InlineCategoryManagePanel> {
   late List<CategoryInfo> _localCategories;
   int? _editingCategoryId;
   TextEditingController? _editingController;
@@ -1255,7 +1360,9 @@ class _InlineCategoryManagePanelState extends State<_InlineCategoryManagePanel> 
 
   @override
   Widget build(BuildContext context) {
-    final listHeight = (_localCategories.length * 62.0).clamp(96.0, 360.0).toDouble();
+    final listHeight = (_localCategories.length * 62.0)
+        .clamp(96.0, 360.0)
+        .toDouble();
 
     return _SectionCard(
       child: Column(
@@ -1266,17 +1373,34 @@ class _InlineCategoryManagePanelState extends State<_InlineCategoryManagePanel> 
               Container(
                 width: 36,
                 height: 36,
-                decoration: BoxDecoration(color: _softOrange, borderRadius: BorderRadius.circular(10)),
-                child: const Icon(Icons.sort_rounded, color: _warmOrange, size: 20),
+                decoration: BoxDecoration(
+                  color: _softOrange,
+                  borderRadius: BorderRadius.circular(10),
+                ),
+                child: const Icon(
+                  Icons.sort_rounded,
+                  color: _warmOrange,
+                  size: 20,
+                ),
               ),
               const SizedBox(width: 10),
               const Expanded(
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    Text('管理分类', style: TextStyle(color: _textColor, fontSize: 16, fontWeight: FontWeight.w900)),
+                    Text(
+                      '管理分类',
+                      style: TextStyle(
+                        color: _textColor,
+                        fontSize: 16,
+                        fontWeight: FontWeight.w900,
+                      ),
+                    ),
                     SizedBox(height: 2),
-                    Text('拖拽排序，点击铅笔可直接改名', style: TextStyle(color: _mutedColor, fontSize: 12)),
+                    Text(
+                      '拖拽排序，点击铅笔可直接改名',
+                      style: TextStyle(color: _mutedColor, fontSize: 12),
+                    ),
                   ],
                 ),
               ),
@@ -1290,7 +1414,9 @@ class _InlineCategoryManagePanelState extends State<_InlineCategoryManagePanel> 
           if (_localCategories.isEmpty)
             const Padding(
               padding: EdgeInsets.symmetric(vertical: 20),
-              child: Center(child: Text('暂无分类', style: TextStyle(color: _mutedColor))),
+              child: Center(
+                child: Text('暂无分类', style: TextStyle(color: _mutedColor)),
+              ),
             )
           else
             SizedBox(
@@ -1301,16 +1427,22 @@ class _InlineCategoryManagePanelState extends State<_InlineCategoryManagePanel> 
                 onReorder: widget.saving
                     ? (_, __) {}
                     : (oldIndex, newIndex) {
-                  setState(() {
-                    if (newIndex > oldIndex) newIndex -= 1;
-                    final item = _localCategories.removeAt(oldIndex);
-                    _localCategories.insert(newIndex, item);
-                  });
-                },
+                        setState(() {
+                          if (newIndex > oldIndex) newIndex -= 1;
+                          final item = _localCategories.removeAt(oldIndex);
+                          _localCategories.insert(newIndex, item);
+                        });
+                      },
                 proxyDecorator: (child, index, animation) {
                   return Material(
                     color: Colors.transparent,
-                    child: ScaleTransition(scale: Tween<double>(begin: 1, end: 1.02).animate(animation), child: child),
+                    child: ScaleTransition(
+                      scale: Tween<double>(
+                        begin: 1,
+                        end: 1.02,
+                      ).animate(animation),
+                      child: child,
+                    ),
                   );
                 },
                 itemBuilder: (context, index) {
@@ -1340,7 +1472,9 @@ class _InlineCategoryManagePanelState extends State<_InlineCategoryManagePanel> 
                   style: OutlinedButton.styleFrom(
                     foregroundColor: _textColor,
                     side: const BorderSide(color: _lineColor),
-                    shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+                    shape: RoundedRectangleBorder(
+                      borderRadius: BorderRadius.circular(10),
+                    ),
                     padding: const EdgeInsets.symmetric(vertical: 12),
                   ),
                   child: const Text('关闭'),
@@ -1352,11 +1486,20 @@ class _InlineCategoryManagePanelState extends State<_InlineCategoryManagePanel> 
                   onPressed: widget.saving ? null : _saveOrder,
                   style: FilledButton.styleFrom(
                     backgroundColor: _warmOrange,
-                    shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+                    shape: RoundedRectangleBorder(
+                      borderRadius: BorderRadius.circular(10),
+                    ),
                     padding: const EdgeInsets.symmetric(vertical: 12),
                   ),
                   icon: widget.saving
-                      ? const SizedBox(width: 16, height: 16, child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white))
+                      ? const SizedBox(
+                          width: 16,
+                          height: 16,
+                          child: CircularProgressIndicator(
+                            strokeWidth: 2,
+                            color: Colors.white,
+                          ),
+                        )
                       : const Icon(Icons.save_outlined, size: 18),
                   label: Text(widget.saving ? '处理中...' : '保存排序'),
                 ),
@@ -1416,8 +1559,15 @@ class _CategoryManageRow extends StatelessWidget {
           child: Container(
             width: 32,
             height: 32,
-            decoration: BoxDecoration(color: _pageBgColor, borderRadius: BorderRadius.circular(9)),
-            child: const Icon(Icons.drag_indicator_rounded, color: _mutedColor, size: 20),
+            decoration: BoxDecoration(
+              color: _pageBgColor,
+              borderRadius: BorderRadius.circular(9),
+            ),
+            child: const Icon(
+              Icons.drag_indicator_rounded,
+              color: _mutedColor,
+              size: 20,
+            ),
           ),
         ),
         const SizedBox(width: 10),
@@ -1426,7 +1576,10 @@ class _CategoryManageRow extends StatelessWidget {
             category.name,
             maxLines: 1,
             overflow: TextOverflow.ellipsis,
-            style: const TextStyle(color: _textColor, fontWeight: FontWeight.w800),
+            style: const TextStyle(
+              color: _textColor,
+              fontWeight: FontWeight.w800,
+            ),
           ),
         ),
         IconButton(
@@ -1437,7 +1590,11 @@ class _CategoryManageRow extends StatelessWidget {
         IconButton(
           tooltip: '删除',
           onPressed: saving ? null : onDelete,
-          icon: const Icon(Icons.delete_outline, color: Colors.redAccent, size: 20),
+          icon: const Icon(
+            Icons.delete_outline,
+            color: Colors.redAccent,
+            size: 20,
+          ),
         ),
       ],
     );
@@ -1486,7 +1643,9 @@ class _CategoryManageRow extends StatelessWidget {
           style: FilledButton.styleFrom(
             backgroundColor: _warmOrange,
             minimumSize: const Size(58, 38),
-            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+            shape: RoundedRectangleBorder(
+              borderRadius: BorderRadius.circular(10),
+            ),
           ),
           child: Text(saving ? '保存中' : '保存'),
         ),

@@ -11,21 +11,47 @@ public final class MessageDtos {
     }
 
     public record SendMessageRequest(
-            @NotBlank(message = "Message content must not be blank")
-            @Size(max = 2000, message = "Message content must not exceed 2000 characters")
-            String content) {
+            @NotBlank(message = "消息内容不能为空")
+            @Size(max = 2000, message = "消息内容不能超过2000个字符")
+            String content,
+            Long quotedMessageId) {
+        public SendMessageRequest(String content) {
+            this(content, null);
+        }
     }
 
     public record FamilyGroupProfileRequest(
-            @Size(max = 100, message = "Group name must not exceed 100 characters") String name,
-            @Size(max = 255, message = "Cover image URL must not exceed 255 characters") String coverImageUrl,
-            @Size(max = 1000, message = "Announcement must not exceed 1000 characters") String announcement) {
+            @Size(max = 100, message = "群聊名称不能超过100个字符") String name,
+            @Size(max = 255, message = "群聊封面地址不能超过255个字符") String coverImageUrl,
+            @Size(max = 1000, message = "群公告不能超过1000个字符") String announcement,
+            Boolean joinApprovalRequired) {
+        public FamilyGroupProfileRequest(String name, String coverImageUrl, String announcement) {
+            this(name, coverImageUrl, announcement, null);
+        }
     }
 
     public record SetMuteRequest(Boolean muted) {
     }
 
     public record ShareDishRequest(Long conversationId, Long dishId) {
+    }
+
+    public record ShareOrderRequest(Long conversationId, Long orderId) {
+    }
+
+    public record ChatBlockResponse(Long userId, Boolean blockedByMe, Boolean blockedMe) {
+    }
+
+    public record OrderShareItemResponse(String dishName, String dishImageUrl, BigDecimal unitPrice,
+                                         Integer quantity, BigDecimal subtotalAmount, String selectedOptions) {
+    }
+
+    public record QuotedMessageSnapshot(
+            Long id, String type, String content, Long dishId, Long shopId, String shopName,
+            String dishName, String dishImageUrl, BigDecimal dishPrice, String dishDescription,
+            Integer dishSalesCount, Long orderId, String orderNo, LocalDateTime orderCreatedAt,
+            String orderStatus, String orderShopName, List<OrderShareItemResponse> orderItems,
+            BigDecimal orderTotalAmount, String orderRemark) {
     }
 
     public record CustomerSearchResponse(Long id, String nickname, String avatarUrl) {
@@ -56,11 +82,29 @@ public final class MessageDtos {
             String content,
             Long dishId,
             Long shopId,
+            String shopName,
             String dishName,
             String dishImageUrl,
             BigDecimal dishPrice,
             String dishDescription,
             Integer dishSalesCount,
+            Long orderId,
+            String orderNo,
+            LocalDateTime orderCreatedAt,
+            String orderStatus,
+            String orderShopName,
+            List<OrderShareItemResponse> orderItems,
+            BigDecimal orderTotalAmount,
+            String orderRemark,
+            Long quotedMessageId,
+            String quotedType,
+            String quotedContent,
+            String quotedSenderName,
+            QuotedMessageSnapshot quotedMessage,
+            String deliveryStatus,
+            Boolean deliveryFailed,
+            String failureReason,
+            LocalDateTime recalledAt,
             LocalDateTime createdAt) {
     }
 
@@ -69,7 +113,8 @@ public final class MessageDtos {
     }
 
     public record FamilyGroupResponse(Long id, Long shopId, String name, String coverImageUrl,
-                                      String announcement, String status, List<FamilyGroupMemberResponse> members) {
+                                      String announcement, String status, Boolean joinApprovalRequired,
+                                      List<FamilyGroupMemberResponse> members) {
     }
 
     public record ConversationMessagesResponse(

@@ -5,6 +5,7 @@ import 'package:flutter/material.dart';
 import '../models/shop_api_models.dart';
 import '../services/shop_api_service.dart';
 import '../services/websocket_service.dart';
+import '../widgets/app_notice.dart';
 import 'shop_order_detail_page.dart';
 
 const _warmOrange = Color(0xFFF28C28);
@@ -43,21 +44,21 @@ class _OrderManagePageState extends State<OrderManagePage> {
     _wsSubscription = ShopWebSocketService.instance
         .streamForModule('ORDER')
         .listen((msg) {
-      if (!mounted) return;
+          if (!mounted) return;
 
-      final shouldRefresh = {
-        'CREATED',
-        'UPDATED',
-        'ACCEPTED',
-        'REJECTED',
-        'COMPLETED',
-        'CANCELED',
-      }.contains(msg.action);
+          final shouldRefresh = {
+            'CREATED',
+            'UPDATED',
+            'ACCEPTED',
+            'REJECTED',
+            'COMPLETED',
+            'CANCELED',
+          }.contains(msg.action);
 
-      if (shouldRefresh) {
-        _load(silent: true);
-      }
-    });
+          if (shouldRefresh) {
+            _load(silent: true);
+          }
+        });
   }
 
   @override
@@ -99,7 +100,10 @@ class _OrderManagePageState extends State<OrderManagePage> {
       child: Scaffold(
         backgroundColor: _pageBgColor, // 现代化浅灰背景
         appBar: AppBar(
-          title: const Text('订单管理', style: TextStyle(fontWeight: FontWeight.w700)),
+          title: const Text(
+            '订单管理',
+            style: TextStyle(fontWeight: FontWeight.w700),
+          ),
           backgroundColor: Colors.white,
           foregroundColor: _textColor,
           elevation: 0,
@@ -232,11 +236,7 @@ class _OrderManagePageState extends State<OrderManagePage> {
   }
 
   void _showSnackBar(String message) {
-    ScaffoldMessenger.of(context)
-      ..hideCurrentSnackBar()
-      ..showSnackBar(
-        SnackBar(content: Text(message), behavior: SnackBarBehavior.floating),
-      );
+    AppNotice.show(context, message);
   }
 }
 
@@ -260,7 +260,11 @@ class _OrderList extends StatelessWidget {
         child: Column(
           mainAxisSize: MainAxisSize.min,
           children: const [
-            Icon(Icons.receipt_long_outlined, size: 54, color: Color(0xFFE0E0E0)),
+            Icon(
+              Icons.receipt_long_outlined,
+              size: 54,
+              color: Color(0xFFE0E0E0),
+            ),
             SizedBox(height: 16),
             Text('该分类下暂无订单', style: TextStyle(color: _mutedColor)),
           ],
@@ -347,7 +351,10 @@ class _OrderCard extends StatelessWidget {
             ),
             Row(
               children: [
-                const Text('实付 ', style: TextStyle(color: _mutedColor, fontSize: 13)),
+                const Text(
+                  '实付 ',
+                  style: TextStyle(color: _mutedColor, fontSize: 13),
+                ),
                 Text(
                   '¥${order.totalAmount.toStringAsFixed(2)}',
                   style: const TextStyle(
@@ -384,7 +391,10 @@ class _OrderCard extends StatelessWidget {
                       minimumSize: const Size(64, 36),
                     ),
                     onPressed: onAction,
-                    child: Text(actionLabel, style: const TextStyle(fontWeight: FontWeight.bold)),
+                    child: Text(
+                      actionLabel,
+                      style: const TextStyle(fontWeight: FontWeight.bold),
+                    ),
                   ),
               ],
             ),
@@ -464,7 +474,9 @@ class _ErrorPanel extends StatelessWidget {
         children: [
           const Icon(Icons.info_outline, color: _warmOrange),
           const SizedBox(width: 12),
-          Expanded(child: Text(message, style: const TextStyle(color: _textColor))),
+          Expanded(
+            child: Text(message, style: const TextStyle(color: _textColor)),
+          ),
           TextButton(
             onPressed: onRetry,
             child: const Text('重试', style: TextStyle(color: _warmOrange)),
@@ -520,7 +532,8 @@ class _SkeletonBox extends StatefulWidget {
   State<_SkeletonBox> createState() => _SkeletonBoxState();
 }
 
-class _SkeletonBoxState extends State<_SkeletonBox> with SingleTickerProviderStateMixin {
+class _SkeletonBoxState extends State<_SkeletonBox>
+    with SingleTickerProviderStateMixin {
   late AnimationController _controller;
   late Animation<Color?> _colorTween;
 

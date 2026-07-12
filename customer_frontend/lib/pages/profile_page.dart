@@ -12,9 +12,10 @@ import 'chat_settings_page.dart';
 import 'message_center_page.dart';
 
 class ProfilePage extends StatelessWidget {
-  const ProfilePage({super.key, required this.api});
+  const ProfilePage({super.key, required this.api, this.notificationCount = 0});
 
   final CustomerApi api;
+  final int notificationCount;
 
   static const Color _warmOrange = Color(0xFFF28C28);
   static const Color _softOrange = Color(0xFFFFF4E8);
@@ -33,7 +34,10 @@ class ProfilePage extends StatelessWidget {
         return Scaffold(
           backgroundColor: _bgColor,
           appBar: AppBar(
-            title: const Text('我的', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 20)),
+            title: const Text(
+              '我的',
+              style: TextStyle(fontWeight: FontWeight.bold, fontSize: 20),
+            ),
             backgroundColor: _bgColor,
             surfaceTintColor: Colors.transparent,
             elevation: 0,
@@ -61,6 +65,7 @@ class ProfilePage extends StatelessWidget {
                     subtitle: '查看订单、家庭和反馈处理提醒',
                     enabled: loggedIn,
                     destination: const MessageCenterPage(),
+                    badgeCount: notificationCount,
                   ),
                   const _SectionDivider(),
                   _ProfileMenuTile(
@@ -162,10 +167,15 @@ class _GuestCard extends StatelessWidget {
                 const SizedBox(height: 12),
                 FilledButton(
                   style: FilledButton.styleFrom(
-                    shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
+                    shape: RoundedRectangleBorder(
+                      borderRadius: BorderRadius.circular(8),
+                    ),
                   ),
                   onPressed: onLogin,
-                  child: const Text('登录 / 注册', style: TextStyle(fontWeight: FontWeight.bold)),
+                  child: const Text(
+                    '登录 / 注册',
+                    style: TextStyle(fontWeight: FontWeight.bold),
+                  ),
                 ),
               ],
             ),
@@ -202,29 +212,36 @@ class _UserInfoCard extends StatelessWidget {
             ),
             child: user?.avatarUrl?.isNotEmpty == true
                 ? Image.network(
-              resolveCustomerImageUrl(user!.avatarUrl!),
-              fit: BoxFit.cover,
-              loadingBuilder: (context, child, progress) {
-                if (progress == null) {
-                  return TweenAnimationBuilder<double>(
-                    tween: Tween(begin: 0.0, end: 1.0),
-                    duration: const Duration(milliseconds: 300),
-                    builder: (context, value, child) =>
-                        Opacity(opacity: value, child: child),
-                    child: child,
-                  );
-                }
-                return const Center(
-                  child: CircularProgressIndicator(
+                    resolveCustomerImageUrl(user!.avatarUrl!),
+                    fit: BoxFit.cover,
+                    loadingBuilder: (context, child, progress) {
+                      if (progress == null) {
+                        return TweenAnimationBuilder<double>(
+                          tween: Tween(begin: 0.0, end: 1.0),
+                          duration: const Duration(milliseconds: 300),
+                          builder: (context, value, child) =>
+                              Opacity(opacity: value, child: child),
+                          child: child,
+                        );
+                      }
+                      return const Center(
+                        child: CircularProgressIndicator(
+                          color: ProfilePage._warmOrange,
+                          strokeWidth: 2,
+                        ),
+                      );
+                    },
+                    errorBuilder: (_, _, _) => const Icon(
+                      Icons.person,
+                      color: ProfilePage._warmOrange,
+                      size: 36,
+                    ),
+                  )
+                : const Icon(
+                    Icons.person,
                     color: ProfilePage._warmOrange,
-                    strokeWidth: 2,
+                    size: 36,
                   ),
-                );
-              },
-              errorBuilder: (_, _, _) =>
-              const Icon(Icons.person, color: ProfilePage._warmOrange, size: 36),
-            )
-                : const Icon(Icons.person, color: ProfilePage._warmOrange, size: 36),
           ),
           const SizedBox(width: 16),
           Expanded(
@@ -258,12 +275,25 @@ class _UserInfoCard extends StatelessWidget {
                       borderRadius: BorderRadius.circular(4),
                       onTap: auth.logout,
                       child: const Padding(
-                        padding: EdgeInsets.symmetric(horizontal: 4, vertical: 2),
+                        padding: EdgeInsets.symmetric(
+                          horizontal: 4,
+                          vertical: 2,
+                        ),
                         child: Row(
                           children: [
-                            Icon(Icons.logout, size: 14, color: ProfilePage._textMuted),
+                            Icon(
+                              Icons.logout,
+                              size: 14,
+                              color: ProfilePage._textMuted,
+                            ),
                             SizedBox(width: 4),
-                            Text('退出', style: TextStyle(fontSize: 12, color: ProfilePage._textMuted)),
+                            Text(
+                              '退出',
+                              style: TextStyle(
+                                fontSize: 12,
+                                color: ProfilePage._textMuted,
+                              ),
+                            ),
                           ],
                         ),
                       ),
@@ -327,6 +357,7 @@ class _ProfileMenuTile extends StatelessWidget {
     required this.subtitle,
     required this.destination,
     required this.enabled,
+    this.badgeCount = 0,
   });
 
   final IconData icon;
@@ -334,6 +365,7 @@ class _ProfileMenuTile extends StatelessWidget {
   final String subtitle;
   final Widget destination;
   final bool enabled;
+  final int badgeCount;
 
   @override
   Widget build(BuildContext context) {
@@ -364,13 +396,25 @@ class _ProfileMenuTile extends StatelessWidget {
           style: const TextStyle(color: ProfilePage._textMuted, fontSize: 13),
         ),
       ),
-      trailing: const Icon(Icons.arrow_forward_ios, color: Color(0xFFD4CDC7), size: 16),
+      trailing: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          if (badgeCount > 0)
+            Badge(label: Text(badgeCount > 99 ? '99+' : '$badgeCount')),
+          if (badgeCount > 0) const SizedBox(width: 8),
+          const Icon(
+            Icons.arrow_forward_ios,
+            color: Color(0xFFD4CDC7),
+            size: 16,
+          ),
+        ],
+      ),
       onTap: enabled
           ? () {
-        Navigator.of(
-          context,
-        ).push(MaterialPageRoute(builder: (_) => destination));
-      }
+              Navigator.of(
+                context,
+              ).push(MaterialPageRoute(builder: (_) => destination));
+            }
           : null,
     );
   }

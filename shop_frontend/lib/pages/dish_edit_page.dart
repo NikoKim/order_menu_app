@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import '../widgets/app_notice.dart';
 import 'package:image_picker/image_picker.dart';
 
 import '../models/shop_api_models.dart';
@@ -73,7 +74,10 @@ class _DishEditPageState extends State<DishEditPage> {
         backgroundColor: Colors.white,
         foregroundColor: _textColor,
         elevation: 0,
-        title: Text(_isEditing ? '编辑菜品' : '新增菜品', style: const TextStyle(fontWeight: FontWeight.w700)),
+        title: Text(
+          _isEditing ? '编辑菜品' : '新增菜品',
+          style: const TextStyle(fontWeight: FontWeight.w700),
+        ),
       ),
       body: Form(
         key: _formKey,
@@ -95,7 +99,10 @@ class _DishEditPageState extends State<DishEditPage> {
                     child: TextFormField(
                       controller: _nameController,
                       decoration: _inputDecoration('例如：招牌牛肉饭'),
-                      validator: (value) => (value == null || value.trim().isEmpty) ? '请填写菜名' : null,
+                      validator: (value) =>
+                          (value == null || value.trim().isEmpty)
+                          ? '请填写菜名'
+                          : null,
                     ),
                   ),
                   const SizedBox(height: 16),
@@ -105,7 +112,14 @@ class _DishEditPageState extends State<DishEditPage> {
                       initialValue: _categoryId,
                       decoration: _inputDecoration('请选择分类'),
                       icon: const Icon(Icons.expand_more, color: _mutedColor),
-                      items: widget.categories.map((c) => DropdownMenuItem(value: c.id, child: Text(c.name))).toList(),
+                      items: widget.categories
+                          .map(
+                            (c) => DropdownMenuItem(
+                              value: c.id,
+                              child: Text(c.name),
+                            ),
+                          )
+                          .toList(),
                       onChanged: (value) {
                         if (value != null) setState(() => _categoryId = value);
                       },
@@ -119,11 +133,17 @@ class _DishEditPageState extends State<DishEditPage> {
                           label: '售卖价格',
                           child: TextFormField(
                             controller: _priceController,
-                            keyboardType: const TextInputType.numberWithOptions(decimal: true),
-                            decoration: _inputDecoration('0.00').copyWith(prefixText: '¥ '),
+                            keyboardType: const TextInputType.numberWithOptions(
+                              decimal: true,
+                            ),
+                            decoration: _inputDecoration(
+                              '0.00',
+                            ).copyWith(prefixText: '¥ '),
                             validator: (value) {
                               final price = double.tryParse(value ?? '');
-                              return (price == null || price < 0) ? '有效价格' : null;
+                              return (price == null || price < 0)
+                                  ? '有效价格'
+                                  : null;
                             },
                           ),
                         ),
@@ -138,7 +158,9 @@ class _DishEditPageState extends State<DishEditPage> {
                             decoration: _inputDecoration('999'),
                             validator: (value) {
                               final stock = int.tryParse(value ?? '');
-                              return (stock == null || stock < 0) ? '有效库存' : null;
+                              return (stock == null || stock < 0)
+                                  ? '有效库存'
+                                  : null;
                             },
                           ),
                         ),
@@ -172,14 +194,19 @@ class _DishEditPageState extends State<DishEditPage> {
                         onPressed: _addOptionGroup,
                         icon: const Icon(Icons.add, size: 18),
                         label: const Text('新增属性组'),
-                        style: TextButton.styleFrom(foregroundColor: _warmOrange),
+                        style: TextButton.styleFrom(
+                          foregroundColor: _warmOrange,
+                        ),
                       ),
                     ],
                   ),
                   if (_optionGroups.isEmpty)
                     const Padding(
                       padding: EdgeInsets.symmetric(vertical: 12),
-                      child: Text('暂无特殊属性，如需设置口味、加料等，请点击上方添加。', style: TextStyle(color: _mutedColor, fontSize: 13)),
+                      child: Text(
+                        '暂无特殊属性，如需设置口味、加料等，请点击上方添加。',
+                        style: TextStyle(color: _mutedColor, fontSize: 13),
+                      ),
                     ),
                   for (final group in _optionGroups)
                     _OptionGroupEditor(
@@ -204,8 +231,17 @@ class _DishEditPageState extends State<DishEditPage> {
                 value: _isAvailable,
                 activeColor: Colors.white,
                 activeTrackColor: _warmOrange,
-                title: const Text('上架状态', style: TextStyle(color: _textColor, fontWeight: FontWeight.w700)),
-                subtitle: Text(_isAvailable ? '顾客可点单' : '已隐藏，顾客不可见', style: const TextStyle(color: _mutedColor, fontSize: 13)),
+                title: const Text(
+                  '上架状态',
+                  style: TextStyle(
+                    color: _textColor,
+                    fontWeight: FontWeight.w700,
+                  ),
+                ),
+                subtitle: Text(
+                  _isAvailable ? '顾客可点单' : '已隐藏，顾客不可见',
+                  style: const TextStyle(color: _mutedColor, fontSize: 13),
+                ),
                 onChanged: (value) => setState(() => _isAvailable = value),
               ),
             ),
@@ -219,7 +255,11 @@ class _DishEditPageState extends State<DishEditPage> {
           decoration: BoxDecoration(
             color: Colors.white,
             boxShadow: [
-              BoxShadow(color: Colors.black.withValues(alpha: 0.04), blurRadius: 12, offset: const Offset(0, -4)),
+              BoxShadow(
+                color: Colors.black.withValues(alpha: 0.04),
+                blurRadius: 12,
+                offset: const Offset(0, -4),
+              ),
             ],
           ),
           child: Row(
@@ -233,9 +273,17 @@ class _DishEditPageState extends State<DishEditPage> {
                       foregroundColor: Colors.redAccent,
                       side: const BorderSide(color: Colors.redAccent),
                       padding: const EdgeInsets.symmetric(vertical: 14),
-                      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
+                      shape: RoundedRectangleBorder(
+                        borderRadius: BorderRadius.circular(8),
+                      ),
                     ),
-                    child: const Text('删除', style: TextStyle(fontSize: 16, fontWeight: FontWeight.w700)),
+                    child: const Text(
+                      '删除',
+                      style: TextStyle(
+                        fontSize: 16,
+                        fontWeight: FontWeight.w700,
+                      ),
+                    ),
                   ),
                 ),
                 const SizedBox(width: 12),
@@ -247,9 +295,17 @@ class _DishEditPageState extends State<DishEditPage> {
                   style: FilledButton.styleFrom(
                     backgroundColor: _warmOrange,
                     padding: const EdgeInsets.symmetric(vertical: 14),
-                    shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
+                    shape: RoundedRectangleBorder(
+                      borderRadius: BorderRadius.circular(8),
+                    ),
                   ),
-                  child: Text(_saving ? '保存中...' : '保存菜品', style: const TextStyle(fontSize: 16, fontWeight: FontWeight.w700)),
+                  child: Text(
+                    _saving ? '保存中...' : '保存菜品',
+                    style: const TextStyle(
+                      fontSize: 16,
+                      fontWeight: FontWeight.w700,
+                    ),
+                  ),
                 ),
               ),
             ],
@@ -269,19 +325,23 @@ class _DishEditPageState extends State<DishEditPage> {
         decoration: BoxDecoration(
           color: Colors.white,
           borderRadius: BorderRadius.circular(12),
-          border: Border.all(color: url != null ? Colors.transparent : _lineColor),
+          border: Border.all(
+            color: url != null ? Colors.transparent : _lineColor,
+          ),
         ),
         clipBehavior: Clip.antiAlias,
         child: url != null && url.isNotEmpty
             ? Image.network(
-          _absoluteImageUrl(url),
-          fit: BoxFit.cover,
-          loadingBuilder: (context, child, loadingProgress) {
-            if (loadingProgress == null) return child;
-            return const Center(child: CircularProgressIndicator(color: _warmOrange));
-          },
-          errorBuilder: (_, __, ___) => _buildPlaceholder(),
-        )
+                _absoluteImageUrl(url),
+                fit: BoxFit.cover,
+                loadingBuilder: (context, child, loadingProgress) {
+                  if (loadingProgress == null) return child;
+                  return const Center(
+                    child: CircularProgressIndicator(color: _warmOrange),
+                  );
+                },
+                errorBuilder: (_, __, ___) => _buildPlaceholder(),
+              )
             : _buildPlaceholder(),
       ),
     );
@@ -293,23 +353,40 @@ class _DishEditPageState extends State<DishEditPage> {
       children: [
         Container(
           padding: const EdgeInsets.all(12),
-          decoration: const BoxDecoration(color: _softOrange, shape: BoxShape.circle),
-          child: const Icon(Icons.add_photo_alternate_outlined, color: _warmOrange, size: 32),
+          decoration: const BoxDecoration(
+            color: _softOrange,
+            shape: BoxShape.circle,
+          ),
+          child: const Icon(
+            Icons.add_photo_alternate_outlined,
+            color: _warmOrange,
+            size: 32,
+          ),
         ),
         const SizedBox(height: 12),
-        const Text('点击上传高清菜品图', style: TextStyle(color: _mutedColor, fontWeight: FontWeight.w600)),
+        const Text(
+          '点击上传高清菜品图',
+          style: TextStyle(color: _mutedColor, fontWeight: FontWeight.w600),
+        ),
       ],
     );
   }
 
   Future<void> _uploadImage() async {
-    final image = await _imagePicker.pickImage(source: ImageSource.gallery, maxWidth: 1200, imageQuality: 85);
+    final image = await _imagePicker.pickImage(
+      source: ImageSource.gallery,
+      maxWidth: 1200,
+      imageQuality: 85,
+    );
     if (image == null) return;
 
     setState(() => _saving = true);
     try {
       final shop = await shopApi.fetchMyShop();
-      final url = await shopApi.uploadMenuImage(shopId: shop.id, filePath: image.path);
+      final url = await shopApi.uploadMenuImage(
+        shopId: shop.id,
+        filePath: image.path,
+      );
       if (mounted) {
         setState(() => _imageUrl = url);
         _showSnackBar('图片上传成功');
@@ -342,7 +419,9 @@ class _DishEditPageState extends State<DishEditPage> {
               'required': group.minSelect > 0,
               'selectionType': group.selectionType,
               'minSelect': group.minSelect,
-              'maxSelect': group.selectionType == 'SINGLE' ? 1 : int.tryParse(group.maxSelect.text),
+              'maxSelect': group.selectionType == 'SINGLE'
+                  ? 1
+                  : int.tryParse(group.maxSelect.text),
               'sortOrder': _optionGroups.indexOf(group),
               'options': [
                 for (final option in group.options)
@@ -379,7 +458,10 @@ class _DishEditPageState extends State<DishEditPage> {
         title: const Text('删除菜品'),
         content: Text('删除后无法恢复，确定删除「${widget.dish!.name}」吗？'),
         actions: [
-          TextButton(onPressed: () => Navigator.pop(context, false), child: const Text('取消', style: TextStyle(color: _mutedColor))),
+          TextButton(
+            onPressed: () => Navigator.pop(context, false),
+            child: const Text('取消', style: TextStyle(color: _mutedColor)),
+          ),
           FilledButton(
             onPressed: () => Navigator.pop(context, true),
             style: FilledButton.styleFrom(backgroundColor: Colors.redAccent),
@@ -402,9 +484,7 @@ class _DishEditPageState extends State<DishEditPage> {
   }
 
   void _showSnackBar(String message) {
-    ScaffoldMessenger.of(context)
-      ..hideCurrentSnackBar()
-      ..showSnackBar(SnackBar(content: Text(message), behavior: SnackBarBehavior.floating));
+    AppNotice.show(context, message);
   }
 
   void _addOptionGroup() {
@@ -428,7 +508,11 @@ class _BaseCard extends StatelessWidget {
         color: Colors.white,
         borderRadius: BorderRadius.circular(12),
         boxShadow: [
-          BoxShadow(color: Colors.black.withValues(alpha: 0.02), blurRadius: 10, offset: const Offset(0, 4)),
+          BoxShadow(
+            color: Colors.black.withValues(alpha: 0.02),
+            blurRadius: 10,
+            offset: const Offset(0, 4),
+          ),
         ],
       ),
       child: child,
@@ -447,7 +531,14 @@ class _SectionTitle extends StatelessWidget {
       children: [
         Icon(icon, size: 20, color: _warmOrange),
         const SizedBox(width: 8),
-        Text(title, style: const TextStyle(color: _textColor, fontSize: 16, fontWeight: FontWeight.w800)),
+        Text(
+          title,
+          style: const TextStyle(
+            color: _textColor,
+            fontSize: 16,
+            fontWeight: FontWeight.w800,
+          ),
+        ),
       ],
     );
   }
@@ -463,7 +554,14 @@ class _LabeledField extends StatelessWidget {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        Text(label, style: const TextStyle(color: _textColor, fontSize: 14, fontWeight: FontWeight.w600)),
+        Text(
+          label,
+          style: const TextStyle(
+            color: _textColor,
+            fontSize: 14,
+            fontWeight: FontWeight.w600,
+          ),
+        ),
         const SizedBox(height: 8),
         child,
       ],
@@ -472,7 +570,11 @@ class _LabeledField extends StatelessWidget {
 }
 
 class _OptionGroupEditor extends StatelessWidget {
-  const _OptionGroupEditor({required this.group, required this.onChanged, required this.onRemove});
+  const _OptionGroupEditor({
+    required this.group,
+    required this.onChanged,
+    required this.onRemove,
+  });
   final _OptionGroupDraft group;
   final VoidCallback onChanged;
   final VoidCallback onRemove;
@@ -500,10 +602,18 @@ class _OptionGroupEditor extends StatelessWidget {
               ),
               const SizedBox(width: 8),
               Container(
-                decoration: BoxDecoration(color: Colors.white, borderRadius: BorderRadius.circular(8), border: Border.all(color: _lineColor)),
+                decoration: BoxDecoration(
+                  color: Colors.white,
+                  borderRadius: BorderRadius.circular(8),
+                  border: Border.all(color: _lineColor),
+                ),
                 child: IconButton(
                   onPressed: onRemove,
-                  icon: const Icon(Icons.delete_outline, color: Colors.redAccent, size: 20),
+                  icon: const Icon(
+                    Icons.delete_outline,
+                    color: Colors.redAccent,
+                    size: 20,
+                  ),
                   tooltip: '删除此属性组',
                 ),
               ),
@@ -524,7 +634,8 @@ class _OptionGroupEditor extends StatelessWidget {
                   onChanged: (value) {
                     if (value == null) return;
                     group.selectionType = value;
-                    if (value == 'SINGLE' && group.minSelect > 1) group.minSelect = 1;
+                    if (value == 'SINGLE' && group.minSelect > 1)
+                      group.minSelect = 1;
                     onChanged();
                   },
                 ),
@@ -568,15 +679,22 @@ class _OptionGroupEditor extends StatelessWidget {
                 children: [
                   Expanded(
                     flex: 3,
-                    child: TextField(controller: option.name, decoration: _inputDecoration('子选项名')),
+                    child: TextField(
+                      controller: option.name,
+                      decoration: _inputDecoration('子选项名'),
+                    ),
                   ),
                   const SizedBox(width: 10),
                   Expanded(
                     flex: 2,
                     child: TextField(
                       controller: option.price,
-                      keyboardType: const TextInputType.numberWithOptions(decimal: true),
-                      decoration: _inputDecoration('加价').copyWith(prefixText: '+¥'),
+                      keyboardType: const TextInputType.numberWithOptions(
+                        decimal: true,
+                      ),
+                      decoration: _inputDecoration(
+                        '加价',
+                      ).copyWith(prefixText: '+¥'),
                     ),
                   ),
                   IconButton(

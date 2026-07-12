@@ -7,6 +7,7 @@ import '../models.dart';
 import '../services/api_client.dart';
 import '../services/customer_websocket_service.dart';
 import '../widgets/app_footer.dart';
+import '../widgets/app_notice.dart';
 import 'family_group_info_page.dart';
 
 class MyFamiliesPage extends StatefulWidget {
@@ -81,11 +82,7 @@ class _MyFamiliesPageState extends State<MyFamiliesPage> {
   }
 
   void _show(String message) {
-    ScaffoldMessenger.of(context)
-      ..hideCurrentSnackBar()
-      ..showSnackBar(
-        SnackBar(content: Text(message), behavior: SnackBarBehavior.floating),
-      );
+    AppNotice.show(context, message);
   }
 
   @override

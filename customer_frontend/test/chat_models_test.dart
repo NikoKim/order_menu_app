@@ -1,4 +1,5 @@
 import 'package:customer_frontend/models.dart';
+import 'package:customer_frontend/pages/chat_user_detail_page.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 void main() {
@@ -86,6 +87,82 @@ void main() {
     expect(message.dishSales, 136);
   });
 
+  test('parses an order share card snapshot', () {
+    final message = ChatMessage.fromJson({
+      'id': 12,
+      'conversationId': 7,
+      'senderUserId': 1,
+      'type': 'ORDER_SHARE',
+      'content': 'order:42',
+      'createdAt': '2026-07-12T12:00:00',
+      'orderId': 42,
+      'orderNo': 'NO42',
+      'orderCreatedAt': '2026-07-12T11:00:00',
+      'orderStatus': 'COMPLETED',
+      'orderShopName': '幸福小馆',
+      'orderItems': [
+        {
+          'dishName': '鱼香肉丝',
+          'dishImageUrl': '/dishes/fish.png',
+          'unitPrice': 28.8,
+          'quantity': 2,
+          'subtotalAmount': 57.6,
+          'selectedOptions': '少辣',
+        },
+      ],
+      'orderTotalAmount': 57.6,
+      'orderRemark': '少辣',
+    });
+
+    expect(message.isOrderShare, isTrue);
+    expect(message.orderId, 42);
+    expect(message.orderItems.single.quantity, 2);
+    expect(message.orderItems.single.unitPrice, 28.8);
+    expect(message.orderItems.single.selectedOptions, '少辣');
+    expect(message.orderTotalAmount, 57.6);
+  });
+
+  test('parses a complete quoted card instead of reducing it to text', () {
+    final message = ChatMessage.fromJson({
+      'id': 13,
+      'conversationId': 7,
+      'senderUserId': 1,
+      'type': 'TEXT',
+      'content': '这个订单',
+      'createdAt': '2026-07-12T12:00:00',
+      'quotedMessageId': 12,
+      'quotedMessage': {
+        'id': 12,
+        'type': 'ORDER_SHARE',
+        'content': 'order:42',
+        'orderId': 42,
+        'orderNo': 'NO42',
+        'orderShopName': '幸福小馆',
+        'orderItems': [
+          {'dishName': '鱼香肉丝', 'quantity': 2},
+        ],
+        'orderTotalAmount': 57.6,
+      },
+    });
+
+    expect(message.quotedMessage?.type, 'ORDER_SHARE');
+    expect(message.quotedMessage?.orderNo, 'NO42');
+    expect(message.quotedMessage?.orderItems.single.dishName, '鱼香肉丝');
+  });
+
+  test('parses chat block relationship in both directions', () {
+    final relationship = ChatBlock.fromJson({
+      'userId': 18,
+      'blockedByMe': true,
+      'blockedMe': false,
+    });
+
+    expect(relationship.userId, 18);
+    expect(relationship.blockedByMe, isTrue);
+    expect(relationship.blockedMe, isFalse);
+    expect(chatBlockActionLabel(relationship), '取消拉黑');
+  });
+
   test('messages within one minute share the preceding timestamp', () {
     final first = DateTime.parse('2026-07-11T08:00:00');
     final close = DateTime.parse('2026-07-11T08:00:59');
@@ -103,5 +180,40 @@ void main() {
     expect(formatChatListTime('2026-07-11T08:05:00', now: now), '07/11');
     expect(formatChatListTime('2025-07-11T08:05:00', now: now), '2025/07/11');
     expect(formatChatListTime(null, now: now), '');
+  });
+
+  test('parses quote recall and shop snapshot fields', () {
+    final message = ChatMessage.fromJson({
+      'id': 10,
+      'conversationId': 7,
+      'senderUserId': 1,
+      'type': 'TEXT',
+      'content': '回复',
+      'createdAt': '2026-07-12T08:05:00',
+      'shopName': '幸福小馆',
+      'quotedMessageId': 9,
+      'quotedContent': '原消息',
+      'quotedSenderName': '顾客甲',
+      'recalledAt': '2026-07-12T08:06:00',
+    });
+    expect(message.shopName, '幸福小馆');
+    expect(message.quotedMessageId, 9);
+    expect(message.isRecalled, isTrue);
+  });
+
+  test('formats chat message time using today yesterday and date', () {
+    final now = DateTime(2026, 7, 12, 18);
+    expect(
+      formatChatMessageTime(DateTime(2026, 7, 12, 8, 5), now: now),
+      '08:05',
+    );
+    expect(
+      formatChatMessageTime(DateTime(2026, 7, 11, 8, 5), now: now),
+      '昨天 08:05',
+    );
+    expect(
+      formatChatMessageTime(DateTime(2026, 7, 10, 8, 5), now: now),
+      '7月10日 08:05',
+    );
   });
 }

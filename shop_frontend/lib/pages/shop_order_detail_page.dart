@@ -6,6 +6,7 @@ import '../models/shop_api_models.dart';
 import '../services/api_config.dart';
 import '../services/shop_api_service.dart';
 import '../services/websocket_service.dart';
+import '../widgets/app_notice.dart';
 
 const _warmOrange = Color(0xFFF28C28);
 const _softOrange = Color(0xFFFFF4E8);
@@ -39,13 +40,13 @@ class _ShopOrderDetailPageState extends State<ShopOrderDetailPage> {
     _wsSubscription = ShopWebSocketService.instance
         .streamForModule('ORDER')
         .listen((msg) {
-      if (!mounted) return;
+          if (!mounted) return;
 
-      final orderId = int.tryParse('${msg.data['orderId']}');
-      if (orderId == widget.orderId) {
-        _load(silent: true);
-      }
-    });
+          final orderId = int.tryParse('${msg.data['orderId']}');
+          if (orderId == widget.orderId) {
+            _load(silent: true);
+          }
+        });
   }
 
   @override
@@ -87,7 +88,10 @@ class _ShopOrderDetailPageState extends State<ShopOrderDetailPage> {
     return Scaffold(
       backgroundColor: _pageBgColor,
       appBar: AppBar(
-        title: const Text('订单详情', style: TextStyle(fontWeight: FontWeight.w700)),
+        title: const Text(
+          '订单详情',
+          style: TextStyle(fontWeight: FontWeight.w700),
+        ),
         backgroundColor: Colors.white,
         foregroundColor: _textColor,
         elevation: 0,
@@ -268,7 +272,11 @@ class _ShopOrderDetailPageState extends State<ShopOrderDetailPage> {
                 children: [
                   const Text(
                     '实付金额',
-                    style: TextStyle(color: _textColor, fontSize: 15, fontWeight: FontWeight.w600),
+                    style: TextStyle(
+                      color: _textColor,
+                      fontSize: 15,
+                      fontWeight: FontWeight.w600,
+                    ),
                   ),
                   const Spacer(),
                   Text(
@@ -290,7 +298,8 @@ class _ShopOrderDetailPageState extends State<ShopOrderDetailPage> {
 
   Widget? _buildBottomBar() {
     final order = _order;
-    if (order == null || (order.status != 'SUBMITTED' && order.status != 'ACCEPTED')) {
+    if (order == null ||
+        (order.status != 'SUBMITTED' && order.status != 'ACCEPTED')) {
       return null;
     }
 
@@ -322,7 +331,10 @@ class _ShopOrderDetailPageState extends State<ShopOrderDetailPage> {
                       borderRadius: BorderRadius.circular(8),
                     ),
                   ),
-                  child: const Text('不接单', style: TextStyle(fontSize: 16, fontWeight: FontWeight.w700)),
+                  child: const Text(
+                    '不接单',
+                    style: TextStyle(fontSize: 16, fontWeight: FontWeight.w700),
+                  ),
                 ),
               ),
               const SizedBox(width: 12),
@@ -339,8 +351,13 @@ class _ShopOrderDetailPageState extends State<ShopOrderDetailPage> {
                   ),
                 ),
                 child: Text(
-                  _submitting ? '处理中...' : (order.status == 'SUBMITTED' ? '接单' : '制作完成'),
-                  style: const TextStyle(fontSize: 16, fontWeight: FontWeight.w700),
+                  _submitting
+                      ? '处理中...'
+                      : (order.status == 'SUBMITTED' ? '接单' : '制作完成'),
+                  style: const TextStyle(
+                    fontSize: 16,
+                    fontWeight: FontWeight.w700,
+                  ),
                 ),
               ),
             ),
@@ -389,11 +406,7 @@ class _ShopOrderDetailPageState extends State<ShopOrderDetailPage> {
   }
 
   void _showSnackBar(String message) {
-    ScaffoldMessenger.of(context)
-      ..hideCurrentSnackBar()
-      ..showSnackBar(
-        SnackBar(content: Text(message), behavior: SnackBarBehavior.floating),
-      );
+    AppNotice.show(context, message);
   }
 
   Widget _buildSkeletonCard({required double height}) {
@@ -404,7 +417,10 @@ class _ShopOrderDetailPageState extends State<ShopOrderDetailPage> {
         color: Colors.white,
         borderRadius: BorderRadius.circular(12),
       ),
-      child: const _SkeletonBox(width: double.infinity, height: double.infinity),
+      child: const _SkeletonBox(
+        width: double.infinity,
+        height: double.infinity,
+      ),
     );
   }
 }
@@ -450,7 +466,10 @@ class _DetailRow extends StatelessWidget {
       children: [
         SizedBox(
           width: 64,
-          child: Text(label, style: const TextStyle(color: _mutedColor, fontSize: 14)),
+          child: Text(
+            label,
+            style: const TextStyle(color: _mutedColor, fontSize: 14),
+          ),
         ),
         const SizedBox(width: 12),
         Expanded(
@@ -487,10 +506,11 @@ class _CustomerPanel extends StatelessWidget {
           ),
           child: avatarUrl?.isNotEmpty == true
               ? Image.network(
-            _absoluteImageUrl(avatarUrl!),
-            fit: BoxFit.cover,
-            errorBuilder: (_, __, ___) => const Icon(Icons.person, color: _warmOrange),
-          )
+                  _absoluteImageUrl(avatarUrl!),
+                  fit: BoxFit.cover,
+                  errorBuilder: (_, __, ___) =>
+                      const Icon(Icons.person, color: _warmOrange),
+                )
               : const Icon(Icons.person, color: _warmOrange),
         ),
         const SizedBox(width: 14),
@@ -513,7 +533,10 @@ class _CustomerPanel extends StatelessWidget {
                   if (order.familyCustomer) ...[
                     const SizedBox(width: 8),
                     Container(
-                      padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                      padding: const EdgeInsets.symmetric(
+                        horizontal: 6,
+                        vertical: 2,
+                      ),
                       decoration: BoxDecoration(
                         color: _softOrange,
                         borderRadius: BorderRadius.circular(4),
@@ -533,10 +556,16 @@ class _CustomerPanel extends StatelessWidget {
               const SizedBox(height: 6),
               Row(
                 children: [
-                  const Icon(Icons.phone_outlined, size: 14, color: _mutedColor),
+                  const Icon(
+                    Icons.phone_outlined,
+                    size: 14,
+                    color: _mutedColor,
+                  ),
                   const SizedBox(width: 4),
                   Text(
-                    order.customerPhone?.isNotEmpty == true ? order.customerPhone! : '暂无电话信息',
+                    order.customerPhone?.isNotEmpty == true
+                        ? order.customerPhone!
+                        : '暂无电话信息',
                     style: const TextStyle(color: _mutedColor, fontSize: 13),
                   ),
                 ],
@@ -565,10 +594,14 @@ class _OrderItemImage extends StatelessWidget {
       clipBehavior: Clip.antiAlias,
       child: imageUrl?.isNotEmpty == true
           ? Image.network(
-        _absoluteImageUrl(imageUrl!),
-        fit: BoxFit.cover,
-        errorBuilder: (_, __, ___) => const Icon(Icons.restaurant_menu, color: _mutedColor, size: 20),
-      )
+              _absoluteImageUrl(imageUrl!),
+              fit: BoxFit.cover,
+              errorBuilder: (_, __, ___) => const Icon(
+                Icons.restaurant_menu,
+                color: _mutedColor,
+                size: 20,
+              ),
+            )
           : const Icon(Icons.restaurant_menu, color: _mutedColor, size: 20),
     );
   }
@@ -640,8 +673,13 @@ class _ErrorPanel extends StatelessWidget {
         children: [
           const Icon(Icons.info_outline, color: _warmOrange),
           const SizedBox(width: 12),
-          Expanded(child: Text(message, style: const TextStyle(color: _textColor))),
-          TextButton(onPressed: onRetry, child: const Text('重试', style: TextStyle(color: _warmOrange))),
+          Expanded(
+            child: Text(message, style: const TextStyle(color: _textColor)),
+          ),
+          TextButton(
+            onPressed: onRetry,
+            child: const Text('重试', style: TextStyle(color: _warmOrange)),
+          ),
         ],
       ),
     );
@@ -650,11 +688,16 @@ class _ErrorPanel extends StatelessWidget {
 
 String _statusText(String status) {
   switch (status) {
-    case 'SUBMITTED': return '待接单';
-    case 'ACCEPTED': return '制作中';
-    case 'COMPLETED': return '已完成';
-    case 'CANCELLED': return '已取消';
-    default: return status;
+    case 'SUBMITTED':
+      return '待接单';
+    case 'ACCEPTED':
+      return '制作中';
+    case 'COMPLETED':
+      return '已完成';
+    case 'CANCELLED':
+      return '已取消';
+    default:
+      return status;
   }
 }
 
@@ -686,7 +729,8 @@ class _SkeletonBox extends StatefulWidget {
   State<_SkeletonBox> createState() => _SkeletonBoxState();
 }
 
-class _SkeletonBoxState extends State<_SkeletonBox> with SingleTickerProviderStateMixin {
+class _SkeletonBoxState extends State<_SkeletonBox>
+    with SingleTickerProviderStateMixin {
   late AnimationController _controller;
   late Animation<Color?> _colorTween;
 

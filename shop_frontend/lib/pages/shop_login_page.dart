@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import '../widgets/app_notice.dart';
 
 import '../services/shop_api_service.dart';
 import '../widgets/app_footer.dart';
@@ -62,15 +63,7 @@ class _ShopLoginPageState extends State<ShopLoginPage> {
   }
 
   void _showMessage(String message) {
-    ScaffoldMessenger.of(context)
-      ..hideCurrentSnackBar()
-      ..showSnackBar(
-        SnackBar(
-          content: Text(message),
-          behavior: SnackBarBehavior.floating,
-          backgroundColor: _warmOrange,
-        ),
-      );
+    AppNotice.show(context, message);
   }
 
   @override

@@ -5,15 +5,21 @@ import '../main.dart';
 import '../models.dart';
 import '../services/api_client.dart';
 import '../widgets/app_footer.dart';
+import '../widgets/app_notice.dart';
 import 'auth_page.dart';
 import 'checkout_page.dart';
 import 'dish_detail_page.dart';
 import 'chat_detail_page.dart';
 
 class ShopOrderPage extends StatefulWidget {
-  const ShopOrderPage({super.key, required this.shopId});
+  const ShopOrderPage({
+    super.key,
+    required this.shopId,
+    this.highlightedDishId,
+  });
 
   final int shopId;
+  final int? highlightedDishId;
 
   @override
   State<ShopOrderPage> createState() => _ShopOrderPageState();
@@ -103,7 +109,9 @@ class _ShopOrderPageState extends State<ShopOrderPage> {
   Future<void> _checkout(ShopMenu menu) async {
     final services = AppScope.of(context);
     if (!services.auth.isLoggedIn) {
-      await Navigator.of(context).push(MaterialPageRoute(builder: (_) => const AuthPage()));
+      await Navigator.of(
+        context,
+      ).push(MaterialPageRoute(builder: (_) => const AuthPage()));
       if (!mounted || !services.auth.isLoggedIn) return;
     }
     if (_cart.isEmpty) {
@@ -152,14 +160,25 @@ class _ShopOrderPageState extends State<ShopOrderPage> {
             final items = _cart.values.toList();
             return SafeArea(
               child: Padding(
-                padding: EdgeInsets.fromLTRB(20, 0, 20, 16 + MediaQuery.of(context).viewInsets.bottom),
+                padding: EdgeInsets.fromLTRB(
+                  20,
+                  0,
+                  20,
+                  16 + MediaQuery.of(context).viewInsets.bottom,
+                ),
                 child: Column(
                   mainAxisSize: MainAxisSize.min,
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
                     Row(
                       children: [
-                        const Text('购物车', style: TextStyle(fontSize: 18, fontWeight: FontWeight.w900)),
+                        const Text(
+                          '购物车',
+                          style: TextStyle(
+                            fontSize: 18,
+                            fontWeight: FontWeight.w900,
+                          ),
+                        ),
                         const Spacer(),
                         if (items.isNotEmpty)
                           TextButton.icon(
@@ -168,18 +187,28 @@ class _ShopOrderPageState extends State<ShopOrderPage> {
                               setSheetState(() {});
                             },
                             icon: const Icon(Icons.delete_outline, size: 18),
-                            label: const Text('清空', style: TextStyle(color: pageMutedColor)),
+                            label: const Text(
+                              '清空',
+                              style: TextStyle(color: pageMutedColor),
+                            ),
                           ),
                       ],
                     ),
                     if (items.isEmpty)
                       const Padding(
                         padding: EdgeInsets.symmetric(vertical: 36),
-                        child: Center(child: Text('还没有选择菜品', style: TextStyle(color: pageMutedColor))),
+                        child: Center(
+                          child: Text(
+                            '还没有选择菜品',
+                            style: TextStyle(color: pageMutedColor),
+                          ),
+                        ),
                       )
                     else
                       ConstrainedBox(
-                        constraints: BoxConstraints(maxHeight: MediaQuery.of(context).size.height * 0.5),
+                        constraints: BoxConstraints(
+                          maxHeight: MediaQuery.of(context).size.height * 0.5,
+                        ),
                         child: ListView.separated(
                           shrinkWrap: true,
                           itemBuilder: (context, index) {
@@ -201,7 +230,8 @@ class _ShopOrderPageState extends State<ShopOrderPage> {
                               },
                             );
                           },
-                          separatorBuilder: (_, _) => const Divider(color: pageLineColor, height: 1),
+                          separatorBuilder: (_, _) =>
+                              const Divider(color: pageLineColor, height: 1),
                           itemCount: items.length,
                         ),
                       ),
@@ -211,16 +241,20 @@ class _ShopOrderPageState extends State<ShopOrderPage> {
                         Expanded(
                           child: Text(
                             '共 $_itemCount 份  ¥${_total.toStringAsFixed(2)}',
-                            style: const TextStyle(color: pageTextColor, fontSize: 16, fontWeight: FontWeight.w900),
+                            style: const TextStyle(
+                              color: pageTextColor,
+                              fontSize: 16,
+                              fontWeight: FontWeight.w900,
+                            ),
                           ),
                         ),
                         FilledButton(
                           onPressed: items.isEmpty
                               ? null
                               : () {
-                            Navigator.of(sheetContext).pop();
-                            _checkout(menu);
-                          },
+                                  Navigator.of(sheetContext).pop();
+                                  _checkout(menu);
+                                },
                           child: const Text('去下单'),
                         ),
                       ],
@@ -249,7 +283,8 @@ class _ShopOrderPageState extends State<ShopOrderPage> {
         onEnd: entry.remove,
         builder: (context, value, child) {
           final x = from.dx + (to.dx - from.dx) * value;
-          final y = from.dy + (to.dy - from.dy) * value - 82 * value * (1 - value);
+          final y =
+              from.dy + (to.dy - from.dy) * value - 82 * value * (1 - value);
           return Positioned(
             left: x - 12,
             top: y - 12,
@@ -261,7 +296,14 @@ class _ShopOrderPageState extends State<ShopOrderPage> {
                   width: 24,
                   height: 24,
                   child: Center(
-                    child: Text('1', style: TextStyle(color: Colors.white, fontSize: 12, fontWeight: FontWeight.w900)),
+                    child: Text(
+                      '1',
+                      style: TextStyle(
+                        color: Colors.white,
+                        fontSize: 12,
+                        fontWeight: FontWeight.w900,
+                      ),
+                    ),
                   ),
                 ),
               ),
@@ -274,9 +316,7 @@ class _ShopOrderPageState extends State<ShopOrderPage> {
   }
 
   void _showSnack(String message) {
-    ScaffoldMessenger.of(context)
-      ..hideCurrentSnackBar()
-      ..showSnackBar(SnackBar(content: Text(message)));
+    AppNotice.show(context, message);
   }
 
   @override
@@ -288,7 +328,10 @@ class _ShopOrderPageState extends State<ShopOrderPage> {
         return Scaffold(
           backgroundColor: Colors.white,
           appBar: AppBar(
-            title: Text(menu?.shop.name ?? '商家点餐', style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 18)),
+            title: Text(
+              menu?.shop.name ?? '商家点餐',
+              style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 18),
+            ),
             backgroundColor: Colors.white,
             surfaceTintColor: Colors.white,
             elevation: 0,
@@ -299,11 +342,20 @@ class _ShopOrderPageState extends State<ShopOrderPage> {
                   icon: const Icon(Icons.chat_bubble_outline),
                   onPressed: () async {
                     try {
-                      final conversation = await _api.startChatWithShop(menu.shop.id);
+                      final conversation = await _api.startChatWithShop(
+                        menu.shop.id,
+                      );
                       if (!context.mounted) return;
-                      await Navigator.of(context).push(MaterialPageRoute(builder: (_) => ChatDetailPage(conversation: conversation)));
+                      await Navigator.of(context).push(
+                        MaterialPageRoute(
+                          builder: (_) =>
+                              ChatDetailPage(conversation: conversation),
+                        ),
+                      );
                     } on ApiException catch (error) {
-                      if (context.mounted) ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(error.message)));
+                      if (context.mounted) {
+                        AppNotice.show(context, error.message);
+                      }
                     }
                   },
                 ),
@@ -319,6 +371,7 @@ class _ShopOrderPageState extends State<ShopOrderPage> {
             ),
             _ => _MenuBody(
               menu: menu!,
+              highlightedDishId: widget.highlightedDishId,
               cart: _cart,
               dishQuantity: _dishQuantity,
               canAdd: _canAdd,
@@ -329,88 +382,112 @@ class _ShopOrderPageState extends State<ShopOrderPage> {
           bottomNavigationBar: menu == null || _itemCount == 0
               ? null
               : Padding(
-            padding: EdgeInsets.fromLTRB(16, 10, 16, MediaQuery.of(context).padding.bottom + 12),
-            child: Container(
-              height: 56,
-              padding: const EdgeInsets.only(left: 16, right: 6),
-              decoration: BoxDecoration(
-                color: const Color(0xFF2A2A2A),
-                borderRadius: BorderRadius.circular(28),
-                boxShadow: [
-                  BoxShadow(
-                    color: Colors.black.withOpacity(0.15),
-                    blurRadius: 16,
-                    offset: const Offset(0, 6),
+                  padding: EdgeInsets.fromLTRB(
+                    16,
+                    10,
+                    16,
+                    MediaQuery.of(context).padding.bottom + 12,
                   ),
-                ],
-              ),
-              child: Row(
-                children: [
-                  GestureDetector(
-                    key: _cartKey,
-                    onTap: () => _showCartSheet(menu),
-                    behavior: HitTestBehavior.opaque,
-                    child: Stack(
-                      clipBehavior: Clip.none,
-                      alignment: Alignment.center,
+                  child: Container(
+                    height: 56,
+                    padding: const EdgeInsets.only(left: 16, right: 6),
+                    decoration: BoxDecoration(
+                      color: const Color(0xFF2A2A2A),
+                      borderRadius: BorderRadius.circular(28),
+                      boxShadow: [
+                        BoxShadow(
+                          color: Colors.black.withOpacity(0.15),
+                          blurRadius: 16,
+                          offset: const Offset(0, 6),
+                        ),
+                      ],
+                    ),
+                    child: Row(
                       children: [
-                        const Icon(Icons.shopping_bag_outlined, color: Colors.white, size: 28),
-                        Positioned(
-                          right: -6,
-                          top: -4,
-                          child: Container(
-                            padding: const EdgeInsets.symmetric(horizontal: 5, vertical: 2),
-                            decoration: BoxDecoration(
-                              color: warmOrange,
-                              borderRadius: BorderRadius.circular(10),
-                            ),
-                            child: Text(
-                              '$_itemCount',
-                              style: const TextStyle(color: Colors.white, fontSize: 10, fontWeight: FontWeight.bold),
+                        GestureDetector(
+                          key: _cartKey,
+                          onTap: () => _showCartSheet(menu),
+                          behavior: HitTestBehavior.opaque,
+                          child: Stack(
+                            clipBehavior: Clip.none,
+                            alignment: Alignment.center,
+                            children: [
+                              const Icon(
+                                Icons.shopping_bag_outlined,
+                                color: Colors.white,
+                                size: 28,
+                              ),
+                              Positioned(
+                                right: -6,
+                                top: -4,
+                                child: Container(
+                                  padding: const EdgeInsets.symmetric(
+                                    horizontal: 5,
+                                    vertical: 2,
+                                  ),
+                                  decoration: BoxDecoration(
+                                    color: warmOrange,
+                                    borderRadius: BorderRadius.circular(10),
+                                  ),
+                                  child: Text(
+                                    '$_itemCount',
+                                    style: const TextStyle(
+                                      color: Colors.white,
+                                      fontSize: 10,
+                                      fontWeight: FontWeight.bold,
+                                    ),
+                                  ),
+                                ),
+                              ),
+                            ],
+                          ),
+                        ),
+                        const SizedBox(width: 20),
+                        Expanded(
+                          child: GestureDetector(
+                            onTap: () => _showCartSheet(menu),
+                            behavior: HitTestBehavior.opaque,
+                            child: Column(
+                              mainAxisAlignment: MainAxisAlignment.center,
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              children: [
+                                Text(
+                                  '¥${_total.toStringAsFixed(2)}',
+                                  style: const TextStyle(
+                                    color: Colors.white,
+                                    fontSize: 18,
+                                    fontWeight: FontWeight.w900,
+                                  ),
+                                ),
+                              ],
                             ),
                           ),
-                        )
+                        ),
+                        SizedBox(
+                          height: 44,
+                          width: 90,
+                          child: FilledButton(
+                            style: FilledButton.styleFrom(
+                              backgroundColor: warmOrange,
+                              shape: RoundedRectangleBorder(
+                                borderRadius: BorderRadius.circular(22),
+                              ),
+                              padding: EdgeInsets.zero,
+                            ),
+                            onPressed: () => _checkout(menu),
+                            child: const Text(
+                              '去结算',
+                              style: TextStyle(
+                                fontSize: 15,
+                                fontWeight: FontWeight.bold,
+                              ),
+                            ),
+                          ),
+                        ),
                       ],
                     ),
                   ),
-                  const SizedBox(width: 20),
-                  Expanded(
-                    child: GestureDetector(
-                      onTap: () => _showCartSheet(menu),
-                      behavior: HitTestBehavior.opaque,
-                      child: Column(
-                        mainAxisAlignment: MainAxisAlignment.center,
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                          Text(
-                            '¥${_total.toStringAsFixed(2)}',
-                            style: const TextStyle(
-                              color: Colors.white,
-                              fontSize: 18,
-                              fontWeight: FontWeight.w900,
-                            ),
-                          ),
-                        ],
-                      ),
-                    ),
-                  ),
-                  SizedBox(
-                    height: 44,
-                    width: 90,
-                    child: FilledButton(
-                      style: FilledButton.styleFrom(
-                        backgroundColor: warmOrange,
-                        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(22)),
-                        padding: EdgeInsets.zero,
-                      ),
-                      onPressed: () => _checkout(menu),
-                      child: const Text('去结算', style: TextStyle(fontSize: 15, fontWeight: FontWeight.bold)),
-                    ),
-                  ),
-                ],
-              ),
-            ),
-          ),
+                ),
         );
       },
     );
@@ -425,6 +502,7 @@ class _MenuBody extends StatefulWidget {
     required this.canAdd,
     required this.onAdd,
     required this.onRemove,
+    this.highlightedDishId,
   });
 
   final ShopMenu menu;
@@ -433,6 +511,7 @@ class _MenuBody extends StatefulWidget {
   final bool Function(Dish dish) canAdd;
   final void Function(Dish dish, {Offset? from}) onAdd;
   final void Function(Dish dish) onRemove;
+  final int? highlightedDishId;
 
   @override
   State<_MenuBody> createState() => _MenuBodyState();
@@ -493,7 +572,9 @@ class _MenuBodyState extends State<_MenuBody> {
 
       if (box != null && scrollableBox != null) {
         // 计算目标分类距离当前滚动视口顶部的相对偏移量
-        final offsetDiff = box.localToGlobal(Offset.zero, ancestor: scrollableBox).dy;
+        final offsetDiff = box
+            .localToGlobal(Offset.zero, ancestor: scrollableBox)
+            .dy;
 
         // 真正的目标位置 = 当前已经滚动的像素 + 偏移量
         final targetOffset = (scrollPosition.pixels + offsetDiff).clamp(
@@ -549,6 +630,12 @@ class _MenuBodyState extends State<_MenuBody> {
   @override
   Widget build(BuildContext context) {
     final categories = widget.menu.categories;
+    final highlighted = widget.highlightedDishId == null
+        ? null
+        : categories
+              .expand((category) => category.dishes)
+              .where((dish) => dish.id == widget.highlightedDishId)
+              .firstOrNull;
     if (categories.isEmpty) {
       return Column(
         children: [
@@ -574,10 +661,7 @@ class _MenuBodyState extends State<_MenuBody> {
                   padding: const EdgeInsets.fromLTRB(16, 4, 16, 16),
                   child: _ShopHeader(shop: widget.menu.shop),
                 ),
-                Container(
-                  height: 8,
-                  color: const Color(0xFFF7F7F7),
-                ),
+                Container(height: 8, color: const Color(0xFFF7F7F7)),
               ],
             ),
           ),
@@ -615,14 +699,21 @@ class _MenuBodyState extends State<_MenuBody> {
                         // 类别文字本身
                         Container(
                           width: double.infinity,
-                          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 18),
+                          padding: const EdgeInsets.symmetric(
+                            horizontal: 12,
+                            vertical: 18,
+                          ),
                           alignment: Alignment.centerLeft,
                           child: Text(
                             category.name,
                             style: TextStyle(
-                              color: isSelected ? pageTextColor : const Color(0xFF77716B),
+                              color: isSelected
+                                  ? pageTextColor
+                                  : const Color(0xFF77716B),
                               fontSize: 13,
-                              fontWeight: isSelected ? FontWeight.w900 : FontWeight.normal,
+                              fontWeight: isSelected
+                                  ? FontWeight.w900
+                                  : FontWeight.normal,
                             ),
                           ),
                         ),
@@ -642,24 +733,37 @@ class _MenuBodyState extends State<_MenuBody> {
                               // 超过 9 时使用密集的点表示
                               child: categoryCount > 9
                                   ? const Row(
-                                mainAxisSize: MainAxisSize.min,
-                                mainAxisAlignment: MainAxisAlignment.center,
-                                children: [
-                                  Icon(Icons.circle, size: 2.5, color: Colors.white),
-                                  SizedBox(width: 1),
-                                  Icon(Icons.circle, size: 2.5, color: Colors.white),
-                                  SizedBox(width: 1),
-                                  Icon(Icons.circle, size: 2.5, color: Colors.white),
-                                ],
-                              )
+                                      mainAxisSize: MainAxisSize.min,
+                                      mainAxisAlignment:
+                                          MainAxisAlignment.center,
+                                      children: [
+                                        Icon(
+                                          Icons.circle,
+                                          size: 2.5,
+                                          color: Colors.white,
+                                        ),
+                                        SizedBox(width: 1),
+                                        Icon(
+                                          Icons.circle,
+                                          size: 2.5,
+                                          color: Colors.white,
+                                        ),
+                                        SizedBox(width: 1),
+                                        Icon(
+                                          Icons.circle,
+                                          size: 2.5,
+                                          color: Colors.white,
+                                        ),
+                                      ],
+                                    )
                                   : Text(
-                                '$categoryCount',
-                                style: const TextStyle(
-                                  color: Colors.white,
-                                  fontSize: 10,
-                                  fontWeight: FontWeight.bold,
-                                ),
-                              ),
+                                      '$categoryCount',
+                                      style: const TextStyle(
+                                        color: Colors.white,
+                                        fontSize: 10,
+                                        fontWeight: FontWeight.bold,
+                                      ),
+                                    ),
                             ),
                           ),
                       ],
@@ -682,34 +786,61 @@ class _MenuBodyState extends State<_MenuBody> {
                   child: Column(
                     crossAxisAlignment: CrossAxisAlignment.stretch,
                     children: [
-                      for (int i = 0; i < categories.length; i++)
-                        ...[
-                          Container(
-                            key: _categoryKeys[i],
-                            padding: const EdgeInsets.only(top: 12, bottom: 16),
-                            child: Text(
-                              categories[i].name,
-                              style: const TextStyle(fontSize: 15, fontWeight: FontWeight.w900, color: pageTextColor),
+                      if (highlighted != null) ...[
+                        const Padding(
+                          padding: EdgeInsets.only(top: 12, bottom: 10),
+                          child: Text(
+                            '刚刚浏览',
+                            style: TextStyle(
+                              color: warmOrange,
+                              fontWeight: FontWeight.w700,
                             ),
                           ),
-                          for (int j = 0; j < categories[i].dishes.length; j++)
-                            Column(
-                              children: [
-                                _DishCard(
-                                  shop: widget.menu.shop,
-                                  dish: categories[i].dishes[j],
-                                  quantity: widget.dishQuantity(categories[i].dishes[j]),
-                                  canAdd: widget.canAdd(categories[i].dishes[j]),
-                                  onAdd: widget.onAdd,
-                                  onRemove: widget.onRemove,
-                                ),
-                                // 已经彻底去除了底部的灰色横线 (Divider)
-                                // 改用 24px 的纯净留白替代，让卡片呼吸感更强
-                                if (j < categories[i].dishes.length - 1)
-                                  const SizedBox(height: 24),
-                              ],
+                        ),
+                        _DishCard(
+                          shop: widget.menu.shop,
+                          dish: highlighted,
+                          quantity: widget.dishQuantity(highlighted),
+                          canAdd: widget.canAdd(highlighted),
+                          onAdd: widget.onAdd,
+                          onRemove: widget.onRemove,
+                        ),
+                        const SizedBox(height: 16),
+                        const Divider(height: 1),
+                      ],
+                      for (int i = 0; i < categories.length; i++) ...[
+                        Container(
+                          key: _categoryKeys[i],
+                          padding: const EdgeInsets.only(top: 12, bottom: 16),
+                          child: Text(
+                            categories[i].name,
+                            style: const TextStyle(
+                              fontSize: 15,
+                              fontWeight: FontWeight.w900,
+                              color: pageTextColor,
                             ),
-                        ],
+                          ),
+                        ),
+                        for (int j = 0; j < categories[i].dishes.length; j++)
+                          Column(
+                            children: [
+                              _DishCard(
+                                shop: widget.menu.shop,
+                                dish: categories[i].dishes[j],
+                                quantity: widget.dishQuantity(
+                                  categories[i].dishes[j],
+                                ),
+                                canAdd: widget.canAdd(categories[i].dishes[j]),
+                                onAdd: widget.onAdd,
+                                onRemove: widget.onRemove,
+                              ),
+                              // 已经彻底去除了底部的灰色横线 (Divider)
+                              // 改用 24px 的纯净留白替代，让卡片呼吸感更强
+                              if (j < categories[i].dishes.length - 1)
+                                const SizedBox(height: 24),
+                            ],
+                          ),
+                      ],
                       const SizedBox(height: 16),
                       const AppFooter(),
                     ],
@@ -744,7 +875,10 @@ class _DishCard extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final soldOut = dish.status == 'OFF_SALE' || dish.status == 'OFF_SHELF' || dish.stock == 0;
+    final soldOut =
+        dish.status == 'OFF_SALE' ||
+        dish.status == 'OFF_SHELF' ||
+        dish.stock == 0;
     final hasSpecs = dish.optionGroups.isNotEmpty;
     const primaryOrange = Color(0xFFF28C28);
 
@@ -775,25 +909,32 @@ class _DishCard extends StatelessWidget {
             ),
             child: dish.imageUrl?.isNotEmpty == true
                 ? Image.network(
-              resolveCustomerImageUrl(dish.imageUrl!),
-              fit: BoxFit.cover,
-              loadingBuilder: (context, child, progress) {
-                if (progress == null) {
-                  return TweenAnimationBuilder<double>(
-                    tween: Tween(begin: 0.0, end: 1.0),
-                    duration: const Duration(milliseconds: 300),
-                    builder: (context, value, child) =>
-                        Opacity(opacity: value, child: child),
-                    child: child,
-                  );
-                }
-                // 替换转圈动画为呼吸色块
-                return const _PulsePlaceholder();
-              },
-              errorBuilder: (context, error, stackTrace) =>
-              const Icon(Icons.fastfood_rounded, color: Colors.grey, size: 32),
-            )
-                : const Icon(Icons.fastfood_rounded, color: Colors.grey, size: 32),
+                    resolveCustomerImageUrl(dish.imageUrl!),
+                    fit: BoxFit.cover,
+                    loadingBuilder: (context, child, progress) {
+                      if (progress == null) {
+                        return TweenAnimationBuilder<double>(
+                          tween: Tween(begin: 0.0, end: 1.0),
+                          duration: const Duration(milliseconds: 300),
+                          builder: (context, value, child) =>
+                              Opacity(opacity: value, child: child),
+                          child: child,
+                        );
+                      }
+                      // 替换转圈动画为呼吸色块
+                      return const _PulsePlaceholder();
+                    },
+                    errorBuilder: (context, error, stackTrace) => const Icon(
+                      Icons.fastfood_rounded,
+                      color: Colors.grey,
+                      size: 32,
+                    ),
+                  )
+                : const Icon(
+                    Icons.fastfood_rounded,
+                    color: Colors.grey,
+                    size: 32,
+                  ),
           ),
           const SizedBox(width: 12),
           Expanded(
@@ -833,7 +974,10 @@ class _DishCard extends StatelessWidget {
                       const SizedBox(height: 6),
                       Text(
                         '月售 ${dish.salesCount ?? 0}',
-                        style: const TextStyle(fontSize: 11, color: Color(0xFF999999)),
+                        style: const TextStyle(
+                          fontSize: 11,
+                          color: Color(0xFF999999),
+                        ),
                       ),
                     ],
                   ),
@@ -851,11 +995,17 @@ class _DishCard extends StatelessWidget {
                               children: [
                                 const TextSpan(
                                   text: '¥ ',
-                                  style: TextStyle(fontSize: 12, fontWeight: FontWeight.bold),
+                                  style: TextStyle(
+                                    fontSize: 12,
+                                    fontWeight: FontWeight.bold,
+                                  ),
                                 ),
                                 TextSpan(
                                   text: dish.price.toStringAsFixed(2),
-                                  style: const TextStyle(fontSize: 18, fontWeight: FontWeight.w900),
+                                  style: const TextStyle(
+                                    fontSize: 18,
+                                    fontWeight: FontWeight.w900,
+                                  ),
                                 ),
                               ],
                             ),
@@ -864,7 +1014,12 @@ class _DishCard extends StatelessWidget {
                         ),
                       ),
                       const SizedBox(width: 8),
-                      _buildActionArea(context, soldOut, hasSpecs, primaryOrange),
+                      _buildActionArea(
+                        context,
+                        soldOut,
+                        hasSpecs,
+                        primaryOrange,
+                      ),
                     ],
                   ),
                 ],
@@ -876,13 +1031,22 @@ class _DishCard extends StatelessWidget {
     );
   }
 
-  Widget _buildActionArea(BuildContext context, bool soldOut, bool hasSpecs, Color primaryColor) {
+  Widget _buildActionArea(
+    BuildContext context,
+    bool soldOut,
+    bool hasSpecs,
+    Color primaryColor,
+  ) {
     if (soldOut) {
       return const Padding(
         padding: EdgeInsets.only(bottom: 2),
         child: Text(
           '已售罄',
-          style: TextStyle(fontSize: 11, color: Color(0xFFCCCCCC), fontWeight: FontWeight.w600),
+          style: TextStyle(
+            fontSize: 11,
+            color: Color(0xFFCCCCCC),
+            fontWeight: FontWeight.w600,
+          ),
         ),
       );
     }
@@ -897,7 +1061,14 @@ class _DishCard extends StatelessWidget {
             color: primaryColor,
             borderRadius: BorderRadius.circular(12),
           ),
-          child: const Text('选规格', style: TextStyle(color: Colors.white, fontSize: 11, fontWeight: FontWeight.bold)),
+          child: const Text(
+            '选规格',
+            style: TextStyle(
+              color: Colors.white,
+              fontSize: 11,
+              fontWeight: FontWeight.bold,
+            ),
+          ),
         ),
       );
     }
@@ -921,18 +1092,28 @@ class _DishCard extends StatelessWidget {
               GestureDetector(
                 onTap: isExpanded ? () => onRemove(dish) : null,
                 behavior: HitTestBehavior.opaque,
-                child: Icon(Icons.remove_circle_outline, color: primaryColor, size: 22),
+                child: Icon(
+                  Icons.remove_circle_outline,
+                  color: primaryColor,
+                  size: 22,
+                ),
               ),
               SizedBox(
                 width: 24,
                 child: Text(
                   quantity.toString(),
                   textAlign: TextAlign.center,
-                  style: const TextStyle(fontSize: 13, fontWeight: FontWeight.bold, color: pageTextColor),
+                  style: const TextStyle(
+                    fontSize: 13,
+                    fontWeight: FontWeight.bold,
+                    color: pageTextColor,
+                  ),
                 ),
               ),
               GestureDetector(
-                onTap: canAdd ? () => onAdd(dish, from: _centerOf(context)) : null,
+                onTap: canAdd
+                    ? () => onAdd(dish, from: _centerOf(context))
+                    : null,
                 behavior: HitTestBehavior.opaque,
                 child: Icon(
                   Icons.add_circle,
@@ -998,7 +1179,10 @@ class _ShopHeader extends StatelessWidget {
                 Padding(
                   padding: const EdgeInsets.only(top: 8),
                   child: Container(
-                    padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: 6,
+                      vertical: 2,
+                    ),
                     decoration: BoxDecoration(
                       color: const Color(0xFFFFF4E8), // softOrange
                       borderRadius: BorderRadius.circular(4),
@@ -1007,7 +1191,11 @@ class _ShopHeader extends StatelessWidget {
                     child: Row(
                       mainAxisSize: MainAxisSize.min,
                       children: [
-                        const Icon(Icons.home_outlined, size: 12, color: Color(0xFFF28C28)),
+                        const Icon(
+                          Icons.home_outlined,
+                          size: 12,
+                          color: Color(0xFFF28C28),
+                        ),
                         const SizedBox(width: 2),
                         Text(
                           shop.familyName!,
@@ -1151,9 +1339,7 @@ class _SpecSheetState extends State<_SpecSheet> {
                         children: [
                           Text(
                             '${group.name}${group.minSelect > 0 ? '（必选）' : ''}',
-                            style: const TextStyle(
-                              fontWeight: FontWeight.w800,
-                            ),
+                            style: const TextStyle(fontWeight: FontWeight.w800),
                           ),
                           const SizedBox(height: 8),
                           Wrap(
@@ -1163,7 +1349,9 @@ class _SpecSheetState extends State<_SpecSheet> {
                               for (final option in group.options)
                                 ChoiceChip(
                                   selected:
-                                  _selected[group.id]?.contains(option.id) ==
+                                      _selected[group.id]?.contains(
+                                        option.id,
+                                      ) ==
                                       true,
                                   label: Text(
                                     option.priceDelta > 0
@@ -1174,7 +1362,7 @@ class _SpecSheetState extends State<_SpecSheet> {
                                     setState(() {
                                       final values = _selected.putIfAbsent(
                                         group.id,
-                                            () => <int>{},
+                                        () => <int>{},
                                       );
                                       if (group.isMultiple) {
                                         selected
@@ -1211,9 +1399,7 @@ class _SpecSheetState extends State<_SpecSheet> {
                   onPressed: () {
                     final message = _validationMessage();
                     if (message != null) {
-                      ScaffoldMessenger.of(context).showSnackBar(
-                        SnackBar(content: Text(message)),
-                      );
+                      AppNotice.show(context, message);
                       return;
                     }
                     widget.onConfirm(
@@ -1287,7 +1473,10 @@ class _CartSheetItem extends StatelessWidget {
                 const SizedBox(height: 4),
                 Text(
                   '¥${item.unitPrice.toStringAsFixed(2)}',
-                  style: const TextStyle(color: warmOrange, fontWeight: FontWeight.bold),
+                  style: const TextStyle(
+                    color: warmOrange,
+                    fontWeight: FontWeight.bold,
+                  ),
                 ),
               ],
             ),
@@ -1409,32 +1598,28 @@ class _SquareImage extends StatelessWidget {
       ),
       child: imageUrl?.isNotEmpty == true
           ? Image.network(
-        resolveCustomerImageUrl(imageUrl!),
-        fit: BoxFit.cover,
-        loadingBuilder: (context, child, progress) {
-          if (progress == null) {
-            return TweenAnimationBuilder<double>(
-              tween: Tween(begin: 0.0, end: 1.0),
-              duration: const Duration(milliseconds: 300),
-              builder: (context, value, child) =>
-                  Opacity(opacity: value, child: child),
-              child: child,
-            );
-          }
-          // 替换转圈动画为呼吸色块
-          return const _PulsePlaceholder();
-        },
-        errorBuilder: (_, _, _) => Icon(
-          fallbackIcon,
-          color: Colors.grey[400],
-          size: size * 0.48,
-        ),
-      )
-          : Icon(
-        fallbackIcon,
-        color: Colors.grey[400],
-        size: size * 0.48,
-      ),
+              resolveCustomerImageUrl(imageUrl!),
+              fit: BoxFit.cover,
+              loadingBuilder: (context, child, progress) {
+                if (progress == null) {
+                  return TweenAnimationBuilder<double>(
+                    tween: Tween(begin: 0.0, end: 1.0),
+                    duration: const Duration(milliseconds: 300),
+                    builder: (context, value, child) =>
+                        Opacity(opacity: value, child: child),
+                    child: child,
+                  );
+                }
+                // 替换转圈动画为呼吸色块
+                return const _PulsePlaceholder();
+              },
+              errorBuilder: (_, _, _) => Icon(
+                fallbackIcon,
+                color: Colors.grey[400],
+                size: size * 0.48,
+              ),
+            )
+          : Icon(fallbackIcon, color: Colors.grey[400], size: size * 0.48),
     );
   }
 }
@@ -1516,7 +1701,11 @@ class _MenuSkeleton extends StatelessWidget {
                   children: [
                     Container(height: 20, width: 150, color: skeletonColor),
                     const SizedBox(height: 10),
-                    Container(height: 14, width: double.infinity, color: skeletonColor),
+                    Container(
+                      height: 14,
+                      width: double.infinity,
+                      color: skeletonColor,
+                    ),
                     const SizedBox(height: 4),
                     Container(height: 14, width: 200, color: skeletonColor),
                   ],
@@ -1537,18 +1726,18 @@ class _MenuSkeleton extends StatelessWidget {
                 child: Column(
                   children: List.generate(
                     6,
-                        (index) => Container(
+                    (index) => Container(
                       height: 50,
                       margin: const EdgeInsets.only(bottom: 2),
                       color: index == 0 ? Colors.white : Colors.transparent,
                       child: index == 0
                           ? Center(
-                        child: Container(
-                          height: 14,
-                          width: 40,
-                          color: skeletonColor,
-                        ),
-                      )
+                              child: Container(
+                                height: 14,
+                                width: 40,
+                                color: skeletonColor,
+                              ),
+                            )
                           : null,
                     ),
                   ),
@@ -1566,7 +1755,7 @@ class _MenuSkeleton extends StatelessWidget {
                       const SizedBox(height: 16),
                       ...List.generate(
                         4,
-                            (index) => Padding(
+                        (index) => Padding(
                           padding: const EdgeInsets.only(bottom: 24),
                           child: Row(
                             crossAxisAlignment: CrossAxisAlignment.start,
@@ -1584,13 +1773,29 @@ class _MenuSkeleton extends StatelessWidget {
                                 child: Column(
                                   crossAxisAlignment: CrossAxisAlignment.start,
                                   children: [
-                                    Container(height: 16, width: 120, color: skeletonColor),
+                                    Container(
+                                      height: 16,
+                                      width: 120,
+                                      color: skeletonColor,
+                                    ),
                                     const SizedBox(height: 8),
-                                    Container(height: 12, width: double.infinity, color: skeletonColor),
+                                    Container(
+                                      height: 12,
+                                      width: double.infinity,
+                                      color: skeletonColor,
+                                    ),
                                     const SizedBox(height: 4),
-                                    Container(height: 12, width: 150, color: skeletonColor),
+                                    Container(
+                                      height: 12,
+                                      width: 150,
+                                      color: skeletonColor,
+                                    ),
                                     const SizedBox(height: 12),
-                                    Container(height: 16, width: 60, color: skeletonColor),
+                                    Container(
+                                      height: 16,
+                                      width: 60,
+                                      color: skeletonColor,
+                                    ),
                                   ],
                                 ),
                               ),

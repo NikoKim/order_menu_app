@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:convert';
 
 import 'package:flutter/material.dart';
 
@@ -6,6 +7,7 @@ import '../main.dart';
 import '../models.dart';
 import '../services/api_client.dart';
 import '../services/customer_websocket_service.dart';
+import '../widgets/app_notice.dart';
 
 class MessageCenterPage extends StatefulWidget {
   const MessageCenterPage({super.key});
@@ -37,7 +39,9 @@ class _MessageCenterPageState extends State<MessageCenterPage> {
   void _reload() {
     final api = _api;
     if (api == null || !mounted) return;
-    setState(() => _notificationsFuture = api.notifications());
+    setState(() {
+      _notificationsFuture = api.notifications();
+    });
   }
 
   Future<void> _markAllRead() async {
@@ -48,9 +52,7 @@ class _MessageCenterPageState extends State<MessageCenterPage> {
       _reload();
     } on ApiException catch (error) {
       if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text(error.message)),
-        );
+        AppNotice.show(context, error.message);
       }
     }
   }
@@ -62,10 +64,39 @@ class _MessageCenterPageState extends State<MessageCenterPage> {
       _reload();
     } on ApiException catch (error) {
       if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text(error.message)),
-        );
+        AppNotice.show(context, error.message);
       }
+    }
+  }
+
+  int? _conversationId(UserNotification notification) {
+    try {
+      final payload =
+          jsonDecode(notification.payload ?? '') as Map<String, dynamic>;
+      final value = payload['conversationId'];
+      return value is num ? value.toInt() : int.tryParse('$value');
+    } catch (_) {
+      return null;
+    }
+  }
+
+  Future<void> _handleInvitation(
+    UserNotification notification,
+    bool accept,
+  ) async {
+    final id = _conversationId(notification);
+    if (id == null || _api == null) return;
+    try {
+      if (accept) {
+        await _api!.acceptFamilyGroupInvitation(id);
+      } else {
+        await _api!.declineFamilyGroupInvitation(id);
+      }
+      await _api!.markNotificationRead(notification.id);
+      if (mounted) AppNotice.show(context, accept ? '已加入家庭群聊' : '已拒绝群聊邀请');
+      _reload();
+    } on ApiException catch (error) {
+      if (mounted) AppNotice.show(context, error.message);
     }
   }
 
@@ -166,6 +197,22 @@ class _MessageCenterPageState extends State<MessageCenterPage> {
                     children: [
                       const SizedBox(height: 3),
                       Text(notification.content),
+                      if (notification.type == 'FAMILY_GROUP_INVITE' &&
+                          notification.isUnread)
+                        Row(
+                          children: [
+                            TextButton(
+                              onPressed: () =>
+                                  _handleInvitation(notification, false),
+                              child: const Text('暂不加入'),
+                            ),
+                            FilledButton(
+                              onPressed: () =>
+                                  _handleInvitation(notification, true),
+                              child: const Text('加入群聊'),
+                            ),
+                          ],
+                        ),
                       const SizedBox(height: 4),
                       Text(
                         _formatNotificationTime(notification.createdAt),

@@ -4,6 +4,7 @@ import '../app_mock_data.dart';
 import '../models.dart';
 import '../services/api_client.dart';
 import '../widgets/app_footer.dart';
+import '../widgets/app_notice.dart';
 
 class CheckoutPage extends StatefulWidget {
   const CheckoutPage({
@@ -42,15 +43,11 @@ class _CheckoutPageState extends State<CheckoutPage> {
         remark: _remarkController.text.trim(),
       );
       if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('订单已提交：${result['orderNo'] ?? ''}')),
-      );
+      AppNotice.show(context, '订单已提交：${result['orderNo'] ?? ''}');
       Navigator.of(context).pop(true);
     } catch (error) {
       if (!mounted) return;
-      ScaffoldMessenger.of(
-        context,
-      ).showSnackBar(SnackBar(content: Text(error.toString())));
+      AppNotice.show(context, error.toString());
     } finally {
       if (mounted) setState(() => _submitting = false);
     }

@@ -8,6 +8,7 @@ import jakarta.validation.Valid;
 import java.util.List;
 import lombok.RequiredArgsConstructor;
 import org.springframework.web.bind.annotation.GetMapping;
+import org.springframework.web.bind.annotation.DeleteMapping;
 import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.PutMapping;
@@ -69,11 +70,40 @@ public class MessageController {
         return ApiResponse.success(messageService.messages(UserContext.get().userId(), conversationId));
     }
 
+    @GetMapping("/blocks/users/{userId}")
+    public ApiResponse<MessageDtos.ChatBlockResponse> chatBlock(@PathVariable Long userId) {
+        return ApiResponse.success(messageService.chatBlock(UserContext.get().userId(), userId));
+    }
+
+    @PostMapping("/blocks/users/{userId}")
+    public ApiResponse<Void> blockUser(@PathVariable Long userId) {
+        messageService.blockUser(UserContext.get().userId(), userId);
+        return ApiResponse.success();
+    }
+
+    @DeleteMapping("/blocks/users/{userId}")
+    public ApiResponse<Void> unblockUser(@PathVariable Long userId) {
+        messageService.unblockUser(UserContext.get().userId(), userId);
+        return ApiResponse.success();
+    }
+
     @PostMapping("/conversations/{conversationId}/messages")
     public ApiResponse<MessageDtos.ChatMessageResponse> sendMessage(
             @PathVariable Long conversationId,
             @Valid @RequestBody MessageDtos.SendMessageRequest request) {
         return ApiResponse.success(messageService.sendMessage(UserContext.get().userId(), conversationId, request));
+    }
+
+    @PostMapping("/conversations/{conversationId}/messages/{messageId}/recall")
+    public ApiResponse<MessageDtos.ChatMessageResponse> recallMessage(
+            @PathVariable Long conversationId, @PathVariable Long messageId) {
+        return ApiResponse.success(messageService.recallMessage(UserContext.get().userId(), conversationId, messageId));
+    }
+
+    @DeleteMapping("/conversations/{conversationId}/messages/{messageId}")
+    public ApiResponse<Void> deleteMessage(@PathVariable Long conversationId, @PathVariable Long messageId) {
+        messageService.deleteMessage(UserContext.get().userId(), conversationId, messageId);
+        return ApiResponse.success();
     }
 
     @PostMapping("/family-groups")
@@ -120,6 +150,26 @@ public class MessageController {
         return ApiResponse.success();
     }
 
+    @PostMapping("/family-groups/{conversationId}/decline-membership")
+    public ApiResponse<Void> declineFamilyGroupMembership(@PathVariable Long conversationId) {
+        messageService.declineFamilyGroupMembership(UserContext.get().userId(), conversationId);
+        return ApiResponse.success();
+    }
+
+    @PostMapping("/family-groups/{conversationId}/members/{userId}/approve")
+    public ApiResponse<Void> approveFamilyGroupMember(
+            @PathVariable Long conversationId, @PathVariable Long userId) {
+        messageService.approveFamilyGroupMember(UserContext.get().userId(), conversationId, userId);
+        return ApiResponse.success();
+    }
+
+    @PostMapping("/family-groups/{conversationId}/members/{userId}/reject")
+    public ApiResponse<Void> rejectFamilyGroupMember(
+            @PathVariable Long conversationId, @PathVariable Long userId) {
+        messageService.rejectFamilyGroupMember(UserContext.get().userId(), conversationId, userId);
+        return ApiResponse.success();
+    }
+
     @PostMapping("/family-groups/{conversationId}/leave")
     public ApiResponse<Void> leaveFamilyGroup(@PathVariable Long conversationId) {
         messageService.leaveFamilyGroup(UserContext.get().userId(), conversationId);
@@ -143,5 +193,11 @@ public class MessageController {
     @PostMapping("/dish-shares")
     public ApiResponse<MessageDtos.ChatMessageResponse> shareDish(@Valid @RequestBody MessageDtos.ShareDishRequest request) {
         return ApiResponse.success(messageService.shareDish(UserContext.get().userId(), request));
+    }
+
+    @PostMapping("/order-shares")
+    public ApiResponse<MessageDtos.ChatMessageResponse> shareOrder(
+            @Valid @RequestBody MessageDtos.ShareOrderRequest request) {
+        return ApiResponse.success(messageService.shareOrder(UserContext.get().userId(), request));
     }
 }

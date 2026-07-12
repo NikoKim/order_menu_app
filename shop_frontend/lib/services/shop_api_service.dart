@@ -125,15 +125,33 @@ class ShopApiService {
 
   Future<ChatMessage> sendChatMessage(
     int conversationId,
-    String content,
-  ) async {
+    String content, {
+    int? quotedMessageId,
+  }) async {
     final data = await _request<Map<String, dynamic>>(
       'POST',
       '/messages/conversations/$conversationId/messages',
-      body: {'content': content.trim()},
+      body: {'content': content.trim(), 'quotedMessageId': quotedMessageId},
     );
     return ChatMessage.fromJson(data);
   }
+
+  Future<ChatMessage> recallChatMessage(
+    int conversationId,
+    int messageId,
+  ) async {
+    final data = await _request<Map<String, dynamic>>(
+      'POST',
+      '/messages/conversations/$conversationId/messages/$messageId/recall',
+    );
+    return ChatMessage.fromJson(data);
+  }
+
+  Future<void> deleteChatMessage(int conversationId, int messageId) =>
+      _request<void>(
+        'DELETE',
+        '/messages/conversations/$conversationId/messages/$messageId',
+      );
 
   Future<FamilyGroup> createFamilyGroup() async {
     final data = await _request<Map<String, dynamic>>(
@@ -156,6 +174,7 @@ class ShopApiService {
     String? name,
     String? announcement,
     String? coverImageUrl,
+    bool? joinApprovalRequired,
   }) async {
     final data = await _request<Map<String, dynamic>>(
       'PUT',
@@ -164,6 +183,7 @@ class ShopApiService {
         'name': name,
         'announcement': announcement,
         'coverImageUrl': coverImageUrl,
+        'joinApprovalRequired': joinApprovalRequired,
       },
     );
     return FamilyGroup.fromJson(data);
@@ -180,6 +200,16 @@ class ShopApiService {
         'POST',
         '/messages/family-groups/$conversationId/members/$userId/remove',
       );
+  Future<void> approveFamilyGroupMember(int conversationId, int userId) =>
+      _request<void>(
+        'POST',
+        '/messages/family-groups/$conversationId/members/$userId/approve',
+      );
+  Future<void> rejectFamilyGroupMember(int conversationId, int userId) =>
+      _request<void>(
+        'POST',
+        '/messages/family-groups/$conversationId/members/$userId/reject',
+      );
   Future<void> setFamilyGroupMuted(int conversationId, bool muted) =>
       _request<void>(
         'PUT',
@@ -188,18 +218,43 @@ class ShopApiService {
       );
 
   Future<List<UserNotification>> fetchMessageNotifications() async {
-    final data = await _request<List<dynamic>>(
+    final data = await _request<Map<String, dynamic>>(
       'GET',
       '/messages/notifications',
     );
-    return data
+    return (data['notifications'] as List? ?? const [])
         .whereType<Map<String, dynamic>>()
         .map(UserNotification.fromJson)
         .toList();
   }
 
+  Future<int> fetchUnreadMessageNotificationCount() async {
+    final data = await _request<dynamic>(
+      'GET',
+      '/messages/notifications/unread-count',
+    );
+    return data is num ? data.toInt() : int.tryParse('$data') ?? 0;
+  }
+
   Future<void> markAllMessageNotificationsRead() =>
       _request<void>('PUT', '/messages/notifications/read-all');
+
+  Future<void> markMessageNotificationRead(int notificationId) =>
+      _request<void>('PUT', '/messages/notifications/$notificationId/read');
+
+  Future<ChatBlockState> fetchChatBlock(int userId) async {
+    final data = await _request<Map<String, dynamic>>(
+      'GET',
+      '/messages/blocks/users/$userId',
+    );
+    return ChatBlockState.fromJson(data);
+  }
+
+  Future<void> blockChatUser(int userId) =>
+      _request<void>('POST', '/messages/blocks/users/$userId');
+
+  Future<void> unblockChatUser(int userId) =>
+      _request<void>('DELETE', '/messages/blocks/users/$userId');
 
   Future<ShopInfo> fetchMyShop() async {
     final data = await _request<Map<String, dynamic>>('GET', '/shop/me');

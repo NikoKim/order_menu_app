@@ -10,15 +10,23 @@ import com.order.menu.module.family.entity.FamilyMember;
 import com.order.menu.module.family.mapper.FamilyMemberMapper;
 import com.order.menu.module.message.dto.MessageDtos;
 import com.order.menu.module.message.entity.ChatMessage;
+import com.order.menu.module.message.entity.ChatBlock;
+import com.order.menu.module.message.entity.ChatMessageDeletion;
 import com.order.menu.module.message.entity.Conversation;
 import com.order.menu.module.message.entity.ConversationMember;
 import com.order.menu.module.message.entity.UserNotification;
 import com.order.menu.module.message.mapper.ChatMessageMapper;
+import com.order.menu.module.message.mapper.ChatBlockMapper;
+import com.order.menu.module.message.mapper.ChatMessageDeletionMapper;
 import com.order.menu.module.message.mapper.ConversationMapper;
 import com.order.menu.module.message.mapper.ConversationMemberMapper;
 import com.order.menu.module.message.mapper.UserNotificationMapper;
 import com.order.menu.module.shop.entity.Shop;
 import com.order.menu.module.shop.mapper.ShopMapper;
+import com.order.menu.module.order.entity.Order;
+import com.order.menu.module.order.entity.OrderItem;
+import com.order.menu.module.order.mapper.OrderMapper;
+import com.order.menu.module.order.mapper.OrderItemMapper;
 import com.order.menu.module.user.entity.User;
 import com.order.menu.module.user.mapper.UserMapper;
 import com.order.menu.websocket.WsPushService;
@@ -26,7 +34,13 @@ import java.time.LocalDateTime;
 import java.util.Comparator;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
+import java.util.HashSet;
+import com.fasterxml.jackson.core.JsonProcessingException;
+import com.fasterxml.jackson.core.type.TypeReference;
+import com.fasterxml.jackson.databind.ObjectMapper;
 import lombok.RequiredArgsConstructor;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Service;
 import org.springframework.dao.DuplicateKeyException;
 import org.springframework.transaction.annotation.Transactional;
@@ -35,22 +49,43 @@ import org.springframework.transaction.support.TransactionSynchronizationManager
 import org.springframework.util.StringUtils;
 
 @Service
-@RequiredArgsConstructor
+@RequiredArgsConstructor(onConstructor_ = {@Autowired})
 public class MessageService {
     private static final String DIRECT = "DIRECT";
     private static final String FAMILY_GROUP = "FAMILY_GROUP";
     private static final String ACTIVE = "ACTIVE";
     private static final String PENDING = "PENDING";
+    private static final String DELIVERED = "DELIVERED";
+    private static final String FAILED_BLOCKED = "FAILED_BLOCKED";
+    private static final String BLOCKED_MESSAGE = "对方已将您拉黑，无法发送消息";
+    private static final ObjectMapper JSON = new ObjectMapper();
 
     private final ConversationMapper conversationMapper;
     private final ConversationMemberMapper conversationMemberMapper;
     private final ChatMessageMapper chatMessageMapper;
+    private final ChatMessageDeletionMapper chatMessageDeletionMapper;
+    private final ChatBlockMapper chatBlockMapper;
     private final UserMapper userMapper;
     private final ShopMapper shopMapper;
     private final FamilyMemberMapper familyMemberMapper;
     private final DishMapper dishMapper;
+    private final OrderMapper orderMapper;
+    private final OrderItemMapper orderItemMapper;
     private final UserNotificationMapper userNotificationMapper;
     private final WsPushService wsPushService;
+
+    public MessageService(ConversationMapper conversationMapper,
+                          ConversationMemberMapper conversationMemberMapper,
+                          ChatMessageMapper chatMessageMapper,
+                          UserMapper userMapper,
+                          ShopMapper shopMapper,
+                          FamilyMemberMapper familyMemberMapper,
+                          DishMapper dishMapper,
+                          UserNotificationMapper userNotificationMapper,
+                          WsPushService wsPushService) {
+        this(conversationMapper, conversationMemberMapper, chatMessageMapper, null, null, userMapper, shopMapper,
+                familyMemberMapper, dishMapper, null, null, userNotificationMapper, wsPushService);
+    }
 
     @Transactional
     public MessageDtos.NotificationResponse createNotification(Long userId, String type, String title,
@@ -64,8 +99,10 @@ public class MessageService {
         notification.setCreatedAt(LocalDateTime.now());
         userNotificationMapper.insert(notification);
         long unreadCount = unreadCount(userId);
-        wsPushService.pushToUser(userId, "NOTIFICATION", "CREATED", Map.of(
-                "notificationId", notification.getId(), "unreadCount", unreadCount));
+        Map<String, Object> pushData = new java.util.HashMap<>();
+        if (notification.getId() != null) pushData.put("notificationId", notification.getId());
+        pushData.put("unreadCount", unreadCount);
+        wsPushService.pushToUser(userId, "NOTIFICATION", "CREATED", pushData);
         return toNotificationResponse(notification);
     }
 
@@ -74,7 +111,7 @@ public class MessageService {
                                                                      String content, String payload) {
         Shop shop = shopMapper.selectById(shopId);
         if (shop == null || shop.getOwnerUserId() == null) {
-            throw new BusinessException(ErrorCode.NOT_FOUND, "Shop not found");
+            throw new BusinessException(ErrorCode.NOT_FOUND, "店铺不存在");
         }
         return createNotification(shop.getOwnerUserId(), type, title, content, payload);
     }
@@ -102,7 +139,7 @@ public class MessageService {
     public void markNotificationRead(Long userId, Long notificationId) {
         UserNotification notification = userNotificationMapper.selectById(notificationId);
         if (notification == null || !userId.equals(notification.getUserId())) {
-            throw new BusinessException(ErrorCode.NOT_FOUND, "Notification not found");
+            throw new BusinessException(ErrorCode.NOT_FOUND, "通知不存在");
         }
         if (notification.getReadAt() == null) {
             notification.setReadAt(LocalDateTime.now());
@@ -128,7 +165,7 @@ public class MessageService {
                 .eq(FamilyMember::getShopId, shop.getId())
                 .eq(FamilyMember::getStatus, "APPROVED"));
         if (approvedCount == null || approvedCount < 2) {
-            throw new BusinessException(ErrorCode.CONFLICT, "At least two approved family members are required");
+            throw new BusinessException(ErrorCode.CONFLICT, "至少需要两名已通过的家庭成员");
         }
         Conversation existing = familyConversationForShop(shop.getId());
         if (existing != null) {
@@ -149,7 +186,7 @@ public class MessageService {
             if (concurrentConversation != null) {
                 return toFamilyGroupResponse(concurrentConversation);
             }
-            throw new BusinessException(ErrorCode.CONFLICT, "A family group is being created");
+            throw new BusinessException(ErrorCode.CONFLICT, "家庭群聊正在创建，请稍后重试");
         }
         insertMember(conversation.getId(), ownerUserId, "OWNER");
         familyMemberMapper.selectList(new LambdaQueryWrapper<FamilyMember>()
@@ -168,7 +205,7 @@ public class MessageService {
     public MessageDtos.FamilyGroupResponse familyGroupByShop(Long userId, Long shopId) {
         Conversation conversation = familyConversationForShop(shopId);
         if (conversation == null) {
-            throw new BusinessException(ErrorCode.NOT_FOUND, "Family group not found");
+            throw new BusinessException(ErrorCode.NOT_FOUND, "家庭群聊不存在");
         }
         if (!userId.equals(conversation.getOwnerUserId())) {
             requireApprovedFamilyMember(userId, shopId);
@@ -188,6 +225,9 @@ public class MessageService {
         }
         if (request.announcement() != null) {
             conversation.setAnnouncement(trimToNull(request.announcement()));
+        }
+        if (request.joinApprovalRequired() != null) {
+            conversation.setJoinApprovalRequired(request.joinApprovalRequired());
         }
         conversationMapper.updateById(conversation);
         pushConversationUpdated(conversationId);
@@ -222,40 +262,87 @@ public class MessageService {
     public void approveFamilyGroupMembership(Long userId, Long conversationId) {
         Conversation conversation = requireFamilyGroupConversation(conversationId);
         if (!ACTIVE.equals(conversation.getStatus())) {
-            throw new BusinessException(ErrorCode.FORBIDDEN, "This family group is no longer active");
+            throw new BusinessException(ErrorCode.FORBIDDEN, "该家庭群聊已不可用");
         }
         requireApprovedFamilyMember(userId, conversation.getShopId());
         ConversationMember member = member(conversationId, userId);
         if (member == null || !PENDING.equals(member.getMemberStatus())) {
-            throw new BusinessException(ErrorCode.CONFLICT, "No pending family group invitation");
+            throw new BusinessException(ErrorCode.CONFLICT, "当前没有待处理的群聊邀请");
         }
         member.setMemberStatus(ACTIVE);
         member.setJoinedAt(LocalDateTime.now());
         member.setLeftAt(null);
         conversationMemberMapper.updateById(member);
+        insertSystemMessage(conversation, userId, displayName(userId) + "加入了群聊");
         pushMemberUpdated(conversationId, userId);
+    }
+
+    @Transactional
+    public void declineFamilyGroupMembership(Long userId, Long conversationId) {
+        requireFamilyGroupConversation(conversationId);
+        ConversationMember member = member(conversationId, userId);
+        if (member == null || !PENDING.equals(member.getMemberStatus())) {
+            throw new BusinessException(ErrorCode.CONFLICT, "当前没有待处理的群聊邀请");
+        }
+        markMemberLeft(member, "LEFT");
+        pushMemberUpdated(conversationId, userId);
+    }
+
+    @Transactional
+    public void approveFamilyGroupMember(Long ownerUserId, Long conversationId, Long memberUserId) {
+        Conversation conversation = requireOwnedFamilyGroup(ownerUserId, conversationId);
+        ConversationMember member = member(conversationId, memberUserId);
+        if (member == null || !PENDING.equals(member.getMemberStatus())) {
+            throw new BusinessException(ErrorCode.CONFLICT, "该成员不在待审核状态");
+        }
+        member.setMemberStatus(ACTIVE);
+        member.setJoinedAt(LocalDateTime.now());
+        member.setLeftAt(null);
+        conversationMemberMapper.updateById(member);
+        insertSystemMessage(conversation, memberUserId, displayName(memberUserId) + "加入了群聊");
+        createNotification(memberUserId, "FAMILY_GROUP_APPROVED", "群聊申请已通过",
+                "商家已同意你加入“" + conversation.getName() + "”", familyGroupPayload(conversationId));
+        pushMemberUpdated(conversationId, memberUserId);
+    }
+
+    @Transactional
+    public void rejectFamilyGroupMember(Long ownerUserId, Long conversationId, Long memberUserId) {
+        Conversation conversation = requireOwnedFamilyGroup(ownerUserId, conversationId);
+        ConversationMember member = member(conversationId, memberUserId);
+        if (member == null || !PENDING.equals(member.getMemberStatus())) {
+            throw new BusinessException(ErrorCode.CONFLICT, "该成员不在待审核状态");
+        }
+        markMemberLeft(member, "LEFT");
+        createNotification(memberUserId, "FAMILY_GROUP_REJECTED", "群聊申请未通过",
+                "商家暂未同意你加入“" + conversation.getName() + "”", familyGroupPayload(conversationId));
+        pushMemberUpdated(conversationId, memberUserId);
     }
 
     @Transactional
     public void rejoinFamilyGroup(Long userId, Long conversationId) {
         Conversation conversation = requireFamilyGroupConversation(conversationId);
         if (!ACTIVE.equals(conversation.getStatus())) {
-            throw new BusinessException(ErrorCode.FORBIDDEN, "This family group is no longer active");
+            throw new BusinessException(ErrorCode.FORBIDDEN, "该家庭群聊已不可用");
         }
         requireApprovedFamilyMember(userId, conversation.getShopId());
         ConversationMember member = member(conversationId, userId);
+        boolean needsApproval = Boolean.TRUE.equals(conversation.getJoinApprovalRequired());
         if (member == null) {
-            insertMember(conversationId, userId, "MEMBER");
+            insertMember(conversationId, userId, "MEMBER", needsApproval ? PENDING : ACTIVE);
+            if (needsApproval) notifyOwnerOfJoinRequest(conversation, userId);
+            else insertSystemMessage(conversation, userId, displayName(userId) + "加入了群聊");
             pushMemberUpdated(conversationId, userId);
             return;
         }
         if ("OWNER".equals(member.getRole())) {
-            throw new BusinessException(ErrorCode.FORBIDDEN, "The group owner cannot rejoin");
+            throw new BusinessException(ErrorCode.FORBIDDEN, "群主无需重新加入群聊");
         }
-        member.setMemberStatus(ACTIVE);
-        member.setJoinedAt(LocalDateTime.now());
+        member.setMemberStatus(needsApproval ? PENDING : ACTIVE);
+        member.setJoinedAt(needsApproval ? null : LocalDateTime.now());
         member.setLeftAt(null);
         conversationMemberMapper.updateById(member);
+        if (needsApproval) notifyOwnerOfJoinRequest(conversation, userId);
+        else insertSystemMessage(conversation, userId, displayName(userId) + "加入了群聊");
         pushMemberUpdated(conversationId, userId);
     }
 
@@ -264,9 +351,10 @@ public class MessageService {
         Conversation conversation = requireFamilyGroupMember(userId, conversationId);
         ConversationMember member = member(conversation.getId(), userId);
         if (member == null || "OWNER".equals(member.getRole())) {
-            throw new BusinessException(ErrorCode.FORBIDDEN, "The group owner cannot leave the family group");
+            throw new BusinessException(ErrorCode.FORBIDDEN, "群主不能退出家庭群聊");
         }
         markMemberLeft(member, "LEFT");
+        insertSystemMessage(conversation, userId, displayName(userId) + "退出了群聊");
         pushMemberUpdated(conversationId, userId);
     }
 
@@ -275,7 +363,7 @@ public class MessageService {
         Conversation conversation = requireOwnedFamilyGroup(ownerUserId, conversationId);
         ConversationMember member = member(conversationId, memberUserId);
         if (member == null || !ACTIVE.equals(member.getMemberStatus()) || "OWNER".equals(member.getRole())) {
-            throw new BusinessException(ErrorCode.NOT_FOUND, "Family group member not found");
+            throw new BusinessException(ErrorCode.NOT_FOUND, "群成员不存在");
         }
         requireApprovedFamilyMember(memberUserId, conversation.getShopId());
         markMemberLeft(member, "REMOVED");
@@ -294,23 +382,39 @@ public class MessageService {
     @Transactional
     public MessageDtos.ChatMessageResponse shareDish(Long userId, MessageDtos.ShareDishRequest request) {
         if (request.conversationId() == null || request.dishId() == null) {
-            throw new BusinessException(ErrorCode.BAD_REQUEST, "Conversation and dish are required");
+            throw new BusinessException(ErrorCode.BAD_REQUEST, "请选择会话和菜品");
         }
         Conversation conversation = requireConversationMember(userId, request.conversationId());
         if (!ACTIVE.equals(conversation.getStatus())) {
-            throw new BusinessException(ErrorCode.FORBIDDEN, "This conversation is no longer active");
+            throw new BusinessException(ErrorCode.FORBIDDEN, "该会话已不可用");
         }
+        boolean deliveryFailed = false;
         if (DIRECT.equals(conversation.getType())) {
+            Long recipientUserId = requireDirectRecipient(conversation, userId);
+            if (hasBlocked(userId, recipientUserId)) {
+                throw new BusinessException(ErrorCode.FORBIDDEN, "您已拉黑对方，请先取消拉黑后再分享菜品");
+            }
+            deliveryFailed = hasBlocked(recipientUserId, userId);
+        }
+        if (DIRECT.equals(conversation.getType()) && !deliveryFailed) {
             assertDirectRecipientAllowsPrivateChat(conversation, userId);
             assertDirectMessageAllowed(conversation, userId);
         }
         Dish dish = dishMapper.selectById(request.dishId());
         if (dish == null) {
-            throw new BusinessException(ErrorCode.NOT_FOUND, "Dish not found");
+            throw new BusinessException(ErrorCode.NOT_FOUND, "菜品不存在");
         }
         Shop shop = shopMapper.selectById(dish.getShopId());
         if (shop == null || shop.getStatus() == null || shop.getStatus() != 1) {
-            throw new BusinessException(ErrorCode.NOT_FOUND, "Shop not found");
+            throw new BusinessException(ErrorCode.NOT_FOUND, "店铺不存在");
+        }
+        if (DIRECT.equals(conversation.getType())) {
+            Long recipientUserId = otherDirectUserId(conversation.getDirectKey(), userId);
+            User recipient = recipientUserId == null ? null : userMapper.selectById(recipientUserId);
+            if (recipient != null && RoleConstants.SHOP.equals(recipient.getRole())
+                    && !recipientUserId.equals(shop.getOwnerUserId())) {
+                throw new BusinessException(ErrorCode.FORBIDDEN, "该店铺的菜品只能分享给对应商家");
+            }
         }
         if ("FAMILY".equals(shop.getVisibilityType())) {
             assertFamilyDishShareAllowed(userId, conversation, shop.getId());
@@ -319,8 +423,11 @@ public class MessageService {
         message.setConversationId(conversation.getId());
         message.setSenderUserId(userId);
         message.setType("DISH_SHARE");
+        message.setDeliveryStatus(deliveryFailed ? FAILED_BLOCKED : DELIVERED);
+        message.setDeliveryFailureReason(deliveryFailed ? BLOCKED_MESSAGE : null);
         message.setDishId(dish.getId());
         message.setShopId(shop.getId());
+        message.setShopName(shop.getName());
         message.setDishName(dish.getName());
         message.setDishImageUrl(dish.getImageUrl());
         message.setDishPrice(dish.getPrice());
@@ -328,10 +435,79 @@ public class MessageService {
         message.setDishSalesCount(dish.getSalesCount());
         message.setCreatedAt(LocalDateTime.now());
         chatMessageMapper.insert(message);
-        conversation.setLastMessageAt(message.getCreatedAt());
-        conversationMapper.updateById(conversation);
-        pushChatMessageCreated(conversation.getId(), message.getId());
-        pushConversationUpdated(conversation.getId());
+        if (deliveryFailed) {
+            pushChatMessageCreatedToUser(userId, conversation.getId(), message.getId());
+            pushConversationUpdatedToUser(userId, conversation.getId());
+        } else {
+            conversation.setLastMessageAt(message.getCreatedAt());
+            conversationMapper.updateById(conversation);
+            pushChatMessageCreated(conversation.getId(), message.getId());
+            pushConversationUpdated(conversation.getId());
+        }
+        return toMessageResponse(message);
+    }
+
+    @Transactional
+    public MessageDtos.ChatMessageResponse shareOrder(Long userId, MessageDtos.ShareOrderRequest request) {
+        if (request.conversationId() == null || request.orderId() == null) {
+            throw new BusinessException(ErrorCode.BAD_REQUEST, "请选择会话和订单");
+        }
+        Conversation conversation = requireConversationMember(userId, request.conversationId());
+        if (!ACTIVE.equals(conversation.getStatus())) {
+            throw new BusinessException(ErrorCode.FORBIDDEN, "该会话已不可用");
+        }
+        Order order = orderMapper.selectById(request.orderId());
+        if (order == null) {
+            throw new BusinessException(ErrorCode.NOT_FOUND, "订单不存在");
+        }
+        if (!userId.equals(order.getCustomerUserId())) {
+            throw new BusinessException(ErrorCode.FORBIDDEN, "只能分享自己的订单");
+        }
+        boolean deliveryFailed = false;
+        if (DIRECT.equals(conversation.getType())) {
+            Long recipientUserId = requireDirectRecipient(conversation, userId);
+            if (hasBlocked(userId, recipientUserId)) {
+                throw new BusinessException(ErrorCode.FORBIDDEN, "您已拉黑对方，请先取消拉黑后再分享订单");
+            }
+            deliveryFailed = hasBlocked(recipientUserId, userId);
+            if (!deliveryFailed) {
+                assertDirectRecipientAllowsPrivateChat(conversation, userId);
+                assertDirectMessageAllowed(conversation, userId);
+            }
+        }
+        Shop shop = shopMapper.selectById(order.getShopId());
+        List<MessageDtos.OrderShareItemResponse> items = orderItemMapper.selectList(
+                        new LambdaQueryWrapper<OrderItem>().eq(OrderItem::getOrderId, order.getId()).orderByAsc(OrderItem::getId))
+                .stream()
+                .map(item -> new MessageDtos.OrderShareItemResponse(item.getDishName(), item.getDishImageUrl(),
+                        item.getUnitPrice(), item.getQuantity(), item.getSubtotalAmount(), item.getSelectedOptions()))
+                .toList();
+
+        ChatMessage message = new ChatMessage();
+        message.setConversationId(conversation.getId());
+        message.setSenderUserId(userId);
+        message.setType("ORDER_SHARE");
+        message.setDeliveryStatus(deliveryFailed ? FAILED_BLOCKED : DELIVERED);
+        message.setDeliveryFailureReason(deliveryFailed ? BLOCKED_MESSAGE : null);
+        message.setOrderId(order.getId());
+        message.setOrderNo(order.getOrderNo());
+        message.setOrderCreatedAt(order.getCreatedAt());
+        message.setOrderStatus(order.getStatus());
+        message.setOrderShopName(shop == null ? null : shop.getName());
+        message.setOrderItemsJson(writeOrderItems(items));
+        message.setOrderTotalAmount(order.getTotalAmount());
+        message.setOrderRemark(order.getRemark());
+        message.setCreatedAt(LocalDateTime.now());
+        chatMessageMapper.insert(message);
+        if (deliveryFailed) {
+            pushChatMessageCreatedToUser(userId, conversation.getId(), message.getId());
+            pushConversationUpdatedToUser(userId, conversation.getId());
+        } else {
+            conversation.setLastMessageAt(message.getCreatedAt());
+            conversationMapper.updateById(conversation);
+            pushChatMessageCreated(conversation.getId(), message.getId());
+            pushConversationUpdated(conversation.getId());
+        }
         return toMessageResponse(message);
     }
 
@@ -381,7 +557,7 @@ public class MessageService {
         requireEnabledUser(requesterUserId);
         Shop shop = shopMapper.selectById(shopId);
         if (shop == null || shop.getStatus() == null || shop.getStatus() != 1 || shop.getOwnerUserId() == null) {
-            throw new BusinessException(ErrorCode.NOT_FOUND, "Shop not found");
+            throw new BusinessException(ErrorCode.NOT_FOUND, "店铺不存在");
         }
         return resolveDirectConversation(requesterUserId, shop.getOwnerUserId());
     }
@@ -412,36 +588,73 @@ public class MessageService {
         return conversationMapper.selectBatchIds(conversationIds).stream()
                 .filter(conversation -> ACTIVE.equals(conversation.getStatus())
                         || (FAMILY_GROUP.equals(conversation.getType()) && "DISSOLVED".equals(conversation.getStatus())))
-                .sorted(Comparator.comparing(Conversation::getLastMessageAt,
-                        Comparator.nullsLast(Comparator.reverseOrder())))
                 .map(conversation -> toConversationResponse(conversation, userId))
+                .sorted(Comparator.comparing(MessageDtos.ConversationResponse::lastMessageAt,
+                        Comparator.nullsLast(Comparator.reverseOrder())))
                 .toList();
     }
 
     public MessageDtos.ConversationMessagesResponse messages(Long userId, Long conversationId) {
         Conversation conversation = requireConversationMember(userId, conversationId);
-        List<ChatMessage> entities = chatMessageMapper.selectList(new LambdaQueryWrapper<ChatMessage>()
+        List<ChatMessage> allEntities = chatMessageMapper.selectList(new LambdaQueryWrapper<ChatMessage>()
                         .eq(ChatMessage::getConversationId, conversationId)
                         .orderByAsc(ChatMessage::getCreatedAt)
                         .orderByAsc(ChatMessage::getId));
-        markConversationRead(userId, conversationId, entities);
+        markConversationRead(userId, conversationId, allEntities);
+        List<ChatMessage> entities = visibleMessages(userId, allEntities);
         List<MessageDtos.ChatMessageResponse> messages = entities.stream()
                 .map(this::toMessageResponse)
                 .toList();
         return new MessageDtos.ConversationMessagesResponse(toConversationResponse(conversation, userId), messages);
     }
 
+    public MessageDtos.ChatBlockResponse chatBlock(Long userId, Long otherUserId) {
+        requireBlockTarget(userId, otherUserId);
+        return new MessageDtos.ChatBlockResponse(otherUserId,
+                hasBlocked(userId, otherUserId), hasBlocked(otherUserId, userId));
+    }
+
+    @Transactional
+    public void blockUser(Long userId, Long otherUserId) {
+        requireBlockTarget(userId, otherUserId);
+        if (!hasBlocked(userId, otherUserId)) {
+            ChatBlock block = new ChatBlock();
+            block.setBlockerUserId(userId);
+            block.setBlockedUserId(otherUserId);
+            block.setCreatedAt(LocalDateTime.now());
+            chatBlockMapper.insert(block);
+        }
+        pushBlockChanged(userId, otherUserId);
+    }
+
+    @Transactional
+    public void unblockUser(Long userId, Long otherUserId) {
+        requireBlockTarget(userId, otherUserId);
+        chatBlockMapper.delete(new LambdaQueryWrapper<ChatBlock>()
+                .eq(ChatBlock::getBlockerUserId, userId)
+                .eq(ChatBlock::getBlockedUserId, otherUserId));
+        pushBlockChanged(userId, otherUserId);
+    }
+
     @Transactional
     public MessageDtos.ChatMessageResponse sendMessage(Long userId, Long conversationId, MessageDtos.SendMessageRequest request) {
         Conversation conversation = requireConversationMember(userId, conversationId);
         if (!ACTIVE.equals(conversation.getStatus())) {
-            throw new BusinessException(ErrorCode.FORBIDDEN, "This conversation is no longer active");
+            throw new BusinessException(ErrorCode.FORBIDDEN, "该会话已不可用");
         }
         String content = request.content().trim();
         if (!StringUtils.hasText(content)) {
-            throw new BusinessException(ErrorCode.BAD_REQUEST, "Message content must not be blank");
+            throw new BusinessException(ErrorCode.BAD_REQUEST, "消息内容不能为空");
         }
+        boolean deliveryFailed = false;
         if (DIRECT.equals(conversation.getType())) {
+            Long recipientUserId = requireDirectRecipient(conversation, userId);
+            if (hasBlocked(userId, recipientUserId)) {
+                throw new BusinessException(ErrorCode.FORBIDDEN, "您已拉黑对方，请先取消拉黑后再发送消息");
+            }
+            deliveryFailed = hasBlocked(recipientUserId, userId);
+        }
+        if (DIRECT.equals(conversation.getType()) && !deliveryFailed) {
             assertDirectRecipientAllowsPrivateChat(conversation, userId);
             assertDirectMessageAllowed(conversation, userId);
         }
@@ -451,24 +664,75 @@ public class MessageService {
         message.setSenderUserId(userId);
         message.setType("TEXT");
         message.setContent(content);
+        message.setDeliveryStatus(deliveryFailed ? FAILED_BLOCKED : DELIVERED);
+        message.setDeliveryFailureReason(deliveryFailed ? BLOCKED_MESSAGE : null);
+        applyQuote(message, request.quotedMessageId(), conversationId);
         message.setCreatedAt(LocalDateTime.now());
         chatMessageMapper.insert(message);
 
-        conversation.setLastMessageAt(message.getCreatedAt());
-        conversationMapper.updateById(conversation);
-        pushChatMessageCreated(conversation.getId(), message.getId());
-        pushConversationUpdated(conversation.getId());
+        if (deliveryFailed) {
+            pushChatMessageCreatedToUser(userId, conversation.getId(), message.getId());
+            pushConversationUpdatedToUser(userId, conversation.getId());
+        } else {
+            conversation.setLastMessageAt(message.getCreatedAt());
+            conversationMapper.updateById(conversation);
+            pushChatMessageCreated(conversation.getId(), message.getId());
+            pushConversationUpdated(conversation.getId());
+        }
         return toMessageResponse(message);
+    }
+
+    @Transactional
+    public MessageDtos.ChatMessageResponse recallMessage(Long userId, Long conversationId, Long messageId) {
+        requireConversationMember(userId, conversationId);
+        ChatMessage message = chatMessageMapper.selectById(messageId);
+        if (message == null || !conversationId.equals(message.getConversationId())) {
+            throw new BusinessException(ErrorCode.NOT_FOUND, "消息不存在");
+        }
+        if (!userId.equals(message.getSenderUserId())) {
+            throw new BusinessException(ErrorCode.FORBIDDEN, "只能撤回自己发送的消息");
+        }
+        if (message.getRecalledAt() != null) {
+            throw new BusinessException(ErrorCode.CONFLICT, "该消息已经撤回");
+        }
+        if (message.getCreatedAt() == null || message.getCreatedAt().plusMinutes(3).isBefore(LocalDateTime.now())) {
+            throw new BusinessException(ErrorCode.FORBIDDEN, "消息发送超过3分钟，无法撤回");
+        }
+        message.setRecalledAt(LocalDateTime.now());
+        chatMessageMapper.updateById(message);
+        pushMessageChanged(conversationId, messageId, "MESSAGE_UPDATED", null);
+        pushConversationUpdated(conversationId);
+        return toMessageResponse(message);
+    }
+
+    @Transactional
+    public void deleteMessage(Long userId, Long conversationId, Long messageId) {
+        requireConversationMember(userId, conversationId);
+        ChatMessage message = chatMessageMapper.selectById(messageId);
+        if (message == null || !conversationId.equals(message.getConversationId())) {
+            throw new BusinessException(ErrorCode.NOT_FOUND, "消息不存在");
+        }
+        Long existing = chatMessageDeletionMapper.selectCount(new LambdaQueryWrapper<ChatMessageDeletion>()
+                .eq(ChatMessageDeletion::getMessageId, messageId)
+                .eq(ChatMessageDeletion::getUserId, userId));
+        if (existing == null || existing == 0) {
+            ChatMessageDeletion deletion = new ChatMessageDeletion();
+            deletion.setMessageId(messageId);
+            deletion.setUserId(userId);
+            deletion.setCreatedAt(LocalDateTime.now());
+            chatMessageDeletionMapper.insert(deletion);
+        }
+        pushMessageChanged(conversationId, messageId, "MESSAGE_DELETED", userId);
     }
 
     private MessageDtos.ConversationResponse resolveDirectConversation(Long requesterUserId, Long recipientUserId) {
         if (requesterUserId == null || requesterUserId.equals(recipientUserId)) {
-            throw new BusinessException(ErrorCode.BAD_REQUEST, "A direct conversation requires another user");
+            throw new BusinessException(ErrorCode.BAD_REQUEST, "不能与自己发起私聊");
         }
         requireEnabledUser(requesterUserId);
         User recipient = requireEnabledUser(recipientUserId);
         if (Boolean.FALSE.equals(recipient.getAllowPrivateChat())) {
-            throw new BusinessException(ErrorCode.FORBIDDEN, "The recipient does not allow private chat");
+            throw new BusinessException(ErrorCode.FORBIDDEN, "对方未开启私聊");
         }
 
         String directKey = directKey(requesterUserId, recipientUserId);
@@ -489,7 +753,7 @@ public class MessageService {
             if (concurrentConversation != null) {
                 return toConversationResponse(concurrentConversation, requesterUserId);
             }
-            throw new BusinessException(ErrorCode.CONFLICT, "A direct conversation is being created");
+            throw new BusinessException(ErrorCode.CONFLICT, "私聊正在创建，请稍后重试");
         }
         insertMember(conversation.getId(), requesterUserId, "OWNER");
         insertMember(conversation.getId(), recipientUserId, "MEMBER");
@@ -498,13 +762,17 @@ public class MessageService {
     }
 
     private void insertMember(Long conversationId, Long userId, String role) {
+        insertMember(conversationId, userId, role, ACTIVE);
+    }
+
+    private void insertMember(Long conversationId, Long userId, String role, String status) {
         ConversationMember member = new ConversationMember();
         member.setConversationId(conversationId);
         member.setUserId(userId);
         member.setRole(role);
-        member.setMemberStatus(ACTIVE);
+        member.setMemberStatus(status);
         member.setMuted(false);
-        member.setJoinedAt(LocalDateTime.now());
+        member.setJoinedAt(ACTIVE.equals(status) ? LocalDateTime.now() : null);
         conversationMemberMapper.insert(member);
     }
 
@@ -523,6 +791,12 @@ public class MessageService {
             member.setJoinedAt(LocalDateTime.now());
         }
         conversationMemberMapper.insert(member);
+        if (PENDING.equals(member.getMemberStatus())) {
+            createNotification(userId, "FAMILY_GROUP_INVITE", "家庭群聊邀请",
+                    "“" + conversation.getName() + "”邀请你加入家庭群聊", familyGroupPayload(conversation.getId()));
+        } else {
+            insertSystemMessage(conversation, userId, displayName(userId) + "加入了群聊");
+        }
     }
 
     private Shop requireOwnedFamilyShop(Long ownerUserId) {
@@ -531,7 +805,7 @@ public class MessageService {
                 .eq(Shop::getStatus, 1)
                 .last("limit 1"));
         if (shop == null || !"FAMILY".equals(shop.getVisibilityType())) {
-            throw new BusinessException(ErrorCode.NOT_FOUND, "Current shop is not a family shop");
+            throw new BusinessException(ErrorCode.NOT_FOUND, "当前店铺未开启家庭功能");
         }
         return shop;
     }
@@ -546,7 +820,7 @@ public class MessageService {
     private Conversation requireFamilyGroupConversation(Long conversationId) {
         Conversation conversation = conversationMapper.selectById(conversationId);
         if (conversation == null || !FAMILY_GROUP.equals(conversation.getType())) {
-            throw new BusinessException(ErrorCode.NOT_FOUND, "Family group not found");
+            throw new BusinessException(ErrorCode.NOT_FOUND, "家庭群聊不存在");
         }
         return conversation;
     }
@@ -554,7 +828,7 @@ public class MessageService {
     private Conversation requireOwnedFamilyGroup(Long ownerUserId, Long conversationId) {
         Conversation conversation = requireFamilyGroupConversation(conversationId);
         if (!ownerUserId.equals(conversation.getOwnerUserId())) {
-            throw new BusinessException(ErrorCode.FORBIDDEN, "Only the family group owner can manage this group");
+            throw new BusinessException(ErrorCode.FORBIDDEN, "仅群主可以管理该群聊");
         }
         return conversation;
     }
@@ -563,7 +837,7 @@ public class MessageService {
         Conversation conversation = requireFamilyGroupConversation(conversationId);
         ConversationMember member = member(conversationId, userId);
         if (member == null || !ACTIVE.equals(member.getMemberStatus())) {
-            throw new BusinessException(ErrorCode.FORBIDDEN, "You are not an active family group member");
+            throw new BusinessException(ErrorCode.FORBIDDEN, "你当前不是有效群成员");
         }
         return conversation;
     }
@@ -581,7 +855,7 @@ public class MessageService {
                 .eq(FamilyMember::getShopId, shopId)
                 .eq(FamilyMember::getStatus, "APPROVED"));
         if (memberCount == null || memberCount == 0) {
-            throw new BusinessException(ErrorCode.FORBIDDEN, "You are not an approved family member");
+            throw new BusinessException(ErrorCode.FORBIDDEN, "你不是该店铺已通过的家庭成员");
         }
     }
 
@@ -594,16 +868,24 @@ public class MessageService {
     private void assertFamilyDishShareAllowed(Long senderUserId, Conversation conversation, Long shopId) {
         if (FAMILY_GROUP.equals(conversation.getType())) {
             if (!shopId.equals(conversation.getShopId())) {
-                throw new BusinessException(ErrorCode.FORBIDDEN, "Family dishes can only be shared to their family group");
+                throw new BusinessException(ErrorCode.FORBIDDEN, "家庭菜品只能分享到对应家庭群聊");
             }
             return;
         }
         if (!DIRECT.equals(conversation.getType())) {
-            throw new BusinessException(ErrorCode.FORBIDDEN, "Family dishes cannot be shared to this conversation");
+            throw new BusinessException(ErrorCode.FORBIDDEN, "家庭菜品不能分享到该会话");
         }
         Long recipientUserId = otherDirectUserId(conversation.getDirectKey(), senderUserId);
         if (recipientUserId == null) {
-            throw new BusinessException(ErrorCode.CONFLICT, "Direct conversation participants are invalid");
+            throw new BusinessException(ErrorCode.CONFLICT, "私聊参与者信息异常");
+        }
+        Shop dishShop = shopMapper.selectById(shopId);
+        if (dishShop != null && recipientUserId.equals(dishShop.getOwnerUserId())) {
+            return;
+        }
+        User recipient = requireEnabledUser(recipientUserId);
+        if (RoleConstants.SHOP.equals(recipient.getRole())) {
+            throw new BusinessException(ErrorCode.FORBIDDEN, "该店铺的菜品只能分享给对应商家");
         }
         requireApprovedFamilyMember(recipientUserId, shopId);
     }
@@ -623,7 +905,124 @@ public class MessageService {
                 })
                 .toList();
         return new MessageDtos.FamilyGroupResponse(conversation.getId(), conversation.getShopId(), conversation.getName(),
-                conversation.getCoverImageUrl(), conversation.getAnnouncement(), conversation.getStatus(), members);
+                conversation.getCoverImageUrl(), conversation.getAnnouncement(), conversation.getStatus(),
+                Boolean.TRUE.equals(conversation.getJoinApprovalRequired()), members);
+    }
+
+    private void applyQuote(ChatMessage message, Long quotedMessageId, Long conversationId) {
+        if (quotedMessageId == null) return;
+        ChatMessage quoted = chatMessageMapper.selectById(quotedMessageId);
+        if (quoted == null || !conversationId.equals(quoted.getConversationId())) {
+            throw new BusinessException(ErrorCode.BAD_REQUEST, "引用的消息不存在");
+        }
+        message.setQuotedMessageId(quoted.getId());
+        message.setQuotedType(quoted.getType());
+        message.setQuotedContent(quotedPreview(quoted));
+        message.setQuotedSenderName(displayName(quoted.getSenderUserId()));
+    }
+
+    private String quotedPreview(ChatMessage quoted) {
+        if ("DISH_SHARE".equals(quoted.getType())) return quoted.getDishName();
+        if ("ORDER_SHARE".equals(quoted.getType())) return "订单 " +
+                (StringUtils.hasText(quoted.getOrderNo()) ? quoted.getOrderNo() : "分享");
+        return quoted.getContent();
+    }
+
+    private List<ChatMessage> visibleMessages(Long userId, List<ChatMessage> messages) {
+        if (messages.isEmpty()) return messages;
+        Set<Long> deletedIds = chatMessageDeletionMapper == null ? Set.of() : new HashSet<>(chatMessageDeletionMapper.selectList(
+                        new LambdaQueryWrapper<ChatMessageDeletion>().eq(ChatMessageDeletion::getUserId, userId))
+                .stream().map(ChatMessageDeletion::getMessageId).toList());
+        return messages.stream()
+                .filter(message -> !deletedIds.contains(message.getId()))
+                .filter(message -> !FAILED_BLOCKED.equals(message.getDeliveryStatus())
+                        || userId.equals(message.getSenderUserId()))
+                .toList();
+    }
+
+    private void requireBlockTarget(Long userId, Long otherUserId) {
+        if (userId == null || otherUserId == null || userId.equals(otherUserId)) {
+            throw new BusinessException(ErrorCode.BAD_REQUEST, "不能拉黑自己");
+        }
+        requireEnabledUser(userId);
+        requireEnabledUser(otherUserId);
+    }
+
+    private boolean hasBlocked(Long blockerUserId, Long blockedUserId) {
+        if (chatBlockMapper == null) return false;
+        Long count = chatBlockMapper.selectCount(new LambdaQueryWrapper<ChatBlock>()
+                .eq(ChatBlock::getBlockerUserId, blockerUserId)
+                .eq(ChatBlock::getBlockedUserId, blockedUserId));
+        return count != null && count > 0;
+    }
+
+    private Long requireDirectRecipient(Conversation conversation, Long userId) {
+        Long recipientUserId = otherDirectUserId(conversation.getDirectKey(), userId);
+        if (recipientUserId == null) {
+            throw new BusinessException(ErrorCode.CONFLICT, "私聊参与者信息异常");
+        }
+        return recipientUserId;
+    }
+
+    private String writeOrderItems(List<MessageDtos.OrderShareItemResponse> items) {
+        try {
+            return JSON.writeValueAsString(items);
+        } catch (JsonProcessingException exception) {
+            throw new BusinessException(ErrorCode.SERVER_ERROR, "订单分享数据生成失败");
+        }
+    }
+
+    private List<MessageDtos.OrderShareItemResponse> readOrderItems(String json) {
+        if (!StringUtils.hasText(json)) return List.of();
+        try {
+            return JSON.readValue(json, new TypeReference<List<MessageDtos.OrderShareItemResponse>>() { });
+        } catch (JsonProcessingException exception) {
+            return List.of();
+        }
+    }
+
+    private MessageDtos.QuotedMessageSnapshot toQuotedSnapshot(ChatMessage message) {
+        if (message == null) return null;
+        return new MessageDtos.QuotedMessageSnapshot(message.getId(), message.getType(), message.getContent(),
+                message.getDishId(), message.getShopId(), message.getShopName(), message.getDishName(),
+                message.getDishImageUrl(), message.getDishPrice(), message.getDishDescription(),
+                message.getDishSalesCount(), message.getOrderId(), message.getOrderNo(), message.getOrderCreatedAt(),
+                message.getOrderStatus(), message.getOrderShopName(), readOrderItems(message.getOrderItemsJson()),
+                message.getOrderTotalAmount(), message.getOrderRemark());
+    }
+
+    private String displayName(Long userId) {
+        User user = userMapper.selectById(userId);
+        if (user == null || !StringUtils.hasText(user.getNickname())) return "用户";
+        if (RoleConstants.SHOP.equals(user.getRole())) {
+            Shop shop = shopMapper.selectOne(new LambdaQueryWrapper<Shop>()
+                    .eq(Shop::getOwnerUserId, userId).last("limit 1"));
+            if (shop != null && StringUtils.hasText(shop.getName())) return shop.getName();
+        }
+        return user.getNickname();
+    }
+
+    private String familyGroupPayload(Long conversationId) {
+        return "{\"conversationId\":" + conversationId + "}";
+    }
+
+    private void notifyOwnerOfJoinRequest(Conversation conversation, Long userId) {
+        createNotification(conversation.getOwnerUserId(), "FAMILY_GROUP_JOIN_REQUEST", "新的入群申请",
+                displayName(userId) + "申请加入“" + conversation.getName() + "”", familyGroupPayload(conversation.getId()));
+    }
+
+    private void insertSystemMessage(Conversation conversation, Long actorUserId, String content) {
+        ChatMessage message = new ChatMessage();
+        message.setConversationId(conversation.getId());
+        message.setSenderUserId(actorUserId);
+        message.setType("SYSTEM");
+        message.setContent(content);
+        message.setCreatedAt(LocalDateTime.now());
+        chatMessageMapper.insert(message);
+        conversation.setLastMessageAt(message.getCreatedAt());
+        conversationMapper.updateById(conversation);
+        pushChatMessageCreated(conversation.getId(), message.getId());
+        pushConversationUpdated(conversation.getId());
     }
 
     private String trimToNull(String value) {
@@ -640,14 +1039,14 @@ public class MessageService {
         boolean initiatorAlreadyMessaged = history.stream()
                 .anyMatch(message -> userId.equals(message.getSenderUserId()));
         if (initiatorAlreadyMessaged && !recipientReplied) {
-            throw new BusinessException(ErrorCode.FORBIDDEN, "Wait for the recipient to reply before sending another message");
+            throw new BusinessException(ErrorCode.FORBIDDEN, "对方回复前只能发送一条消息");
         }
     }
 
     private void assertDirectRecipientAllowsPrivateChat(Conversation conversation, Long userId) {
         Long recipientUserId = otherDirectUserId(conversation.getDirectKey(), userId);
         if (recipientUserId == null) {
-            throw new BusinessException(ErrorCode.CONFLICT, "Direct conversation participants are invalid");
+            throw new BusinessException(ErrorCode.CONFLICT, "私聊参与者信息异常");
         }
         User recipient = requireEnabledUser(recipientUserId);
         if (Boolean.FALSE.equals(recipient.getAllowPrivateChat())) {
@@ -659,7 +1058,7 @@ public class MessageService {
                     .findAny()
                     .isPresent();
             if (!recipientStartedContact) {
-                throw new BusinessException(ErrorCode.FORBIDDEN, "The recipient does not allow private chat");
+                throw new BusinessException(ErrorCode.FORBIDDEN, "对方未开启私聊");
             }
         }
     }
@@ -667,12 +1066,12 @@ public class MessageService {
     private Conversation requireConversationMember(Long userId, Long conversationId) {
         Conversation conversation = conversationMapper.selectById(conversationId);
         if (conversation == null) {
-            throw new BusinessException(ErrorCode.NOT_FOUND, "Conversation not found");
+            throw new BusinessException(ErrorCode.NOT_FOUND, "会话不存在");
         }
         boolean member = activeMembers(userId).stream()
                 .anyMatch(item -> conversationId.equals(item.getConversationId()));
         if (!member) {
-            throw new BusinessException(ErrorCode.FORBIDDEN, "You are not a member of this conversation");
+            throw new BusinessException(ErrorCode.FORBIDDEN, "你不是该会话成员");
         }
         return conversation;
     }
@@ -691,7 +1090,7 @@ public class MessageService {
     private User requireCustomerUser(Long userId) {
         User user = requireEnabledUser(userId);
         if (!RoleConstants.CUSTOMER.equals(user.getRole())) {
-            throw new BusinessException(ErrorCode.FORBIDDEN, "Only customers can start private chats with customers");
+            throw new BusinessException(ErrorCode.FORBIDDEN, "仅顾客可以搜索并私聊其他顾客");
         }
         return user;
     }
@@ -699,32 +1098,37 @@ public class MessageService {
     private User requireEnabledUser(Long userId) {
         User user = userMapper.selectById(userId);
         if (user == null) {
-            throw new BusinessException(ErrorCode.NOT_FOUND, "User not found");
+            throw new BusinessException(ErrorCode.NOT_FOUND, "用户不存在");
         }
         if (user.getStatus() == null || user.getStatus() != 1) {
-            throw new BusinessException(ErrorCode.FORBIDDEN, "User account is disabled");
+            throw new BusinessException(ErrorCode.FORBIDDEN, "用户账号已停用");
         }
         return user;
     }
 
     private MessageDtos.ConversationResponse toConversationResponse(Conversation conversation, Long viewerUserId) {
         ConversationMember viewer = member(conversation.getId(), viewerUserId);
-        List<ChatMessage> conversationMessages = chatMessageMapper.selectList(new LambdaQueryWrapper<ChatMessage>()
-                .eq(ChatMessage::getConversationId, conversation.getId())
-                .orderByDesc(ChatMessage::getCreatedAt)
-                .orderByDesc(ChatMessage::getId));
+        List<ChatMessage> conversationMessages = visibleMessages(viewerUserId,
+                chatMessageMapper.selectList(new LambdaQueryWrapper<ChatMessage>()
+                        .eq(ChatMessage::getConversationId, conversation.getId())
+                        .orderByDesc(ChatMessage::getCreatedAt)
+                        .orderByDesc(ChatMessage::getId)));
         ChatMessage latest = conversationMessages.isEmpty() ? null : conversationMessages.get(0);
+        LocalDateTime visibleLastMessageAt = latest == null ? null : latest.getCreatedAt();
         long unread = conversationMessages.stream()
                 .filter(message -> !viewerUserId.equals(message.getSenderUserId()))
                 .filter(message -> viewer == null || viewer.getLastReadMessageId() == null
                         || (message.getId() != null && message.getId() > viewer.getLastReadMessageId()))
                 .count();
-        String lastContent = latest == null ? null : ("DISH_SHARE".equals(latest.getType())
-                ? "[Dish] " + latest.getDishName() : latest.getContent());
+        String lastContent = latest == null ? null : (latest.getRecalledAt() != null
+                ? "撤回了一条消息" : ("DISH_SHARE".equals(latest.getType())
+                ? "[菜品] " + latest.getDishName() : ("ORDER_SHARE".equals(latest.getType())
+                ? "[订单] " + (StringUtils.hasText(latest.getOrderNo()) ? latest.getOrderNo() : "订单分享")
+                : latest.getContent())));
         boolean muted = viewer != null && Boolean.TRUE.equals(viewer.getMuted());
         if (!DIRECT.equals(conversation.getType())) {
             return new MessageDtos.ConversationResponse(conversation.getId(), conversation.getType(), conversation.getName(),
-                    conversation.getCoverImageUrl(), conversation.getStatus(), conversation.getLastMessageAt(), null, null, null,
+                    conversation.getCoverImageUrl(), conversation.getStatus(), visibleLastMessageAt, null, null, null,
                     lastContent, unread, muted);
         }
         Long directUserId = otherDirectUserId(conversation.getDirectKey(), viewerUserId);
@@ -743,7 +1147,7 @@ public class MessageService {
             }
         }
         return new MessageDtos.ConversationResponse(conversation.getId(), conversation.getType(), null, null,
-                conversation.getStatus(), conversation.getLastMessageAt(), directUserId,
+                conversation.getStatus(), visibleLastMessageAt, directUserId,
                 displayName, displayAvatar, lastContent, unread, muted);
     }
 
@@ -771,9 +1175,20 @@ public class MessageService {
                 if (StringUtils.hasText(senderShop.getCoverImageUrl())) senderAvatar = senderShop.getCoverImageUrl();
             }
         }
+        ChatMessage quoted = message.getQuotedMessageId() == null ? null
+                : chatMessageMapper.selectById(message.getQuotedMessageId());
+        String deliveryStatus = StringUtils.hasText(message.getDeliveryStatus()) ? message.getDeliveryStatus() : DELIVERED;
         return new MessageDtos.ChatMessageResponse(message.getId(), message.getConversationId(), message.getSenderUserId(),
-                senderName, senderAvatar, message.getType(), message.getContent(), message.getDishId(), message.getShopId(), message.getDishName(),
-                message.getDishImageUrl(), message.getDishPrice(), message.getDishDescription(), message.getDishSalesCount(), message.getCreatedAt());
+                senderName, senderAvatar, message.getType(), message.getContent(), message.getDishId(), message.getShopId(),
+                message.getShopName(), message.getDishName(), message.getDishImageUrl(), message.getDishPrice(),
+                message.getDishDescription(), message.getDishSalesCount(), message.getOrderId(), message.getOrderNo(),
+                message.getOrderCreatedAt(), message.getOrderStatus(), message.getOrderShopName(),
+                readOrderItems(message.getOrderItemsJson()), message.getOrderTotalAmount(), message.getOrderRemark(),
+                message.getQuotedMessageId(),
+                message.getQuotedType(), message.getQuotedContent(), message.getQuotedSenderName(),
+                toQuotedSnapshot(quoted), deliveryStatus, FAILED_BLOCKED.equals(deliveryStatus),
+                message.getDeliveryFailureReason(),
+                message.getRecalledAt(), message.getCreatedAt());
     }
 
     private MessageDtos.NotificationResponse toNotificationResponse(UserNotification notification) {
@@ -790,6 +1205,23 @@ public class MessageService {
         afterCommit(() -> pushChatMessageCreatedNow(conversationId, messageId));
     }
 
+    private void pushChatMessageCreatedToUser(Long userId, Long conversationId, Long messageId) {
+        afterCommit(() -> wsPushService.pushToUser(userId, "CHAT", "MESSAGE_CREATED", Map.of(
+                "conversationId", conversationId, "messageId", messageId)));
+    }
+
+    private void pushConversationUpdatedToUser(Long userId, Long conversationId) {
+        afterCommit(() -> wsPushService.pushToUser(userId, "CHAT", "CONVERSATION_UPDATED", Map.of(
+                "conversationId", conversationId)));
+    }
+
+    private void pushBlockChanged(Long userId, Long otherUserId) {
+        afterCommit(() -> {
+            wsPushService.pushToUser(userId, "CHAT", "BLOCK_CHANGED", Map.of("userId", otherUserId));
+            wsPushService.pushToUser(otherUserId, "CHAT", "BLOCK_CHANGED", Map.of("userId", userId));
+        });
+    }
+
     private void pushChatMessageCreatedNow(Long conversationId, Long messageId) {
         conversationMemberMapper.selectList(new LambdaQueryWrapper<ConversationMember>()
                         .eq(ConversationMember::getConversationId, conversationId)
@@ -800,6 +1232,16 @@ public class MessageService {
 
     private void pushConversationUpdated(Long conversationId) {
         afterCommit(() -> pushConversationUpdatedNow(conversationId));
+    }
+
+    private void pushMessageChanged(Long conversationId, Long messageId, String action, Long onlyUserId) {
+        afterCommit(() -> conversationMemberMapper.selectList(new LambdaQueryWrapper<ConversationMember>()
+                        .eq(ConversationMember::getConversationId, conversationId)
+                        .eq(ConversationMember::getMemberStatus, ACTIVE))
+                .stream()
+                .filter(member -> onlyUserId == null || onlyUserId.equals(member.getUserId()))
+                .forEach(member -> wsPushService.pushToUser(member.getUserId(), "CHAT", action, Map.of(
+                        "conversationId", conversationId, "messageId", messageId))));
     }
 
     private void pushConversationUpdatedNow(Long conversationId) {

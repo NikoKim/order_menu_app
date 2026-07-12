@@ -101,8 +101,8 @@ public class OrderService {
         }
 
         wsPushService.pushOrderCreated(order);
-        messageService.createShopNotification(order.getShopId(), "ORDER", "New order",
-                "Order " + order.getOrderNo() + " was submitted", orderPayload(order));
+        messageService.createShopNotification(order.getShopId(), "ORDER", "收到新订单",
+                "订单 " + order.getOrderNo() + " 已提交", orderPayload(order));
 
         return new OrderDtos.OrderSubmitResponse(order.getId(), order.getOrderNo(), order.getStatus(), order.getTotalAmount());
     }
@@ -172,7 +172,7 @@ public class OrderService {
         orderMapper.updateById(order);
 
         wsPushService.pushOrderAccepted(order);
-        notifyCustomerOrderStatus(order, "Order accepted");
+        notifyCustomerOrderStatus(order, "订单已接单");
     }
 
     @Transactional
@@ -189,7 +189,7 @@ public class OrderService {
         restoreStock(order);
 
         wsPushService.pushOrderRejected(order);
-        notifyCustomerOrderStatus(order, "Order rejected");
+        notifyCustomerOrderStatus(order, "订单已拒绝");
     }
 
     public void complete(Long ownerUserId, Long orderId) {
@@ -212,7 +212,7 @@ public class OrderService {
         }
 
         wsPushService.pushOrderCompleted(order);
-        notifyCustomerOrderStatus(order, "Order completed");
+        notifyCustomerOrderStatus(order, "订单已完成");
     }
 
     private Dish requireOnSaleDish(Long shopId, Long dishId) {
@@ -320,7 +320,18 @@ public class OrderService {
 
     private void notifyCustomerOrderStatus(Order order, String title) {
         messageService.createNotification(order.getCustomerUserId(), "ORDER", title,
-                "Order " + order.getOrderNo() + " status: " + order.getStatus(), orderPayload(order));
+                "订单 " + order.getOrderNo() + " 状态已更新为：" + orderStatusLabel(order.getStatus()), orderPayload(order));
+    }
+
+    private String orderStatusLabel(String status) {
+        return switch (status) {
+            case "PENDING" -> "待处理";
+            case "ACCEPTED" -> "已接单";
+            case "REJECTED" -> "已拒绝";
+            case "COMPLETED" -> "已完成";
+            case "CANCELED" -> "已取消";
+            default -> status;
+        };
     }
 
     private String orderPayload(Order order) {

@@ -6,7 +6,7 @@ import '../main.dart';
 import '../models.dart';
 import '../services/api_client.dart';
 import '../services/customer_websocket_service.dart';
-import '../services/latest_request.dart';
+import '../widgets/app_notice.dart';
 import 'chat_detail_page.dart';
 
 class ChatListPage extends StatefulWidget {
@@ -14,110 +14,6 @@ class ChatListPage extends StatefulWidget {
 
   @override
   State<ChatListPage> createState() => _ChatListPageState();
-}
-
-class _CustomerSearchSheet extends StatefulWidget {
-  const _CustomerSearchSheet({required this.api});
-  final CustomerApi api;
-
-  @override
-  State<_CustomerSearchSheet> createState() => _CustomerSearchSheetState();
-}
-
-class _CustomerSearchSheetState extends State<_CustomerSearchSheet> {
-  final _controller = TextEditingController();
-  List<ChatUser> _users = const [];
-  bool _searched = false;
-  bool _searching = false;
-  String? _error;
-
-  Future<void> _search() async {
-    if (_searching) return;
-    setState(() {
-      _searching = true;
-      _error = null;
-    });
-    try {
-      final result = await widget.api.searchChatCustomers(_controller.text);
-      if (!mounted) return;
-      setState(() {
-        _users = result;
-        _searched = true;
-        _searching = false;
-      });
-    } catch (error) {
-      if (!mounted) return;
-      setState(() {
-        _error = _friendlyChatError(error);
-        _searched = true;
-        _searching = false;
-      });
-    }
-  }
-
-  Future<void> _open(ChatUser user) async {
-    try {
-      final conversation = await widget.api.startChatWithCustomer(user.id);
-      if (mounted) Navigator.of(context).pop(conversation);
-    } catch (error) {
-      if (!mounted) return;
-      ScaffoldMessenger.of(
-        context,
-      ).showSnackBar(SnackBar(content: Text(_friendlyChatError(error))));
-    }
-  }
-
-  @override
-  void dispose() {
-    _controller.dispose();
-    super.dispose();
-  }
-
-  @override
-  Widget build(BuildContext context) => Padding(
-    padding: EdgeInsets.only(
-      bottom: MediaQuery.viewInsetsOf(context).bottom,
-      left: 16,
-      right: 16,
-      top: 16,
-    ),
-    child: SizedBox(
-      height: 420,
-      child: Column(
-        children: [
-          TextField(
-            controller: _controller,
-            autofocus: true,
-            decoration: InputDecoration(
-              hintText: '搜索顾客昵称',
-              suffixIcon: IconButton(
-                tooltip: '搜索',
-                icon: const Icon(Icons.search),
-                onPressed: _searching ? null : _search,
-              ),
-            ),
-            onSubmitted: (_) => _search(),
-          ),
-          Expanded(
-            child: _searching
-                ? const Center(child: CircularProgressIndicator())
-                : _error != null
-                ? Center(child: Text(_error!))
-                : _searched && _users.isEmpty
-                ? const Center(child: Text('当前用户不存在'))
-                : ListView.builder(
-                    itemCount: _users.length,
-                    itemBuilder: (_, index) => ListTile(
-                      leading: const CircleAvatar(child: Icon(Icons.person)),
-                      title: Text(_users[index].nickname),
-                      onTap: () => _open(_users[index]),
-                    ),
-                  ),
-          ),
-        ],
-      ),
-    ),
-  );
 }
 
 class _ChatListPageState extends State<ChatListPage> {
@@ -130,6 +26,10 @@ class _ChatListPageState extends State<ChatListPage> {
   StreamSubscription<CustomerWsMessage>? _wsSubscription;
   StreamSubscription<bool>? _connectionSubscription;
   bool _initialized = false;
+  final _searchController = TextEditingController();
+  List<ChatUser> _searchResults = const [];
+  Timer? _searchDebounce;
+  bool _searching = false;
 
   @override
   void didChangeDependencies() {
@@ -145,14 +45,14 @@ class _ChatListPageState extends State<ChatListPage> {
     _wsSubscription = CustomerWebSocketService.instance
         .streamForModule('CHAT')
         .listen((_) {
-      if (mounted) _loadData();
-    });
+          if (mounted) _loadData();
+        });
 
     _connectionSubscription = CustomerWebSocketService.instance.connectionStream
         .where((connected) => connected)
         .listen((_) {
-      if (mounted) _loadData();
-    });
+          if (mounted) _loadData();
+        });
   }
 
   // 核心：无感刷新逻辑
@@ -186,19 +86,52 @@ class _ChatListPageState extends State<ChatListPage> {
     });
   }
 
-  Future<void> _startCustomerChat() async {
-    final conversation = await showModalBottomSheet<ChatConversation>(
-      context: context,
-      isScrollControlled: true,
-      builder: (_) => _CustomerSearchSheet(api: _api),
-    );
-    if (conversation != null && mounted) {
+  void _onSearchChanged(String value) {
+    _searchDebounce?.cancel();
+    if (value.trim().isEmpty) {
+      setState(() {
+        _searchResults = const [];
+        _searching = false;
+      });
+      return;
+    }
+    setState(() {
+      _searchResults = const [];
+      _searching = true;
+    });
+    _searchDebounce = Timer(const Duration(milliseconds: 280), () async {
+      if (!mounted) return;
+      try {
+        final users = await _api.searchChatCustomers(value);
+        if (mounted && _searchController.text == value) {
+          setState(() {
+            _searchResults = users;
+            _searching = false;
+          });
+        }
+      } catch (error) {
+        if (mounted && _searchController.text == value) {
+          setState(() => _searching = false);
+          AppNotice.show(context, _friendlyChatError(error));
+        }
+      }
+    });
+  }
+
+  Future<void> _openSearchResult(ChatUser user) async {
+    try {
+      final conversation = await _api.startChatWithCustomer(user.id);
+      if (!mounted) return;
       await Navigator.of(context).push(
         MaterialPageRoute(
           builder: (_) => ChatDetailPage(conversation: conversation),
         ),
       );
-      if (mounted) _loadData(); // 从聊天详情返回时刷新
+      _searchController.clear();
+      setState(() => _searchResults = const []);
+      _loadData();
+    } catch (error) {
+      if (mounted) AppNotice.show(context, _friendlyChatError(error));
     }
   }
 
@@ -206,20 +139,119 @@ class _ChatListPageState extends State<ChatListPage> {
   void dispose() {
     _wsSubscription?.cancel();
     _connectionSubscription?.cancel();
+    _searchDebounce?.cancel();
+    _searchController.dispose();
     super.dispose();
   }
 
   @override
   Widget build(BuildContext context) => Scaffold(
-    appBar: AppBar(title: const Text('聊天')),
-    floatingActionButton: FloatingActionButton(
-      tooltip: '发起私聊',
-      onPressed: _startCustomerChat,
-      child: const Icon(Icons.person_search),
+    backgroundColor: const Color(0xFFF5F5F5),
+    appBar: AppBar(
+      title: const Text('聊天'),
+      backgroundColor: const Color(0xFFF5F5F5),
+      surfaceTintColor: Colors.transparent,
     ),
-    body: RefreshIndicator(
-      onRefresh: _loadData, // 下拉刷新直接绑定异步加载方法
-      child: _buildBody(),
+    body: Column(
+      children: [
+        Padding(
+          padding: const EdgeInsets.fromLTRB(16, 4, 16, 10),
+          child: TextField(
+            controller: _searchController,
+            onChanged: _onSearchChanged,
+            decoration: InputDecoration(
+              hintText: '搜索用户',
+              prefixIcon: const Icon(Icons.search),
+              filled: true,
+              fillColor: Colors.white,
+              border: OutlineInputBorder(
+                borderRadius: BorderRadius.circular(12),
+                borderSide: BorderSide.none,
+              ),
+              suffixIcon: _searching
+                  ? const Padding(
+                      padding: EdgeInsets.all(14),
+                      child: SizedBox.square(
+                        dimension: 16,
+                        child: CircularProgressIndicator(strokeWidth: 2),
+                      ),
+                    )
+                  : _searchController.text.trim().isNotEmpty
+                  ? IconButton(
+                      tooltip: '关闭搜索',
+                      onPressed: () {
+                        _searchController.clear();
+                        _searchDebounce?.cancel();
+                        setState(() {
+                          _searchResults = const [];
+                          _searching = false;
+                        });
+                      },
+                      icon: const Icon(Icons.close),
+                    )
+                  : null,
+            ),
+          ),
+        ),
+        if (_searchResults.isNotEmpty)
+          ConstrainedBox(
+            constraints: const BoxConstraints(maxHeight: 220),
+            child: ListView.builder(
+              shrinkWrap: true,
+              itemCount: _searchResults.length,
+              itemBuilder: (_, index) => Container(
+                margin: const EdgeInsets.fromLTRB(16, 0, 16, 8),
+                decoration: BoxDecoration(
+                  color: Colors.white,
+                  borderRadius: BorderRadius.circular(10),
+                ),
+                child: ListTile(
+                  leading: CircleAvatar(
+                    backgroundImage:
+                        _searchResults[index].avatarUrl?.isNotEmpty == true
+                        ? NetworkImage(
+                            resolveCustomerImageUrl(
+                              _searchResults[index].avatarUrl!,
+                            ),
+                          )
+                        : null,
+                    child: _searchResults[index].avatarUrl?.isNotEmpty == true
+                        ? null
+                        : const Icon(Icons.person_outline),
+                  ),
+                  title: Text(_searchResults[index].nickname),
+                  onTap: () => _openSearchResult(_searchResults[index]),
+                ),
+              ),
+            ),
+          ),
+        if (shouldShowNoChatUser(
+          query: _searchController.text,
+          searching: _searching,
+          resultCount: _searchResults.length,
+        ))
+          Expanded(
+            child: Center(
+              child: Container(
+                padding: const EdgeInsets.symmetric(
+                  horizontal: 28,
+                  vertical: 20,
+                ),
+                decoration: BoxDecoration(
+                  color: Colors.white,
+                  borderRadius: BorderRadius.circular(12),
+                ),
+                child: const Text('没有该用户'),
+              ),
+            ),
+          )
+        else if (shouldShowConversationsForSearch(_searchController.text))
+          Expanded(
+            child: RefreshIndicator(onRefresh: _loadData, child: _buildBody()),
+          )
+        else
+          const Spacer(),
+      ],
     ),
   );
 
@@ -258,60 +290,85 @@ class _ChatListPageState extends State<ChatListPage> {
 
     // 4. 正常渲染列表（无感刷新：只要 _conversations 更新，ListView 瞬间重绘）
     return ListView.separated(
+      padding: const EdgeInsets.fromLTRB(16, 4, 16, 24),
       itemCount: conversations.length,
-      separatorBuilder: (_, _) => const Divider(height: 1),
+      separatorBuilder: (_, _) => const SizedBox(height: 10),
       itemBuilder: (context, index) {
         final item = conversations[index];
-        return ListTile(
-          contentPadding: const EdgeInsets.symmetric(
-            horizontal: 16,
-            vertical: 4,
-          ),
-          leading: CircleAvatar(
-            backgroundImage: item.imageUrl?.isNotEmpty == true
-                ? NetworkImage(resolveCustomerImageUrl(item.imageUrl!))
-                : null,
-            child: item.imageUrl?.isNotEmpty == true
-                ? null
-                : Icon(item.isDirect ? Icons.person : Icons.groups),
-          ),
-          title: Text(
-            item.title,
-            maxLines: 1,
-            overflow: TextOverflow.ellipsis,
-          ),
-          subtitle: Text(
-            item.lastMessageContent?.isNotEmpty == true
-                ? item.lastMessageContent!
-                : (item.isActive
-                ? (item.isDirect ? '私聊' : '家庭群聊')
-                : '已解散'),
-            maxLines: 1,
-            overflow: TextOverflow.ellipsis,
-          ),
-          trailing: SizedBox(
-            width: 58,
-            child: Column(
-              mainAxisAlignment: MainAxisAlignment.center,
-              crossAxisAlignment: CrossAxisAlignment.end,
+        return Material(
+          color: Colors.white,
+          borderRadius: BorderRadius.circular(12),
+          clipBehavior: Clip.antiAlias,
+          child: ListTile(
+            contentPadding: const EdgeInsets.symmetric(
+              horizontal: 16,
+              vertical: 4,
+            ),
+            leading: Stack(
+              clipBehavior: Clip.none,
               children: [
-                _ConversationTime(value: item.lastMessageAt),
-                if (item.showUnreadBadge) ...[
-                  const SizedBox(height: 5),
-                  _UnreadBadge(count: item.unreadCount),
+                CircleAvatar(
+                  backgroundImage: item.imageUrl?.isNotEmpty == true
+                      ? NetworkImage(resolveCustomerImageUrl(item.imageUrl!))
+                      : null,
+                  child: item.imageUrl?.isNotEmpty == true
+                      ? null
+                      : Icon(item.isDirect ? Icons.person : Icons.groups),
+                ),
+                if (item.showUnreadBadge)
+                  Positioned(
+                    right: -7,
+                    top: -7,
+                    child: _UnreadBadge(count: item.unreadCount),
+                  ),
+              ],
+            ),
+            title: Row(
+              children: [
+                Flexible(
+                  child: Text(
+                    item.title,
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                  ),
+                ),
+                if (!item.isDirect) ...[
+                  const SizedBox(width: 6),
+                  Container(
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: 5,
+                      vertical: 2,
+                    ),
+                    decoration: BoxDecoration(
+                      color: const Color(0xFFFFE8CF),
+                      borderRadius: BorderRadius.circular(4),
+                    ),
+                    child: const Text(
+                      '群聊',
+                      style: TextStyle(fontSize: 10, color: Color(0xFFB76512)),
+                    ),
+                  ),
                 ],
               ],
             ),
+            subtitle: Text(
+              item.lastMessageContent?.isNotEmpty == true
+                  ? item.lastMessageContent!
+                  : (item.isActive ? (item.isDirect ? '私聊' : '家庭群聊') : '已解散'),
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+            ),
+            trailing: _ConversationTime(value: item.lastMessageAt),
+            onTap: () async {
+              _markReadLocally(item.id);
+              await Navigator.of(context).push(
+                MaterialPageRoute(
+                  builder: (_) => ChatDetailPage(conversation: item),
+                ),
+              );
+              if (mounted) _loadData(); // 从详情页后退回来时主动获取最新数据
+            },
           ),
-          onTap: () async {
-            _markReadLocally(item.id);
-            await Navigator.of(context).push(
-              MaterialPageRoute(
-                builder: (_) => ChatDetailPage(conversation: item),
-              ),
-            );
-            if (mounted) _loadData(); // 从详情页后退回来时主动获取最新数据
-          },
         );
       },
     );
@@ -352,3 +409,11 @@ String _friendlyChatError(Object error) {
   if (error is ApiException) return error.message;
   return '网络连接失败，请检查网络后重试';
 }
+
+bool shouldShowConversationsForSearch(String query) => query.trim().isEmpty;
+
+bool shouldShowNoChatUser({
+  required String query,
+  required bool searching,
+  required int resultCount,
+}) => query.trim().isNotEmpty && !searching && resultCount == 0;

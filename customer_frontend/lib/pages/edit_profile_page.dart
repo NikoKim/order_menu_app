@@ -5,6 +5,7 @@ import '../app_mock_data.dart';
 import '../main.dart';
 import '../services/api_client.dart';
 import '../widgets/app_footer.dart';
+import '../widgets/app_notice.dart';
 
 class EditProfilePage extends StatefulWidget {
   const EditProfilePage({super.key});
@@ -86,14 +87,7 @@ class _EditProfilePageState extends State<EditProfilePage> {
   }
 
   void _showSnack(String message) {
-    ScaffoldMessenger.of(context)
-      ..hideCurrentSnackBar()
-      ..showSnackBar(
-        SnackBar(
-          content: Text(message),
-          behavior: SnackBarBehavior.floating,
-        ),
-      );
+    AppNotice.show(context, message);
   }
 
   @override
@@ -137,24 +131,28 @@ class _EditProfilePageState extends State<EditProfilePage> {
                           ),
                           child: _avatarUrl?.isNotEmpty == true
                               ? Image.network(
-                            resolveCustomerImageUrl(_avatarUrl!),
-                            fit: BoxFit.cover,
-                            loadingBuilder: (context, child, progress) =>
-                            progress == null
-                                ? child
-                                : const Center(
-                              child: CircularProgressIndicator(
-                                color: warmOrange,
-                                strokeWidth: 2,
-                              ),
-                            ),
-                            errorBuilder: (_, _, _) => const Icon(
-                              Icons.person,
-                              color: warmOrange,
-                              size: 52,
-                            ),
-                          )
-                              : const Icon(Icons.person, color: warmOrange, size: 52),
+                                  resolveCustomerImageUrl(_avatarUrl!),
+                                  fit: BoxFit.cover,
+                                  loadingBuilder: (context, child, progress) =>
+                                      progress == null
+                                      ? child
+                                      : const Center(
+                                          child: CircularProgressIndicator(
+                                            color: warmOrange,
+                                            strokeWidth: 2,
+                                          ),
+                                        ),
+                                  errorBuilder: (_, _, _) => const Icon(
+                                    Icons.person,
+                                    color: warmOrange,
+                                    size: 52,
+                                  ),
+                                )
+                              : const Icon(
+                                  Icons.person,
+                                  color: warmOrange,
+                                  size: 52,
+                                ),
                         ),
                         Container(
                           width: 34,
@@ -166,17 +164,17 @@ class _EditProfilePageState extends State<EditProfilePage> {
                           ),
                           child: _uploadingAvatar
                               ? const Padding(
-                            padding: EdgeInsets.all(8),
-                            child: CircularProgressIndicator(
-                              color: Colors.white,
-                              strokeWidth: 2,
-                            ),
-                          )
+                                  padding: EdgeInsets.all(8),
+                                  child: CircularProgressIndicator(
+                                    color: Colors.white,
+                                    strokeWidth: 2,
+                                  ),
+                                )
                               : const Icon(
-                            Icons.camera_alt_rounded,
-                            color: Colors.white,
-                            size: 17,
-                          ),
+                                  Icons.camera_alt_rounded,
+                                  color: Colors.white,
+                                  size: 17,
+                                ),
                         ),
                       ],
                     ),

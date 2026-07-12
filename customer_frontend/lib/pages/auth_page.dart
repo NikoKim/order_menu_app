@@ -3,6 +3,7 @@ import 'package:flutter/material.dart';
 import '../main.dart';
 import '../services/api_client.dart';
 import '../widgets/app_footer.dart';
+import '../widgets/app_notice.dart';
 
 class AuthPage extends StatefulWidget {
   const AuthPage({super.key, this.onLoggedIn});
@@ -187,7 +188,7 @@ class _AuthPageState extends State<AuthPage> {
       );
       _afterAuth('登录成功');
     } catch (error) {
-      _showSnackBar(error.toString());
+      _showNotice(error.toString());
     }
   }
 
@@ -201,25 +202,21 @@ class _AuthPageState extends State<AuthPage> {
       );
       _afterAuth('注册成功');
     } catch (error) {
-      _showSnackBar(error.toString());
+      _showNotice(error.toString());
     }
   }
 
   void _afterAuth(String message) {
-    _showSnackBar(message);
+    _showNotice(message);
     widget.onLoggedIn?.call();
     if (Navigator.of(context).canPop()) {
       Navigator.of(context).pop();
     }
   }
 
-  void _showSnackBar(String message) {
+  void _showNotice(String message) {
     if (!mounted) return;
-    ScaffoldMessenger.of(context)
-      ..hideCurrentSnackBar()
-      ..showSnackBar(
-        SnackBar(content: Text(message), behavior: SnackBarBehavior.floating),
-      );
+    AppNotice.show(context, message);
   }
 }
 

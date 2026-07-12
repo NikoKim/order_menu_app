@@ -18,6 +18,7 @@ public class Conversation {
     private String name;
     private String coverImageUrl;
     private String announcement;
+    private Boolean joinApprovalRequired;
     private String status;
     private LocalDateTime lastMessageAt;
     private LocalDateTime createdAt;

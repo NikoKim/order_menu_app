@@ -13,6 +13,7 @@ import 'pages/order_manage_page.dart';
 import 'pages/shop_login_page.dart';
 import 'pages/shop_profile_page.dart';
 import 'services/shop_api_service.dart';
+import 'widgets/app_notice.dart';
 import 'shop_mock_data.dart';
 import 'package:package_info_plus/package_info_plus.dart'; // 新增
 import 'package:dio/dio.dart';
@@ -94,9 +95,11 @@ class _ShopShellState extends State<ShopShell> {
   int _pendingFamilyMembers = 0;
   int _pendingFeedback = 0;
   int _unreadChats = 0;
+  int _unreadMessageNotifications = 0;
   StreamSubscription? _wsSubscription;
   StreamSubscription<bool>? _connectionSubscription;
   final _chatBadgeRequests = LatestRequest();
+  final _notificationBadgeRequests = LatestRequest();
 
   bool _hasCheckedUpdate = false;
 
@@ -112,6 +115,13 @@ class _ShopShellState extends State<ShopShell> {
 
     _wsSubscription = ShopWebSocketService.instance.messageStream.listen((msg) {
       if (!_loggedIn) return;
+
+      if (msg.module == 'NOTIFICATION') {
+        final unread = int.tryParse('${msg.data['unreadCount'] ?? ''}');
+        if (unread != null && mounted) {
+          setState(() => _unreadMessageNotifications = unread);
+        }
+      }
 
       final needRefreshBadge = {
         'ORDER',
@@ -178,9 +188,7 @@ class _ShopShellState extends State<ShopShell> {
             Future<void> installApk() async {
               final path = apkPath;
               if (path == null || path.isEmpty) {
-                ScaffoldMessenger.of(
-                  context,
-                ).showSnackBar(const SnackBar(content: Text('安装包不存在，请先下载')));
+                AppNotice.show(context, '安装包不存在，请先下载');
                 return;
               }
 
@@ -202,24 +210,18 @@ class _ShopShellState extends State<ShopShell> {
               debugPrint('打开 APK 结果: ${result.type}, ${result.message}');
 
               if (result.type != ResultType.done && mounted) {
-                ScaffoldMessenger.of(context).showSnackBar(
-                  SnackBar(content: Text('打开安装程序失败：${result.message}')),
-                );
+                AppNotice.show(context, '打开安装程序失败：${result.message}');
               }
             }
 
             Future<void> startDownload() async {
               if (url.isEmpty) {
-                ScaffoldMessenger.of(
-                  context,
-                ).showSnackBar(const SnackBar(content: Text('下载链接为空')));
+                AppNotice.show(context, '下载链接为空');
                 return;
               }
 
               if (!Platform.isAndroid) {
-                ScaffoldMessenger.of(context).showSnackBar(
-                  const SnackBar(content: Text('当前仅支持 Android APK 更新')),
-                );
+                AppNotice.show(context, '当前仅支持 Android APK 更新');
                 return;
               }
 
@@ -291,9 +293,7 @@ class _ShopShellState extends State<ShopShell> {
                 });
 
                 if (mounted) {
-                  ScaffoldMessenger.of(
-                    context,
-                  ).showSnackBar(SnackBar(content: Text('下载失败：$e')));
+                  AppNotice.show(context, '下载失败：$e');
                 }
               }
             }
@@ -420,24 +420,28 @@ class _ShopShellState extends State<ShopShell> {
         _pendingFamilyMembers = 0;
         _pendingFeedback = 0;
         _unreadChats = 0;
+        _unreadMessageNotifications = 0;
       });
     }
   }
 
   Future<void> _loadNotifications() async {
     if (!_loggedIn) return;
+    final generation = _notificationBadgeRequests.begin();
     try {
       final results = await Future.wait([
         shopApi.fetchNotifications(),
         shopApi.fetchFeedback(status: 'PENDING', pageSize: 1),
+        shopApi.fetchUnreadMessageNotificationCount(),
       ]);
-      if (mounted) {
+      if (mounted && _notificationBadgeRequests.isLatest(generation)) {
         setState(() {
           final info = results[0] as ShopNotificationInfo;
           final feedbackRes = results[1] as PageResult<FeedbackInfo>;
           _pendingOrders = info.pendingOrders;
           _pendingFamilyMembers = info.pendingFamilyMembers;
           _pendingFeedback = feedbackRes.total; // 获取真实数量
+          _unreadMessageNotifications = results[2] as int;
         });
       }
     } catch (_) {}
@@ -474,11 +478,11 @@ class _ShopShellState extends State<ShopShell> {
     }
 
     final pages = [
-      const DashboardPage(),
+      DashboardPage(onBadgeChanged: _loadNotifications),
       const DishManagePage(),
       const ChatListPage(),
       const OrderManagePage(),
-      ShopProfilePage(onLogout: _logout),
+      ShopProfilePage(onLogout: _logout, onBadgeChanged: _loadNotifications),
     ];
 
     return Scaffold(
@@ -531,11 +535,17 @@ class _ShopShellState extends State<ShopShell> {
           NavigationDestination(
             icon: _BadgeIcon(
               icon: Icons.storefront_outlined,
-              count: _pendingFamilyMembers + _pendingFeedback,
+              count:
+                  _pendingFamilyMembers +
+                  _pendingFeedback +
+                  _unreadMessageNotifications,
             ),
             selectedIcon: _BadgeIcon(
               icon: Icons.storefront,
-              count: _pendingFamilyMembers + _pendingFeedback,
+              count:
+                  _pendingFamilyMembers +
+                  _pendingFeedback +
+                  _unreadMessageNotifications,
             ),
             label: '店铺',
           ),

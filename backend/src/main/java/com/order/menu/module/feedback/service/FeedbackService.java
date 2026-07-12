@@ -41,8 +41,8 @@ public class FeedbackService {
 
         if (feedback.getShopId() != null) {
             wsPushService.pushFeedbackCreated(feedback);
-            messageService.createShopNotification(feedback.getShopId(), "FEEDBACK", "New feedback",
-                    "A customer sent feedback", feedbackPayload(feedback));
+            messageService.createShopNotification(feedback.getShopId(), "FEEDBACK", "收到新的顾客留言",
+                    "有顾客提交了新的留言建议", feedbackPayload(feedback));
         }
 
         return toResponse(feedback);
@@ -76,8 +76,8 @@ public class FeedbackService {
         feedbackMapper.updateById(feedback);
         Feedback updated = feedbackMapper.selectById(feedbackId);
         wsPushService.pushFeedbackReplied(updated);
-        messageService.createNotification(updated.getUserId(), "FEEDBACK", "Feedback replied",
-                "The shop replied to your feedback", feedbackPayload(updated));
+        messageService.createNotification(updated.getUserId(), "FEEDBACK", "商家已回复留言",
+                "商家回复了你的留言建议", feedbackPayload(updated));
         return toResponse(updated);
     }
 

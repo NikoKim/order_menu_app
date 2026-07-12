@@ -5,6 +5,9 @@ import 'package:image_picker/image_picker.dart';
 
 import '../models/shop_api_models.dart';
 import '../services/shop_api_service.dart';
+import '../widgets/app_notice.dart';
+import 'chat_user_detail_page.dart';
+import 'family_group_management_page.dart';
 import '../services/websocket_service.dart';
 
 const Color _warmOrange = Color(0xFFF28C28);
@@ -272,110 +275,17 @@ class _ShopFamilyPageState extends State<ShopFamilyPage> {
   }
 
   Future<void> _manageGroup(ChatConversation conversation) async {
-    FamilyGroup group;
-    try {
-      group = await shopApi.fetchFamilyGroup(conversation.id);
-    } on ApiException catch (error) {
-      if (mounted) _showSnackBar(error.message);
-      return;
-    }
-    if (!mounted) return;
-    final name = TextEditingController(text: group.name);
-    final announcement = TextEditingController(text: group.announcement ?? '');
-    await showModalBottomSheet<void>(
-      context: context,
-      isScrollControlled: true,
-      builder: (sheetContext) => Padding(
-        padding: EdgeInsets.fromLTRB(
-          16,
-          16,
-          16,
-          MediaQuery.viewInsetsOf(sheetContext).bottom + 16,
-        ),
-        child: SingleChildScrollView(
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              const Text(
-                '家庭群聊管理',
-                style: TextStyle(fontSize: 18, fontWeight: FontWeight.w800),
-              ),
-              const SizedBox(height: 12),
-              TextField(
-                controller: name,
-                decoration: const InputDecoration(labelText: '群名称'),
-              ),
-              const SizedBox(height: 10),
-              TextField(
-                controller: announcement,
-                minLines: 2,
-                maxLines: 4,
-                decoration: const InputDecoration(labelText: '群公告'),
-              ),
-              const SizedBox(height: 12),
-              if (group.canManage) ...[
-                FilledButton(
-                  onPressed: () async {
-                    await shopApi.updateFamilyGroup(
-                      group.id,
-                      name: name.text.trim(),
-                      announcement: announcement.text.trim(),
-                    );
-                    if (sheetContext.mounted) Navigator.pop(sheetContext);
-                    _load(silent: true);
-                  },
-                  child: const Text('保存群资料'),
-                ),
-                const SizedBox(height: 8),
-                OutlinedButton.icon(
-                  onPressed: () async {
-                    await shopApi.dissolveFamilyGroup(group.id);
-                    if (sheetContext.mounted) Navigator.pop(sheetContext);
-                    _load(silent: true);
-                  },
-                  icon: const Icon(Icons.group_off_outlined),
-                  label: const Text('解散家庭群聊'),
-                ),
-              ],
-              const SizedBox(height: 16),
-              const Text('群成员', style: TextStyle(fontWeight: FontWeight.w800)),
-              for (final member in group.members)
-                ListTile(
-                  contentPadding: EdgeInsets.zero,
-                  title: Text(member.nickname),
-                  subtitle: Text(
-                    member.role == 'OWNER' ? '群主' : member.memberStatus,
-                  ),
-                  trailing: member.role == 'OWNER' || !group.canManage
-                      ? null
-                      : IconButton(
-                          tooltip: '移出群聊',
-                          icon: const Icon(Icons.person_remove_outlined),
-                          onPressed: () async {
-                            await shopApi.removeFamilyGroupMember(
-                              group.id,
-                              member.userId,
-                            );
-                            if (sheetContext.mounted)
-                              Navigator.pop(sheetContext);
-                            _load(silent: true);
-                          },
-                        ),
-                ),
-            ],
-          ),
-        ),
+    await Navigator.of(context).push(
+      MaterialPageRoute(
+        builder: (_) =>
+            FamilyGroupManagementPage(conversationId: conversation.id),
       ),
     );
-    name.dispose();
-    announcement.dispose();
+    if (mounted) _load(silent: true);
   }
 
   void _showSnackBar(String message) {
-    ScaffoldMessenger.of(context)
-      ..hideCurrentSnackBar()
-      ..showSnackBar(SnackBar(content: Text(message)));
+    AppNotice.show(context, message);
   }
 
   Widget? _buildBottomBar() {
@@ -705,10 +615,25 @@ class _ShopFamilyPageState extends State<ShopFamilyPage> {
   }
 
   Future<void> _approveMember(FamilyMemberInfo member) async {
-    await shopApi.approveFamilyMember(member.id);
-    if (mounted) {
-      _showMessage('已同意加入');
-      _load();
+    final before = _members;
+    setState(() {
+      _members = _members
+          .map(
+            (item) => item.id == member.id ? item.withStatus('APPROVED') : item,
+          )
+          .toList();
+    });
+    try {
+      await shopApi.approveFamilyMember(member.id);
+      if (mounted) {
+        _showMessage('已同意加入');
+        _load(silent: true);
+      }
+    } on ApiException catch (error) {
+      if (mounted) {
+        setState(() => _members = before);
+        _showMessage(error.message);
+      }
     }
   }
 
@@ -741,68 +666,14 @@ class _ShopFamilyPageState extends State<ShopFamilyPage> {
   }
 
   void _showMemberInfo(FamilyMemberInfo member) {
-    showModalBottomSheet<void>(
-      context: context,
-      showDragHandle: true,
-      backgroundColor: Colors.white,
-      builder: (context) => SafeArea(
-        child: Padding(
-          padding: const EdgeInsets.fromLTRB(24, 8, 24, 32),
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Row(
-                children: [
-                  CircleAvatar(
-                    radius: 28,
-                    backgroundColor: _softOrange,
-                    foregroundColor: _warmOrange,
-                    backgroundImage:
-                        _resolvedAvatarUrl(member.avatarUrl) == null
-                        ? null
-                        : NetworkImage(_resolvedAvatarUrl(member.avatarUrl)!),
-                    child: _resolvedAvatarUrl(member.avatarUrl) == null
-                        ? Text(
-                            member.displayName.characters.first,
-                            style: const TextStyle(fontSize: 20),
-                          )
-                        : null,
-                  ),
-                  const SizedBox(width: 16),
-                  Expanded(
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        Text(
-                          member.displayName,
-                          style: const TextStyle(
-                            fontSize: 18,
-                            fontWeight: FontWeight.w800,
-                          ),
-                        ),
-                        const SizedBox(height: 4),
-                        Text(
-                          member.statusText,
-                          style: const TextStyle(
-                            color: _mutedColor,
-                            fontSize: 13,
-                          ),
-                        ),
-                      ],
-                    ),
-                  ),
-                ],
-              ),
-              const SizedBox(height: 24),
-              _InfoRow(label: '系统编号', value: '#${member.userId}'),
-              _InfoRow(label: '用户昵称', value: member.displayName),
-              _InfoRow(
-                label: '联系电话',
-                value: member.phone?.isNotEmpty == true ? member.phone! : '未填写',
-              ),
-            ],
-          ),
+    Navigator.of(context).push(
+      MaterialPageRoute(
+        builder: (_) => ChatUserDetailPage(
+          userId: member.userId,
+          nickname: member.displayName,
+          avatarUrl: member.avatarUrl,
+          phone: member.phone,
+          statusText: member.statusText,
         ),
       ),
     );
@@ -833,9 +704,7 @@ class _ShopFamilyPageState extends State<ShopFamilyPage> {
   }
 
   void _showMessage(String message) {
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(content: Text(message), behavior: SnackBarBehavior.floating),
-    );
+    AppNotice.show(context, message);
   }
 
   String _absoluteImageUrl(String url) {
@@ -1056,40 +925,6 @@ class _MemberTile extends StatelessWidget {
                 ),
               ),
             ],
-          ),
-        ],
-      ),
-    );
-  }
-}
-
-class _InfoRow extends StatelessWidget {
-  const _InfoRow({required this.label, required this.value});
-  final String label;
-  final String value;
-
-  @override
-  Widget build(BuildContext context) {
-    return Padding(
-      padding: const EdgeInsets.only(bottom: 12),
-      child: Row(
-        children: [
-          SizedBox(
-            width: 80,
-            child: Text(
-              label,
-              style: const TextStyle(color: _mutedColor, fontSize: 14),
-            ),
-          ),
-          Expanded(
-            child: Text(
-              value,
-              style: const TextStyle(
-                color: _textColor,
-                fontWeight: FontWeight.w600,
-                fontSize: 15,
-              ),
-            ),
           ),
         ],
       ),

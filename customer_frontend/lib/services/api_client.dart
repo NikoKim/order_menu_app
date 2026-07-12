@@ -533,16 +533,42 @@ class CustomerApi {
     }, query: {'nickname': nickname.trim()});
   }
 
+  Future<ChatBlock> chatBlock(int userId) => api.get(
+    '/messages/blocks/users/$userId',
+    (json) => ChatBlock.fromJson(json as Map<String, dynamic>),
+  );
+
+  Future<void> blockChatUser(int userId) =>
+      api.post('/messages/blocks/users/$userId', (_) {});
+
+  Future<void> unblockChatUser(int userId) =>
+      api.delete('/messages/blocks/users/$userId', (_) {});
+
   Future<ChatMessages> chatMessages(int conversationId) => api.get(
     '/messages/conversations/$conversationId/messages',
     (json) => ChatMessages.fromJson(json as Map<String, dynamic>),
   );
 
-  Future<ChatMessage> sendChatMessage(int conversationId, String content) =>
+  Future<ChatMessage> sendChatMessage(
+    int conversationId,
+    String content, {
+    int? quotedMessageId,
+  }) => api.post(
+    '/messages/conversations/$conversationId/messages',
+    (json) => ChatMessage.fromJson(json as Map<String, dynamic>),
+    body: {'content': content.trim(), 'quotedMessageId': quotedMessageId},
+  );
+
+  Future<ChatMessage> recallChatMessage(int conversationId, int messageId) =>
       api.post(
-        '/messages/conversations/$conversationId/messages',
+        '/messages/conversations/$conversationId/messages/$messageId/recall',
         (json) => ChatMessage.fromJson(json as Map<String, dynamic>),
-        body: {'content': content.trim()},
+      );
+
+  Future<void> deleteChatMessage(int conversationId, int messageId) =>
+      api.delete(
+        '/messages/conversations/$conversationId/messages/$messageId',
+        (_) {},
       );
 
   Future<FamilyGroup> familyGroup(int conversationId) => api.get(
@@ -557,6 +583,16 @@ class CustomerApi {
 
   Future<void> joinFamilyGroup(int conversationId) =>
       api.post('/messages/family-groups/$conversationId/join', (_) {});
+
+  Future<void> acceptFamilyGroupInvitation(int conversationId) => api.post(
+    '/messages/family-groups/$conversationId/approve-membership',
+    (_) {},
+  );
+
+  Future<void> declineFamilyGroupInvitation(int conversationId) => api.post(
+    '/messages/family-groups/$conversationId/decline-membership',
+    (_) {},
+  );
 
   Future<void> leaveFamilyGroup(int conversationId) =>
       api.post('/messages/family-groups/$conversationId/leave', (_) {});
@@ -574,6 +610,15 @@ class CustomerApi {
     '/messages/dish-shares',
     (json) => ChatMessage.fromJson(json as Map<String, dynamic>),
     body: {'conversationId': conversationId, 'dishId': dishId},
+  );
+
+  Future<ChatMessage> shareOrder({
+    required int conversationId,
+    required int orderId,
+  }) => api.post(
+    '/messages/order-shares',
+    (json) => ChatMessage.fromJson(json as Map<String, dynamic>),
+    body: {'conversationId': conversationId, 'orderId': orderId},
   );
 
   Future<PageResult<FeedbackEntry>> myFeedback() {

@@ -16,12 +16,28 @@ public class ChatMessage {
     private Long senderUserId;
     private String type;
     private String content;
+    private String deliveryStatus;
+    private String deliveryFailureReason;
     private Long dishId;
     private Long shopId;
+    private String shopName;
     private String dishName;
     private String dishImageUrl;
     private BigDecimal dishPrice;
     private String dishDescription;
     private Integer dishSalesCount;
+    private Long orderId;
+    private String orderNo;
+    private LocalDateTime orderCreatedAt;
+    private String orderStatus;
+    private String orderShopName;
+    private String orderItemsJson;
+    private BigDecimal orderTotalAmount;
+    private String orderRemark;
+    private Long quotedMessageId;
+    private String quotedType;
+    private String quotedContent;
+    private String quotedSenderName;
+    private LocalDateTime recalledAt;
     private LocalDateTime createdAt;
 }

@@ -8,7 +8,6 @@ import '../services/shop_api_service.dart';
 import '../services/websocket_service.dart';
 import '../services/latest_request.dart';
 import 'chat_detail_page.dart';
-import 'message_center_page.dart';
 
 class ChatListPage extends StatefulWidget {
   const ChatListPage({super.key});
@@ -105,18 +104,7 @@ class _ChatListPageState extends State<ChatListPage>
 
   @override
   Widget build(BuildContext context) => Scaffold(
-    appBar: AppBar(
-      title: const Text('聊天'),
-      actions: [
-        IconButton(
-          tooltip: '消息通知',
-          icon: const Icon(Icons.notifications_outlined),
-          onPressed: () => Navigator.of(
-            context,
-          ).push(MaterialPageRoute(builder: (_) => const MessageCenterPage())),
-        ),
-      ],
-    ),
+    appBar: AppBar(title: const Text('聊天')),
     body: RefreshIndicator(
       onRefresh: _reload,
       child: FutureBuilder<List<ChatConversation>>(
@@ -160,11 +148,48 @@ class _ChatListPageState extends State<ChatListPage>
                   horizontal: 16,
                   vertical: 4,
                 ),
-                leading: _ConversationAvatar(conversation: conversation),
-                title: Text(
-                  conversation.title,
-                  maxLines: 1,
-                  overflow: TextOverflow.ellipsis,
+                leading: Stack(
+                  clipBehavior: Clip.none,
+                  children: [
+                    _ConversationAvatar(conversation: conversation),
+                    if (conversation.shouldShowUnreadBadge)
+                      Positioned(
+                        right: -7,
+                        top: -7,
+                        child: _UnreadBadge(count: conversation.unreadCount),
+                      ),
+                  ],
+                ),
+                title: Row(
+                  children: [
+                    Flexible(
+                      child: Text(
+                        conversation.title,
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                      ),
+                    ),
+                    if (!conversation.isDirect) ...[
+                      const SizedBox(width: 6),
+                      Container(
+                        padding: const EdgeInsets.symmetric(
+                          horizontal: 5,
+                          vertical: 2,
+                        ),
+                        decoration: BoxDecoration(
+                          color: const Color(0xFFFFE8CF),
+                          borderRadius: BorderRadius.circular(4),
+                        ),
+                        child: const Text(
+                          '群聊',
+                          style: TextStyle(
+                            fontSize: 10,
+                            color: Color(0xFFB76512),
+                          ),
+                        ),
+                      ),
+                    ],
+                  ],
                 ),
                 subtitle: Text(
                   conversation.isActive
@@ -182,10 +207,6 @@ class _ChatListPageState extends State<ChatListPage>
                     crossAxisAlignment: CrossAxisAlignment.end,
                     children: [
                       _ConversationTime(value: conversation.lastMessageAt),
-                      if (conversation.shouldShowUnreadBadge) ...[
-                        const SizedBox(height: 5),
-                        _UnreadBadge(count: conversation.unreadCount),
-                      ],
                     ],
                   ),
                 ),
@@ -204,13 +225,6 @@ class _ChatListPageState extends State<ChatListPage>
           );
         },
       ),
-    ),
-    floatingActionButton: FloatingActionButton(
-      tooltip: '发起私聊',
-      onPressed: () => ScaffoldMessenger.of(
-        context,
-      ).showSnackBar(const SnackBar(content: Text('可从顾客订单或家庭群成员发起私聊'))),
-      child: const Icon(Icons.add_comment_outlined),
     ),
   );
 }
@@ -240,11 +254,15 @@ class _ConversationAvatar extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final imageUrl = conversation.imageUrl;
+    final hasImage = imageUrl != null && imageUrl.isNotEmpty;
+
     return CircleAvatar(
-      foregroundImage: imageUrl == null || imageUrl.isEmpty
-          ? null
-          : NetworkImage(ApiConfig.resolveImageUrl(imageUrl)),
-      onForegroundImageError: (_, _) {},
+      foregroundImage: hasImage
+          ? NetworkImage(ApiConfig.resolveImageUrl(imageUrl))
+          : null,
+      onForegroundImageError: hasImage
+          ? (_, _) {}
+          : null,
       child: Icon(
         conversation.isDirect ? Icons.person_outline : Icons.groups_outlined,
       ),

@@ -15,6 +15,7 @@ import 'package:open_filex/open_filex.dart';
 
 import 'services/customer_websocket_service.dart';
 import 'services/latest_request.dart';
+import 'widgets/app_notice.dart';
 
 void main() {
   runApp(const OrderMenuCustomerApp());
@@ -140,8 +141,10 @@ class _CustomerShellState extends State<CustomerShell> {
   late CustomerApi _customerApi;
   String? _webSocketToken;
   StreamSubscription<CustomerWsMessage>? _chatBadgeSubscription;
+  StreamSubscription<CustomerWsMessage>? _notificationBadgeSubscription;
   StreamSubscription<bool>? _connectionSubscription;
   int _unreadChats = 0;
+  int _unreadNotifications = 0;
   final _chatBadgeRequests = LatestRequest();
 
   @override
@@ -151,11 +154,17 @@ class _CustomerShellState extends State<CustomerShell> {
     _chatBadgeSubscription ??= CustomerWebSocketService.instance
         .streamForModule('CHAT')
         .listen((_) => _refreshChatBadge());
+    _notificationBadgeSubscription ??= CustomerWebSocketService.instance
+        .streamForModule('NOTIFICATION')
+        .listen((_) => _refreshNotificationBadge());
     _connectionSubscription ??= CustomerWebSocketService
         .instance
         .connectionStream
         .where((connected) => connected)
-        .listen((_) => _refreshChatBadge());
+        .listen((_) {
+          _refreshChatBadge();
+          _refreshNotificationBadge();
+        });
 
     if (!_hasCheckedUpdate) {
       _hasCheckedUpdate = true;
@@ -190,6 +199,7 @@ class _CustomerShellState extends State<CustomerShell> {
         _webSocketToken = token;
         CustomerWebSocketService.instance.connect(token, force: true);
         _refreshChatBadge();
+        _refreshNotificationBadge();
       }
       return;
     }
@@ -197,7 +207,11 @@ class _CustomerShellState extends State<CustomerShell> {
     if (_webSocketToken != null) {
       _webSocketToken = null;
       CustomerWebSocketService.instance.disconnect();
-      if (mounted) setState(() => _unreadChats = 0);
+      if (mounted)
+        setState(() {
+          _unreadChats = 0;
+          _unreadNotifications = 0;
+        });
     }
   }
 
@@ -215,9 +229,18 @@ class _CustomerShellState extends State<CustomerShell> {
     } catch (_) {}
   }
 
+  Future<void> _refreshNotificationBadge() async {
+    if (!AppScope.of(context).auth.isLoggedIn) return;
+    try {
+      final count = await _customerApi.unreadNotificationCount();
+      if (mounted) setState(() => _unreadNotifications = count);
+    } catch (_) {}
+  }
+
   @override
   void dispose() {
     _chatBadgeSubscription?.cancel();
+    _notificationBadgeSubscription?.cancel();
     _connectionSubscription?.cancel();
     CustomerWebSocketService.instance.disconnect();
     super.dispose();
@@ -248,9 +271,7 @@ class _CustomerShellState extends State<CustomerShell> {
             Future<void> installApk() async {
               final path = apkPath;
               if (path == null || path.isEmpty) {
-                ScaffoldMessenger.of(
-                  context,
-                ).showSnackBar(const SnackBar(content: Text('安装包不存在，请先下载')));
+                AppNotice.show(context, '安装包不存在，请先下载');
                 return;
               }
 
@@ -262,34 +283,26 @@ class _CustomerShellState extends State<CustomerShell> {
                 debugPrint('打开 APK 结果: ${result.type}, ${result.message}');
 
                 if (result.type != ResultType.done && mounted) {
-                  ScaffoldMessenger.of(context).showSnackBar(
-                    SnackBar(content: Text('打开安装程序失败：${result.message}')),
-                  );
+                  AppNotice.show(context, '打开安装程序失败：${result.message}');
                 }
               } catch (e, st) {
                 debugPrint('打开安装程序异常: $e');
                 debugPrint('$st');
 
                 if (mounted) {
-                  ScaffoldMessenger.of(
-                    context,
-                  ).showSnackBar(SnackBar(content: Text('打开安装程序失败：$e')));
+                  AppNotice.show(context, '打开安装程序失败：$e');
                 }
               }
             }
 
             Future<void> startDownload() async {
               if (url.isEmpty) {
-                ScaffoldMessenger.of(
-                  context,
-                ).showSnackBar(const SnackBar(content: Text('下载链接为空')));
+                AppNotice.show(context, '下载链接为空');
                 return;
               }
 
               if (!Platform.isAndroid) {
-                ScaffoldMessenger.of(context).showSnackBar(
-                  const SnackBar(content: Text('当前仅支持 Android APK 更新')),
-                );
+                AppNotice.show(context, '当前仅支持 Android APK 更新');
                 return;
               }
 
@@ -363,9 +376,7 @@ class _CustomerShellState extends State<CustomerShell> {
                 });
 
                 if (mounted) {
-                  ScaffoldMessenger.of(
-                    context,
-                  ).showSnackBar(SnackBar(content: Text('下载失败：$e')));
+                  AppNotice.show(context, '下载失败：$e');
                 }
               }
             }
@@ -480,7 +491,10 @@ class _CustomerShellState extends State<CustomerShell> {
           HomePage(api: _customerApi),
           if (loggedIn) const ChatListPage(),
           loggedIn
-              ? ProfilePage(api: _customerApi)
+              ? ProfilePage(
+                  api: _customerApi,
+                  notificationCount: _unreadNotifications,
+                )
               : AuthPage(onLoggedIn: () => setState(() => _currentIndex = 2)),
         ];
         final selectedIndex = !loggedIn && _currentIndex >= pages.length
@@ -523,10 +537,18 @@ class _CustomerShellState extends State<CustomerShell> {
                   label: '聊天',
                 ),
               NavigationDestination(
-                icon: Icon(
-                  loggedIn ? Icons.person_outline : Icons.login_outlined,
-                ),
-                selectedIcon: Icon(loggedIn ? Icons.person : Icons.login),
+                icon: loggedIn
+                    ? _ChatBadgeIcon(
+                        icon: Icons.person_outline,
+                        count: _unreadNotifications,
+                      )
+                    : const Icon(Icons.login_outlined),
+                selectedIcon: loggedIn
+                    ? _ChatBadgeIcon(
+                        icon: Icons.person,
+                        count: _unreadNotifications,
+                      )
+                    : const Icon(Icons.login),
                 label: loggedIn ? '我的' : '登录',
               ),
             ],

@@ -1,6 +1,7 @@
 import 'dart:async';
 
 import 'package:flutter/material.dart';
+import '../widgets/app_notice.dart';
 
 import '../models/shop_api_models.dart';
 import '../services/api_config.dart';
@@ -37,12 +38,12 @@ class _FeedbackManagePageState extends State<FeedbackManagePage> {
     _wsSubscription = ShopWebSocketService.instance
         .streamForModule('FEEDBACK')
         .listen((msg) {
-      if (!mounted) return;
+          if (!mounted) return;
 
-      if ({'CREATED', 'UPDATED', 'REPLIED'}.contains(msg.action)) {
-        _load(silent: true);
-      }
-    });
+          if ({'CREATED', 'UPDATED', 'REPLIED'}.contains(msg.action)) {
+            _load(silent: true);
+          }
+        });
   }
 
   @override
@@ -87,7 +88,10 @@ class _FeedbackManagePageState extends State<FeedbackManagePage> {
         backgroundColor: Colors.white,
         foregroundColor: _textColor,
         elevation: 0,
-        title: const Text('留言建议', style: TextStyle(fontWeight: FontWeight.w700)),
+        title: const Text(
+          '留言建议',
+          style: TextStyle(fontWeight: FontWeight.w700),
+        ),
       ),
       body: SafeArea(
         child: RefreshIndicator(
@@ -108,7 +112,10 @@ class _FeedbackManagePageState extends State<FeedbackManagePage> {
         separatorBuilder: (_, __) => const SizedBox(height: 12),
         itemBuilder: (_, __) => Container(
           padding: const EdgeInsets.all(16),
-          decoration: BoxDecoration(color: Colors.white, borderRadius: BorderRadius.circular(12)),
+          decoration: BoxDecoration(
+            color: Colors.white,
+            borderRadius: BorderRadius.circular(12),
+          ),
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: const [
@@ -145,7 +152,11 @@ class _FeedbackManagePageState extends State<FeedbackManagePage> {
           Center(
             child: Column(
               children: const [
-                Icon(Icons.mark_chat_read_outlined, size: 54, color: Color(0xFFE0E0E0)),
+                Icon(
+                  Icons.mark_chat_read_outlined,
+                  size: 54,
+                  color: Color(0xFFE0E0E0),
+                ),
                 SizedBox(height: 16),
                 Text('暂无顾客留言', style: TextStyle(color: _mutedColor)),
               ],
@@ -194,9 +205,7 @@ class _FeedbackManagePageState extends State<FeedbackManagePage> {
   }
 
   void _showSnackBar(String message) {
-    ScaffoldMessenger.of(context)
-      ..hideCurrentSnackBar()
-      ..showSnackBar(SnackBar(content: Text(message), behavior: SnackBarBehavior.floating));
+    AppNotice.show(context, message);
   }
 }
 
@@ -246,10 +255,14 @@ class _FeedbackCard extends StatelessWidget {
                 clipBehavior: Clip.antiAlias, // 切割成圆形
                 child: avatarUrl != null && avatarUrl.isNotEmpty
                     ? Image.network(
-                  _absoluteImageUrl(avatarUrl),
-                  fit: BoxFit.cover,
-                  errorBuilder: (_, __, ___) => const Icon(Icons.person, color: _warmOrange, size: 20),
-                )
+                        _absoluteImageUrl(avatarUrl),
+                        fit: BoxFit.cover,
+                        errorBuilder: (_, __, ___) => const Icon(
+                          Icons.person,
+                          color: _warmOrange,
+                          size: 20,
+                        ),
+                      )
                     : const Icon(Icons.person, color: _warmOrange, size: 20),
               ),
               const SizedBox(width: 12),
@@ -260,7 +273,11 @@ class _FeedbackCard extends StatelessWidget {
                     // 顾客昵称展示
                     Text(
                       nickname,
-                      style: const TextStyle(color: _textColor, fontSize: 15, fontWeight: FontWeight.w700),
+                      style: const TextStyle(
+                        color: _textColor,
+                        fontSize: 15,
+                        fontWeight: FontWeight.w700,
+                      ),
                     ),
                     const SizedBox(height: 2),
                     Text(
@@ -278,11 +295,17 @@ class _FeedbackCard extends StatelessWidget {
           // 留言内容
           Text(
             feedback.content,
-            style: const TextStyle(color: _textColor, height: 1.5, fontSize: 15),
+            style: const TextStyle(
+              color: _textColor,
+              height: 1.5,
+              fontSize: 15,
+            ),
           ),
 
           // 商家回复展示
-          if (isReplied && feedback.reply != null && feedback.reply!.isNotEmpty) ...[
+          if (isReplied &&
+              feedback.reply != null &&
+              feedback.reply!.isNotEmpty) ...[
             const SizedBox(height: 16),
             Container(
               width: double.infinity,
@@ -295,9 +318,23 @@ class _FeedbackCard extends StatelessWidget {
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  const Text('商家回复', style: TextStyle(color: _warmOrange, fontSize: 12, fontWeight: FontWeight.w800)),
+                  const Text(
+                    '商家回复',
+                    style: TextStyle(
+                      color: _warmOrange,
+                      fontSize: 12,
+                      fontWeight: FontWeight.w800,
+                    ),
+                  ),
                   const SizedBox(height: 4),
-                  Text(feedback.reply!, style: const TextStyle(color: _textColor, height: 1.5, fontSize: 14)),
+                  Text(
+                    feedback.reply!,
+                    style: const TextStyle(
+                      color: _textColor,
+                      height: 1.5,
+                      fontSize: 14,
+                    ),
+                  ),
                 ],
               ),
             ),
@@ -313,14 +350,27 @@ class _FeedbackCard extends StatelessWidget {
             child: OutlinedButton.icon(
               style: OutlinedButton.styleFrom(
                 foregroundColor: isReplied ? _mutedColor : _warmOrange,
-                side: BorderSide(color: isReplied ? const Color(0xFFE8E8E8) : _warmOrange),
-                shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
+                side: BorderSide(
+                  color: isReplied ? const Color(0xFFE8E8E8) : _warmOrange,
+                ),
+                shape: RoundedRectangleBorder(
+                  borderRadius: BorderRadius.circular(8),
+                ),
                 minimumSize: const Size(80, 36),
                 padding: const EdgeInsets.symmetric(horizontal: 16),
               ),
               onPressed: onReply,
-              icon: Icon(isReplied ? Icons.edit_outlined : Icons.reply, size: 16),
-              label: Text(isReplied ? '修改回复' : '立即回复', style: const TextStyle(fontSize: 13, fontWeight: FontWeight.w600)),
+              icon: Icon(
+                isReplied ? Icons.edit_outlined : Icons.reply,
+                size: 16,
+              ),
+              label: Text(
+                isReplied ? '修改回复' : '立即回复',
+                style: const TextStyle(
+                  fontSize: 13,
+                  fontWeight: FontWeight.w600,
+                ),
+              ),
             ),
           ),
         ],
@@ -363,13 +413,21 @@ class _ErrorPanel extends StatelessWidget {
   Widget build(BuildContext context) {
     return Container(
       padding: const EdgeInsets.all(16),
-      decoration: BoxDecoration(color: _softOrange, borderRadius: BorderRadius.circular(12)),
+      decoration: BoxDecoration(
+        color: _softOrange,
+        borderRadius: BorderRadius.circular(12),
+      ),
       child: Row(
         children: [
           const Icon(Icons.info_outline, color: _warmOrange),
           const SizedBox(width: 12),
-          Expanded(child: Text(message, style: const TextStyle(color: _textColor))),
-          TextButton(onPressed: onRetry, child: const Text('重试', style: TextStyle(color: _warmOrange))),
+          Expanded(
+            child: Text(message, style: const TextStyle(color: _textColor)),
+          ),
+          TextButton(
+            onPressed: onRetry,
+            child: const Text('重试', style: TextStyle(color: _warmOrange)),
+          ),
         ],
       ),
     );
@@ -381,21 +439,32 @@ class _SkeletonBox extends StatefulWidget {
   final double height;
   final double borderRadius;
 
-  const _SkeletonBox({required this.width, required this.height, this.borderRadius = 8});
+  const _SkeletonBox({
+    required this.width,
+    required this.height,
+    this.borderRadius = 8,
+  });
 
   @override
   State<_SkeletonBox> createState() => _SkeletonBoxState();
 }
 
-class _SkeletonBoxState extends State<_SkeletonBox> with SingleTickerProviderStateMixin {
+class _SkeletonBoxState extends State<_SkeletonBox>
+    with SingleTickerProviderStateMixin {
   late AnimationController _controller;
   late Animation<Color?> _colorTween;
 
   @override
   void initState() {
     super.initState();
-    _controller = AnimationController(vsync: this, duration: const Duration(milliseconds: 1000))..repeat(reverse: true);
-    _colorTween = ColorTween(begin: const Color(0xFFF0F0F0), end: const Color(0xFFE0E0E0)).animate(_controller);
+    _controller = AnimationController(
+      vsync: this,
+      duration: const Duration(milliseconds: 1000),
+    )..repeat(reverse: true);
+    _colorTween = ColorTween(
+      begin: const Color(0xFFF0F0F0),
+      end: const Color(0xFFE0E0E0),
+    ).animate(_controller);
   }
 
   @override
@@ -412,7 +481,10 @@ class _SkeletonBoxState extends State<_SkeletonBox> with SingleTickerProviderSta
         return Container(
           width: widget.width,
           height: widget.height,
-          decoration: BoxDecoration(color: _colorTween.value, borderRadius: BorderRadius.circular(widget.borderRadius)),
+          decoration: BoxDecoration(
+            color: _colorTween.value,
+            borderRadius: BorderRadius.circular(widget.borderRadius),
+          ),
         );
       },
     );
@@ -485,8 +557,11 @@ class _ReplyDialogState extends State<_ReplyDialog> {
           child: const Text('取消', style: TextStyle(color: Color(0xFF77716B))),
         ),
         FilledButton(
-          onPressed: () => Navigator.pop(context, _controller.text.trim()), // 发送时返回输入的文本
-          style: FilledButton.styleFrom(backgroundColor: const Color(0xFFF28C28)),
+          onPressed: () =>
+              Navigator.pop(context, _controller.text.trim()), // 发送时返回输入的文本
+          style: FilledButton.styleFrom(
+            backgroundColor: const Color(0xFFF28C28),
+          ),
           child: const Text('发送'),
         ),
       ],

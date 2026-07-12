@@ -3,6 +3,7 @@ import 'package:flutter/material.dart';
 import '../app_mock_data.dart';
 import '../services/api_client.dart';
 import '../widgets/app_footer.dart';
+import '../widgets/app_notice.dart';
 import 'my_feedback_page.dart';
 
 class FeedbackPage extends StatefulWidget {
@@ -82,22 +83,13 @@ class _FeedbackPageState extends State<FeedbackPage> {
   }
 
   void _openFeedbackHistory() {
-    Navigator.of(context).push(
-      MaterialPageRoute(
-        builder: (_) => MyFeedbackPage(api: widget.api),
-      ),
-    );
+    Navigator.of(
+      context,
+    ).push(MaterialPageRoute(builder: (_) => MyFeedbackPage(api: widget.api)));
   }
 
   void _showSnack(String message) {
-    ScaffoldMessenger.of(context)
-      ..hideCurrentSnackBar()
-      ..showSnackBar(
-        SnackBar(
-          content: Text(message),
-          behavior: SnackBarBehavior.floating,
-        ),
-      );
+    AppNotice.show(context, message);
   }
 
   @override
@@ -164,12 +156,18 @@ class _FeedbackPageState extends State<FeedbackPage> {
                   const SizedBox(height: 14),
                   SegmentedButton<String>(
                     style: ButtonStyle(
-                      backgroundColor: MaterialStateProperty.resolveWith((states) {
-                        if (states.contains(MaterialState.selected)) return warmOrange;
+                      backgroundColor: MaterialStateProperty.resolveWith((
+                        states,
+                      ) {
+                        if (states.contains(MaterialState.selected))
+                          return warmOrange;
                         return Colors.white;
                       }),
-                      foregroundColor: MaterialStateProperty.resolveWith((states) {
-                        if (states.contains(MaterialState.selected)) return Colors.white;
+                      foregroundColor: MaterialStateProperty.resolveWith((
+                        states,
+                      ) {
+                        if (states.contains(MaterialState.selected))
+                          return Colors.white;
                         return pageTextColor;
                       }),
                       side: MaterialStateProperty.resolveWith((states) {

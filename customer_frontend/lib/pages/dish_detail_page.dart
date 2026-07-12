@@ -5,6 +5,7 @@ import '../main.dart';
 import '../models.dart';
 import '../services/api_client.dart';
 import '../widgets/app_footer.dart';
+import '../widgets/app_notice.dart';
 
 class DishDetailPage extends StatefulWidget {
   const DishDetailPage({
@@ -93,7 +94,7 @@ class _DishDetailPageState extends State<DishDetailPage> {
   Future<void> _shareDish() async {
     final services = AppScope.of(context);
     if (!services.auth.isLoggedIn) {
-      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('登录后才能分享菜品')));
+      AppNotice.show(context, '登录后才能分享菜品');
       return;
     }
     final api = CustomerApi(services.api);
@@ -101,7 +102,7 @@ class _DishDetailPageState extends State<DishDetailPage> {
     try {
       conversations = await api.conversations();
     } on ApiException catch (error) {
-      if (mounted) ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(error.message)));
+      if (mounted) AppNotice.show(context, error.message);
       return;
     }
     if (!mounted) return;
@@ -110,35 +111,51 @@ class _DishDetailPageState extends State<DishDetailPage> {
       builder: (sheetContext) => SafeArea(
         child: SizedBox(
           height: 420,
-          child: Column(children: [
-            const Padding(padding: EdgeInsets.all(16), child: Text('分享到聊天', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 18))),
-            Expanded(
-              child: conversations.isEmpty
-                  ? const Center(child: Text('暂无可分享的聊天'))
-                  : ListView.builder(
-                      itemCount: conversations.length,
-                      itemBuilder: (_, index) {
-                        final conversation = conversations[index];
-                        return ListTile(
-                          leading: const CircleAvatar(child: Icon(Icons.chat_bubble_outline)),
-                          title: Text(conversation.title),
-                          subtitle: Text(conversation.isDirect ? '私聊' : '家庭群聊'),
-                          enabled: conversation.isActive,
-                          onTap: () async {
-                            try {
-                              await api.shareDish(conversationId: conversation.id, dishId: widget.dish.id);
-                              if (!mounted || !sheetContext.mounted) return;
-                              Navigator.of(sheetContext).pop();
-                              ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('已分享菜品')));
-                            } on ApiException catch (error) {
-                              if (mounted) ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(error.message)));
-                            }
-                          },
-                        );
-                      },
-                    ),
-            ),
-          ]),
+          child: Column(
+            children: [
+              const Padding(
+                padding: EdgeInsets.all(16),
+                child: Text(
+                  '分享到聊天',
+                  style: TextStyle(fontWeight: FontWeight.bold, fontSize: 18),
+                ),
+              ),
+              Expanded(
+                child: conversations.isEmpty
+                    ? const Center(child: Text('暂无可分享的聊天'))
+                    : ListView.builder(
+                        itemCount: conversations.length,
+                        itemBuilder: (_, index) {
+                          final conversation = conversations[index];
+                          return ListTile(
+                            leading: const CircleAvatar(
+                              child: Icon(Icons.chat_bubble_outline),
+                            ),
+                            title: Text(conversation.title),
+                            subtitle: Text(
+                              conversation.isDirect ? '私聊' : '家庭群聊',
+                            ),
+                            enabled: conversation.isActive,
+                            onTap: () async {
+                              try {
+                                await api.shareDish(
+                                  conversationId: conversation.id,
+                                  dishId: widget.dish.id,
+                                );
+                                if (!mounted || !sheetContext.mounted) return;
+                                Navigator.of(sheetContext).pop();
+                                AppNotice.show(context, '已分享菜品');
+                              } on ApiException catch (error) {
+                                if (mounted)
+                                  AppNotice.show(context, error.message);
+                              }
+                            },
+                          );
+                        },
+                      ),
+              ),
+            ],
+          ),
         ),
       ),
     );
@@ -151,7 +168,13 @@ class _DishDetailPageState extends State<DishDetailPage> {
     return Scaffold(
       appBar: AppBar(
         title: const Text('菜品详情'),
-        actions: [IconButton(tooltip: '分享', onPressed: _shareDish, icon: const Icon(Icons.share_outlined))],
+        actions: [
+          IconButton(
+            tooltip: '分享',
+            onPressed: _shareDish,
+            icon: const Icon(Icons.share_outlined),
+          ),
+        ],
       ),
       body: ListView(
         padding: const EdgeInsets.fromLTRB(20, 12, 20, 96),

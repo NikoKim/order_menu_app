@@ -6,8 +6,11 @@ import 'package:image_picker/image_picker.dart';
 import '../models/shop_api_models.dart';
 import '../services/shop_api_service.dart';
 import '../services/websocket_service.dart';
+import '../widgets/app_notice.dart';
 import 'feedback_manage_page.dart';
 import 'shop_family_page.dart';
+import 'message_center_page.dart';
+import 'chat_settings_page.dart';
 
 const Color _warmOrange = Color(0xFFF28C28);
 const Color _softOrange = Color(0xFFFFF4E8);
@@ -17,15 +20,17 @@ const Color _textColor = Color(0xFF242424);
 const Color _mutedColor = Color(0xFF77716B);
 
 class ShopProfilePage extends StatefulWidget {
-  const ShopProfilePage({super.key, this.onLogout});
+  const ShopProfilePage({super.key, this.onLogout, this.onBadgeChanged});
 
   final Future<void> Function()? onLogout;
+  final VoidCallback? onBadgeChanged;
 
   @override
   State<ShopProfilePage> createState() => _ShopProfilePageState();
 }
 
-class _ShopProfilePageState extends State<ShopProfilePage> {
+class _ShopProfilePageState extends State<ShopProfilePage>
+    with WidgetsBindingObserver {
   final TextEditingController _nameController = TextEditingController();
   final TextEditingController _descriptionController = TextEditingController();
   final TextEditingController _phoneController = TextEditingController();
@@ -45,19 +50,30 @@ class _ShopProfilePageState extends State<ShopProfilePage> {
   // 用于存储通知徽标数量
   int _pendingFamilyMembers = 0;
   int _pendingFeedback = 0;
+  int _unreadMessageNotifications = 0;
 
   String? _error;
   StreamSubscription? _wsSubscription;
+  StreamSubscription<bool>? _connectionSubscription;
   final ImagePicker _imagePicker = ImagePicker();
 
   @override
   void initState() {
     super.initState();
+    WidgetsBinding.instance.addObserver(this);
 
     _load();
 
     _wsSubscription = ShopWebSocketService.instance.messageStream.listen((msg) {
       if (!mounted) return;
+
+      if (msg.module == 'NOTIFICATION') {
+        final unread = int.tryParse('${msg.data['unreadCount'] ?? ''}');
+        if (unread != null) {
+          setState(() => _unreadMessageNotifications = unread);
+          widget.onBadgeChanged?.call();
+        }
+      }
 
       final shouldRefresh = switch (msg.module) {
         'FEEDBACK' => {'CREATED', 'UPDATED', 'REPLIED'}.contains(msg.action),
@@ -75,11 +91,21 @@ class _ShopProfilePageState extends State<ShopProfilePage> {
         _load(silent: true);
       }
     });
+    _connectionSubscription = ShopWebSocketService.instance.connectionStream
+        .where((connected) => connected)
+        .listen((_) => _load(silent: true));
+  }
+
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    if (state == AppLifecycleState.resumed) _load(silent: true);
   }
 
   @override
   void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
     _wsSubscription?.cancel();
+    _connectionSubscription?.cancel();
 
     _nameController.dispose();
     _descriptionController.dispose();
@@ -95,6 +121,8 @@ class _ShopProfilePageState extends State<ShopProfilePage> {
         _loading = true;
         _error = null;
       });
+      widget.onBadgeChanged?.call();
+      widget.onBadgeChanged?.call();
     }
 
     try {
@@ -103,6 +131,7 @@ class _ShopProfilePageState extends State<ShopProfilePage> {
         shopApi.fetchCurrentUser(),
         shopApi.fetchNotifications(),
         shopApi.fetchFeedback(status: 'PENDING', pageSize: 1),
+        shopApi.fetchUnreadMessageNotificationCount(),
       ]);
 
       if (!mounted) return;
@@ -127,6 +156,7 @@ class _ShopProfilePageState extends State<ShopProfilePage> {
 
         _pendingFamilyMembers = notifications.pendingFamilyMembers;
         _pendingFeedback = pendingFeedbackData.total;
+        _unreadMessageNotifications = results[4] as int;
 
         _isOpen = shop.isOpen;
         _allowPrivateChat = currentUser.allowPrivateChat;
@@ -151,7 +181,10 @@ class _ShopProfilePageState extends State<ShopProfilePage> {
         backgroundColor: Colors.white,
         foregroundColor: _textColor,
         elevation: 0,
-        title: const Text('店铺资料', style: TextStyle(fontWeight: FontWeight.w700)),
+        title: const Text(
+          '店铺资料',
+          style: TextStyle(fontWeight: FontWeight.w700),
+        ),
       ),
       body: RefreshIndicator(
         color: _warmOrange,
@@ -241,7 +274,10 @@ class _ShopProfilePageState extends State<ShopProfilePage> {
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              const _SectionTitle(title: '经营与管理', icon: Icons.settings_outlined),
+              const _SectionTitle(
+                title: '经营与管理',
+                icon: Icons.settings_outlined,
+              ),
               const SizedBox(height: 16),
               _buildOpenStatusSwitch(),
               const Padding(
@@ -259,6 +295,11 @@ class _ShopProfilePageState extends State<ShopProfilePage> {
                 child: Divider(color: _lineColor, height: 1),
               ),
               _buildFeedbackEntry(),
+              const Padding(
+                padding: EdgeInsets.symmetric(vertical: 8),
+                child: Divider(color: _lineColor, height: 1),
+              ),
+              _buildMessageNotificationEntry(),
             ],
           ),
         ),
@@ -293,9 +334,14 @@ class _ShopProfilePageState extends State<ShopProfilePage> {
                   side: const BorderSide(color: Color(0xFFE8E8E8)),
                   backgroundColor: const Color(0xFFF9FAFB),
                   padding: const EdgeInsets.symmetric(vertical: 14),
-                  shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
+                  shape: RoundedRectangleBorder(
+                    borderRadius: BorderRadius.circular(8),
+                  ),
                 ),
-                child: const Text('退出登录', style: TextStyle(fontSize: 15, fontWeight: FontWeight.w600)),
+                child: const Text(
+                  '退出登录',
+                  style: TextStyle(fontSize: 15, fontWeight: FontWeight.w600),
+                ),
               ),
             ),
             const SizedBox(width: 12),
@@ -306,11 +352,16 @@ class _ShopProfilePageState extends State<ShopProfilePage> {
                 style: FilledButton.styleFrom(
                   backgroundColor: _warmOrange,
                   padding: const EdgeInsets.symmetric(vertical: 14),
-                  shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
+                  shape: RoundedRectangleBorder(
+                    borderRadius: BorderRadius.circular(8),
+                  ),
                 ),
                 child: Text(
                   _saving ? '保存中...' : '保存资料',
-                  style: const TextStyle(fontSize: 16, fontWeight: FontWeight.w700),
+                  style: const TextStyle(
+                    fontSize: 16,
+                    fontWeight: FontWeight.w700,
+                  ),
                 ),
               ),
             ),
@@ -330,19 +381,25 @@ class _ShopProfilePageState extends State<ShopProfilePage> {
         decoration: BoxDecoration(
           color: Colors.white,
           borderRadius: BorderRadius.circular(12),
-          border: Border.all(color: imageUrl != null ? Colors.transparent : _lineColor),
+          border: Border.all(
+            color: imageUrl != null ? Colors.transparent : _lineColor,
+          ),
         ),
         clipBehavior: Clip.antiAlias,
         child: imageUrl != null && imageUrl.isNotEmpty
             ? Image.network(
-          _absoluteImageUrl(imageUrl),
-          fit: BoxFit.cover,
-          loadingBuilder: (context, child, loadingProgress) {
-            if (loadingProgress == null) return child;
-            return const _SkeletonBox(width: double.infinity, height: double.infinity, borderRadius: 12);
-          },
-          errorBuilder: (_, __, ___) => _buildImagePlaceholder(),
-        )
+                _absoluteImageUrl(imageUrl),
+                fit: BoxFit.cover,
+                loadingBuilder: (context, child, loadingProgress) {
+                  if (loadingProgress == null) return child;
+                  return const _SkeletonBox(
+                    width: double.infinity,
+                    height: double.infinity,
+                    borderRadius: 12,
+                  );
+                },
+                errorBuilder: (_, __, ___) => _buildImagePlaceholder(),
+              )
             : _buildImagePlaceholder(),
       ),
     );
@@ -354,13 +411,24 @@ class _ShopProfilePageState extends State<ShopProfilePage> {
       children: [
         Container(
           padding: const EdgeInsets.all(12),
-          decoration: const BoxDecoration(color: _softOrange, shape: BoxShape.circle),
-          child: const Icon(Icons.add_photo_alternate_outlined, color: _warmOrange, size: 36),
+          decoration: const BoxDecoration(
+            color: _softOrange,
+            shape: BoxShape.circle,
+          ),
+          child: const Icon(
+            Icons.add_photo_alternate_outlined,
+            color: _warmOrange,
+            size: 36,
+          ),
         ),
         const SizedBox(height: 12),
         const Text(
           '点击上传店铺封面图',
-          style: TextStyle(color: _mutedColor, fontSize: 14, fontWeight: FontWeight.w600),
+          style: TextStyle(
+            color: _mutedColor,
+            fontSize: 14,
+            fontWeight: FontWeight.w600,
+          ),
         ),
       ],
     );
@@ -383,7 +451,14 @@ class _ShopProfilePageState extends State<ShopProfilePage> {
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              const Text('营业状态', style: TextStyle(color: _textColor, fontWeight: FontWeight.w700, fontSize: 15)),
+              const Text(
+                '营业状态',
+                style: TextStyle(
+                  color: _textColor,
+                  fontWeight: FontWeight.w700,
+                  fontSize: 15,
+                ),
+              ),
               const SizedBox(height: 4),
               Text(
                 _isOpen ? '顾客可正常点单' : '店铺休息中，顾客无法下单',
@@ -403,44 +478,125 @@ class _ShopProfilePageState extends State<ShopProfilePage> {
   }
 
   Widget _buildPrivateChatSwitch() {
-    return Row(
-      children: [
-        const Icon(Icons.chat_outlined, color: _warmOrange),
-        const SizedBox(width: 12),
-        const Expanded(
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Text('允许私聊', style: TextStyle(fontWeight: FontWeight.w700)),
-              SizedBox(height: 2),
-              Text('开启后顾客可向店铺发起私聊', style: TextStyle(color: _mutedColor, fontSize: 12)),
-            ],
-          ),
+    return InkWell(
+      onTap: () async {
+        await Navigator.of(
+          context,
+        ).push(MaterialPageRoute(builder: (_) => const ChatSettingsPage()));
+        if (mounted) _load(silent: true);
+      },
+      borderRadius: BorderRadius.circular(8),
+      child: Padding(
+        padding: const EdgeInsets.symmetric(vertical: 8),
+        child: Row(
+          children: [
+            Container(
+              width: 40,
+              height: 40,
+              decoration: BoxDecoration(
+                color: _softOrange,
+                borderRadius: BorderRadius.circular(8),
+              ),
+              child: const Icon(
+                Icons.chat_outlined,
+                color: _warmOrange,
+                size: 20,
+              ),
+            ),
+            const SizedBox(width: 12),
+            const Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    '聊天设置',
+                    style: TextStyle(fontWeight: FontWeight.w700, fontSize: 15),
+                  ),
+                  SizedBox(height: 4),
+                  Text(
+                    '管理允许私聊等会话权限',
+                    style: TextStyle(color: _mutedColor, fontSize: 13),
+                  ),
+                ],
+              ),
+            ),
+            Text(
+              _allowPrivateChat ? '已开启' : '已关闭',
+              style: const TextStyle(color: _mutedColor),
+            ),
+            const SizedBox(width: 8),
+            const Icon(Icons.chevron_right, color: _mutedColor),
+          ],
         ),
-        Switch(
-          value: _allowPrivateChat,
-          onChanged: _saving ? null : (value) async {
-            final previous = _allowPrivateChat;
-            setState(() => _allowPrivateChat = value);
-            try {
-              await shopApi.updatePrivateChatSetting(allowPrivateChat: value);
-            } on ApiException catch (error) {
-              if (mounted) {
-                setState(() => _allowPrivateChat = previous);
-                _showSnackBar(error.message);
-              }
-            }
-          },
-        ),
-      ],
+      ),
     );
   }
+
+  Widget _buildMessageNotificationEntry() => InkWell(
+    borderRadius: BorderRadius.circular(8),
+    onTap: () async {
+      await Navigator.of(
+        context,
+      ).push(MaterialPageRoute(builder: (_) => const MessageCenterPage()));
+      if (mounted) _load(silent: true);
+    },
+    child: Padding(
+      padding: const EdgeInsets.symmetric(vertical: 8),
+      child: Row(
+        children: [
+          Container(
+            width: 40,
+            height: 40,
+            decoration: BoxDecoration(
+              color: _softOrange,
+              borderRadius: BorderRadius.circular(8),
+            ),
+            child: const Icon(
+              Icons.notifications_outlined,
+              color: _warmOrange,
+              size: 20,
+            ),
+          ),
+          const SizedBox(width: 12),
+          const Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  '消息通知',
+                  style: TextStyle(fontWeight: FontWeight.w700, fontSize: 15),
+                ),
+                SizedBox(height: 4),
+                Text(
+                  '查看群聊申请和系统提醒',
+                  style: TextStyle(color: _mutedColor, fontSize: 13),
+                ),
+              ],
+            ),
+          ),
+          if (_unreadMessageNotifications > 0) ...[
+            Badge(
+              label: Text(
+                _unreadMessageNotifications > 99
+                    ? '99+'
+                    : '$_unreadMessageNotifications',
+              ),
+            ),
+            const SizedBox(width: 10),
+          ],
+          const Icon(Icons.chevron_right, color: _mutedColor),
+        ],
+      ),
+    ),
+  );
 
   Widget _buildFamilyEntry() {
     final isFamilyShop = _visibilityType == 'FAMILY';
     return InkWell(
       onTap: () async {
-        await Navigator.of(context).push(MaterialPageRoute(builder: (_) => const ShopFamilyPage()));
+        await Navigator.of(
+          context,
+        ).push(MaterialPageRoute(builder: (_) => const ShopFamilyPage()));
         if (mounted) _load();
       },
       borderRadius: BorderRadius.circular(8),
@@ -451,18 +607,34 @@ class _ShopProfilePageState extends State<ShopProfilePage> {
             Container(
               width: 40,
               height: 40,
-              decoration: BoxDecoration(color: _softOrange, borderRadius: BorderRadius.circular(8)),
-              child: const Icon(Icons.home_outlined, color: _warmOrange, size: 20),
+              decoration: BoxDecoration(
+                color: _softOrange,
+                borderRadius: BorderRadius.circular(8),
+              ),
+              child: const Icon(
+                Icons.home_outlined,
+                color: _warmOrange,
+                size: 20,
+              ),
             ),
             const SizedBox(width: 12),
             Expanded(
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  const Text('家庭管理', style: TextStyle(color: _textColor, fontWeight: FontWeight.w700, fontSize: 15)),
+                  const Text(
+                    '家庭管理',
+                    style: TextStyle(
+                      color: _textColor,
+                      fontWeight: FontWeight.w700,
+                      fontSize: 15,
+                    ),
+                  ),
                   const SizedBox(height: 4),
                   Text(
-                    isFamilyShop ? '${_familyName?.isNotEmpty == true ? _familyName : '未命名家庭'} · 编号 ${_familyCode ?? '待生成'}' : '公开店铺模式，点击可开启家庭',
+                    isFamilyShop
+                        ? '${_familyName?.isNotEmpty == true ? _familyName : '未命名家庭'} · 编号 ${_familyCode ?? '待生成'}'
+                        : '公开店铺模式，点击可开启家庭',
                     style: const TextStyle(color: _mutedColor, fontSize: 13),
                   ),
                 ],
@@ -471,7 +643,9 @@ class _ShopProfilePageState extends State<ShopProfilePage> {
             // 【新增】家庭管理红点徽标，超过9显示...
             if (_pendingFamilyMembers > 0) ...[
               Badge(
-                label: Text(_pendingFamilyMembers > 9 ? '...' : '$_pendingFamilyMembers'),
+                label: Text(
+                  _pendingFamilyMembers > 9 ? '...' : '$_pendingFamilyMembers',
+                ),
                 backgroundColor: Colors.redAccent,
               ),
               const SizedBox(width: 10),
@@ -486,9 +660,9 @@ class _ShopProfilePageState extends State<ShopProfilePage> {
   Widget _buildFeedbackEntry() {
     return InkWell(
       onTap: () async {
-        await Navigator.of(context).push(
-          MaterialPageRoute(builder: (_) => const FeedbackManagePage()),
-        );
+        await Navigator.of(
+          context,
+        ).push(MaterialPageRoute(builder: (_) => const FeedbackManagePage()));
 
         if (mounted) {
           _load(silent: true);
@@ -502,17 +676,34 @@ class _ShopProfilePageState extends State<ShopProfilePage> {
             Container(
               width: 40,
               height: 40,
-              decoration: BoxDecoration(color: _softOrange, borderRadius: BorderRadius.circular(8)),
-              child: const Icon(Icons.chat_bubble_outline, color: _warmOrange, size: 20),
+              decoration: BoxDecoration(
+                color: _softOrange,
+                borderRadius: BorderRadius.circular(8),
+              ),
+              child: const Icon(
+                Icons.chat_bubble_outline,
+                color: _warmOrange,
+                size: 20,
+              ),
             ),
             const SizedBox(width: 12),
             Expanded(
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: const [
-                  Text('留言建议', style: TextStyle(color: _textColor, fontWeight: FontWeight.w700, fontSize: 15)),
+                  Text(
+                    '留言建议',
+                    style: TextStyle(
+                      color: _textColor,
+                      fontWeight: FontWeight.w700,
+                      fontSize: 15,
+                    ),
+                  ),
                   SizedBox(height: 4),
-                  Text('查看并回复顾客对店铺的反馈', style: TextStyle(color: _mutedColor, fontSize: 13)),
+                  Text(
+                    '查看并回复顾客对店铺的反馈',
+                    style: TextStyle(color: _mutedColor, fontSize: 13),
+                  ),
                 ],
               ),
             ),
@@ -531,7 +722,11 @@ class _ShopProfilePageState extends State<ShopProfilePage> {
   }
 
   Future<void> _uploadCover() async {
-    final image = await _imagePicker.pickImage(source: ImageSource.gallery, maxWidth: 1600, imageQuality: 85);
+    final image = await _imagePicker.pickImage(
+      source: ImageSource.gallery,
+      maxWidth: 1600,
+      imageQuality: 85,
+    );
     if (image == null) return;
 
     setState(() => _saving = true);
@@ -629,9 +824,7 @@ class _ShopProfilePageState extends State<ShopProfilePage> {
   }
 
   void _showSnackBar(String message) {
-    ScaffoldMessenger.of(context)
-      ..hideCurrentSnackBar()
-      ..showSnackBar(SnackBar(content: Text(message), behavior: SnackBarBehavior.floating));
+    AppNotice.show(context, message);
   }
 
   String _absoluteImageUrl(String url) {
@@ -685,7 +878,14 @@ class _SectionTitle extends StatelessWidget {
       children: [
         Icon(icon, size: 20, color: _warmOrange),
         const SizedBox(width: 8),
-        Text(title, style: const TextStyle(color: _textColor, fontSize: 16, fontWeight: FontWeight.w800)),
+        Text(
+          title,
+          style: const TextStyle(
+            color: _textColor,
+            fontSize: 16,
+            fontWeight: FontWeight.w800,
+          ),
+        ),
       ],
     );
   }
@@ -701,7 +901,14 @@ class _LabeledField extends StatelessWidget {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        Text(label, style: const TextStyle(color: _textColor, fontSize: 14, fontWeight: FontWeight.w600)),
+        Text(
+          label,
+          style: const TextStyle(
+            color: _textColor,
+            fontSize: 14,
+            fontWeight: FontWeight.w600,
+          ),
+        ),
         const SizedBox(height: 8),
         child,
       ],
@@ -726,8 +933,13 @@ class _ErrorPanel extends StatelessWidget {
         children: [
           const Icon(Icons.info_outline, color: _warmOrange),
           const SizedBox(width: 12),
-          Expanded(child: Text(message, style: const TextStyle(color: _textColor))),
-          TextButton(onPressed: onRetry, child: const Text('重试', style: TextStyle(color: _warmOrange))),
+          Expanded(
+            child: Text(message, style: const TextStyle(color: _textColor)),
+          ),
+          TextButton(
+            onPressed: onRetry,
+            child: const Text('重试', style: TextStyle(color: _warmOrange)),
+          ),
         ],
       ),
     );
@@ -770,7 +982,8 @@ class _SkeletonBox extends StatefulWidget {
   State<_SkeletonBox> createState() => _SkeletonBoxState();
 }
 
-class _SkeletonBoxState extends State<_SkeletonBox> with SingleTickerProviderStateMixin {
+class _SkeletonBoxState extends State<_SkeletonBox>
+    with SingleTickerProviderStateMixin {
   late AnimationController _controller;
   late Animation<Color?> _colorTween;
 
