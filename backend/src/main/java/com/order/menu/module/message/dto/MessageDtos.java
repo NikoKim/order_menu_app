@@ -1,6 +1,7 @@
 package com.order.menu.module.message.dto;
 
 import jakarta.validation.constraints.NotBlank;
+import jakarta.validation.constraints.Pattern;
 import jakarta.validation.constraints.Size;
 import java.math.BigDecimal;
 import java.time.LocalDateTime;
@@ -33,10 +34,52 @@ public final class MessageDtos {
     public record SetMuteRequest(Boolean muted) {
     }
 
+    public record ConversationPreferenceRequest(Boolean muted, Boolean hidden, Boolean pinned) {
+    }
+
+    public record ConversationPreferenceResponse(Long conversationId, Boolean muted, Boolean hidden,
+                                                 Boolean pinned, LocalDateTime pinnedAt,
+                                                 LocalDateTime lastEssenceReadAt) {
+    }
+
+    public record ConversationHideResponse(Boolean hidden, Long messageVersion) {
+    }
+
     public record ShareDishRequest(Long conversationId, Long dishId) {
     }
 
     public record ShareOrderRequest(Long conversationId, Long orderId) {
+    }
+
+    public record ShareShopRequest(Long conversationId, Long shopId, Long quotedMessageId) {
+    }
+
+    public record EssenceToggleRequest(Boolean pinned) {
+    }
+
+    public record LikeToggleRequest(Boolean liked) {
+    }
+
+    public record EssenceReadRequest(Long throughMessageId) {
+    }
+
+    public record PushDeviceRequest(
+            @NotBlank @Size(max = 512) String token,
+            @NotBlank @Size(max = 20)
+            @Pattern(regexp = "(?i)ANDROID|IOS|OTHER", message = "不支持的推送平台") String platform) {
+    }
+
+    public record JoinedFamilyProfile(Long shopId, String shopName, Long conversationId) {
+    }
+
+    public record ShopProfileSnapshot(Long shopId, String shopName, String shopLogoUrl,
+                                      String shopDescription) {
+    }
+
+    public record ChatUserProfileResponse(Long userId, String nickname, String avatarUrl, String role,
+                                          String phone, Boolean phoneVisible, Boolean joinedFamiliesVisible,
+                                          List<JoinedFamilyProfile> joinedFamilies,
+                                          ShopProfileSnapshot shopProfile) {
     }
 
     public record ChatBlockResponse(Long userId, Boolean blockedByMe, Boolean blockedMe) {
@@ -51,7 +94,10 @@ public final class MessageDtos {
             String dishName, String dishImageUrl, BigDecimal dishPrice, String dishDescription,
             Integer dishSalesCount, Long orderId, String orderNo, LocalDateTime orderCreatedAt,
             String orderStatus, String orderShopName, List<OrderShareItemResponse> orderItems,
-            BigDecimal orderTotalAmount, String orderRemark) {
+            BigDecimal orderTotalAmount, String orderRemark,
+            String imageUrl, LocalDateTime imageExpiresAt, Boolean imageExpired,
+            Long sharedShopId, String sharedShopName, String sharedShopLogoUrl,
+            String sharedShopDescription) {
     }
 
     public record CustomerSearchResponse(Long id, String nickname, String avatarUrl) {
@@ -64,12 +110,17 @@ public final class MessageDtos {
             String coverImageUrl,
             String status,
             LocalDateTime lastMessageAt,
+            Long messageVersion,
             Long directUserId,
             String directUserNickname,
             String directUserAvatarUrl,
             String lastMessageContent,
             Long unreadCount,
-            Boolean muted) {
+            Boolean muted,
+            Boolean pinned,
+            LocalDateTime pinnedAt,
+            Boolean hidden,
+            Boolean mutedBadge) {
     }
 
     public record ChatMessageResponse(
@@ -104,8 +155,25 @@ public final class MessageDtos {
             String deliveryStatus,
             Boolean deliveryFailed,
             String failureReason,
+            String imageUrl,
+            LocalDateTime imageExpiresAt,
+            Boolean imageExpired,
+            Long sharedShopId,
+            String sharedShopName,
+            String sharedShopLogoUrl,
+            String sharedShopDescription,
+            Boolean essence,
+            Boolean essencePinned,
+            Long essenceLikeCount,
             LocalDateTime recalledAt,
             LocalDateTime createdAt) {
+    }
+
+    public record EssenceItemResponse(ChatMessageResponse message, Boolean pinned, LocalDateTime pinnedAt,
+                                      Boolean liked, Long likeCount, LocalDateTime createdAt) {
+    }
+
+    public record EssenceListResponse(List<EssenceItemResponse> items, Long unreadCount) {
     }
 
     public record FamilyGroupMemberResponse(Long userId, String nickname, String avatarUrl,

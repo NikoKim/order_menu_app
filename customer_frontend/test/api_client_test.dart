@@ -30,6 +30,8 @@ class _RecordingClient extends http.BaseClient {
             'createdAt': '2026-07-13T08:00:00',
             'orderId': 42,
           }
+        : request.url.path.endsWith('/conversations/7')
+        ? {'hidden': true, 'messageVersion': 4}
         : request.method == 'GET'
         ? {'userId': 18, 'blockedByMe': true, 'blockedMe': false}
         : null;
@@ -88,4 +90,21 @@ void main() {
       expect(jsonDecode(client.body!), {'conversationId': 7, 'orderId': 42});
     },
   );
+
+  test('conversation delete uses a guarded message-version token', () async {
+    final client = _RecordingClient();
+    final api = CustomerApi(
+      ApiClient(httpClient: client, baseUrl: 'https://example.test/api'),
+    );
+
+    final result = await api.hideConversation(7, expectedMessageVersion: 4);
+
+    expect(client.request?.url.path, '/api/messages/conversations/7');
+    expect(client.request?.url.queryParameters, {
+      'guarded': 'true',
+      'expectedMessageVersion': '4',
+    });
+    expect(result.hidden, isTrue);
+    expect(result.messageVersion, 4);
+  });
 }

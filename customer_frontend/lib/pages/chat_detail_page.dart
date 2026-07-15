@@ -1,6 +1,11 @@
 import 'dart:async';
+import 'dart:io';
 
 import 'package:flutter/material.dart';
+import 'package:flutter_image_compress/flutter_image_compress.dart';
+import 'package:image_picker/image_picker.dart';
+import 'package:path_provider/path_provider.dart';
+import 'package:scrollable_positioned_list/scrollable_positioned_list.dart';
 
 import '../main.dart';
 import '../models.dart';
@@ -8,9 +13,84 @@ import '../services/api_client.dart';
 import '../services/customer_websocket_service.dart';
 import '../services/latest_request.dart';
 import '../widgets/app_notice.dart';
+import '../widgets/chat_action_overlay.dart';
+import 'chat_essence_page.dart';
 import 'family_group_info_page.dart';
 import 'shop_order_page.dart';
 import 'chat_user_detail_page.dart';
+
+int chatVisualIndexFromChronologicalIndex(
+    int chronologicalIndex,
+    int messageCount,
+    ) {
+  assert(messageCount > 0);
+  assert(chronologicalIndex >= 0 && chronologicalIndex < messageCount);
+  return messageCount - 1 - chronologicalIndex;
+}
+
+bool chatVisualIndexIsVisible(
+    int visualIndex,
+    Iterable<ItemPosition> positions,
+    ) => positions.any(
+      (position) =>
+  position.index == visualIndex &&
+      position.itemTrailingEdge > 0 &&
+      position.itemLeadingEdge < 1,
+);
+
+class ChatScrollCoordinator {
+  bool _hasObservedLatest = false;
+  int? _latestMessageId;
+  bool _navigatingToQuote = false;
+  bool _pendingBottom = false;
+
+  bool get isNavigatingToQuote => _navigatingToQuote;
+
+  bool observeLatestMessage(int? messageId) {
+    final shouldScroll = !_hasObservedLatest
+        ? messageId != null
+        : messageId != null &&
+        (_latestMessageId == null || messageId > _latestMessageId!);
+    _hasObservedLatest = true;
+    _latestMessageId = messageId;
+    return shouldScroll;
+  }
+
+  void beginQuoteNavigation() {
+    _navigatingToQuote = true;
+  }
+
+  bool requestBottom() {
+    if (!_navigatingToQuote) return true;
+    _pendingBottom = true;
+    return false;
+  }
+
+  bool endQuoteNavigation() {
+    _navigatingToQuote = false;
+    final shouldScroll = _pendingBottom;
+    _pendingBottom = false;
+    return shouldScroll;
+  }
+}
+
+class ChatKeyboardInsetSettler {
+  ChatKeyboardInsetSettler({
+    required this.onSettled,
+    this.delay = const Duration(milliseconds: 120),
+  });
+
+  final VoidCallback onSettled;
+  final Duration delay;
+  Timer? _timer;
+
+  void schedule() {
+    _timer?.cancel();
+    _timer = Timer(delay, onSettled);
+  }
+
+  void dispose() => _timer?.cancel();
+}
 
 class ChatDetailPage extends StatefulWidget {
   const ChatDetailPage({super.key, required this.conversation});
@@ -19,11 +99,14 @@ class ChatDetailPage extends StatefulWidget {
   State<ChatDetailPage> createState() => _ChatDetailPageState();
 }
 
-class _ChatDetailPageState extends State<ChatDetailPage> {
-  late final CustomerApi _api;
+class _ChatDetailPageState extends State<ChatDetailPage>
+    with WidgetsBindingObserver {
+  late CustomerApi _api;
   late Future<ChatMessages> _messagesFuture;
   final _input = TextEditingController();
-  final _scrollController = ScrollController();
+  final _inputFocus = FocusNode();
+  final _itemScrollController = ItemScrollController();
+  final _itemPositionsListener = ItemPositionsListener.create();
   final _messageRequests = LatestRequest();
   StreamSubscription<CustomerWsMessage>? _wsSubscription;
   StreamSubscription<bool>? _connectionSubscription;
@@ -32,10 +115,33 @@ class _ChatDetailPageState extends State<ChatDetailPage> {
   ChatMessages? _cachedMessages;
   int _renderedMessageCount = -1;
   ChatMessage? _quotedMessage;
-  final Map<int, GlobalKey> _messageKeys = {};
   int? _highlightedMessageId;
   Timer? _highlightTimer;
   ChatBlock? _blockState;
+  String? _pendingImagePath;
+  bool _showEmoji = false;
+  ChatMessage? _latestUnreadEssence;
+  int _bottomScrollRequest = 0;
+  final _scrollCoordinator = ChatScrollCoordinator();
+  late final ChatKeyboardInsetSettler _keyboardInsetSettler;
+
+  @override
+  void initState() {
+    super.initState();
+    WidgetsBinding.instance.addObserver(this);
+    _keyboardInsetSettler = ChatKeyboardInsetSettler(
+      onSettled: () {
+        if (mounted && _inputFocus.hasFocus) {
+          _scheduleScrollToBottom(animate: false);
+        }
+      },
+    );
+  }
+
+  @override
+  void didChangeMetrics() {
+    if (_inputFocus.hasFocus) _keyboardInsetSettler.schedule();
+  }
 
   @override
   void didChangeDependencies() {
@@ -44,6 +150,7 @@ class _ChatDetailPageState extends State<ChatDetailPage> {
     _initialized = true;
     _api = CustomerApi(AppScope.of(context).api);
     _messagesFuture = _loadMessages();
+    if (!widget.conversation.isDirect) _loadLatestEssence();
     if (widget.conversation.isDirect &&
         widget.conversation.directUserId != null) {
       _loadBlockState();
@@ -51,26 +158,33 @@ class _ChatDetailPageState extends State<ChatDetailPage> {
     _wsSubscription ??= CustomerWebSocketService.instance
         .streamForModule('CHAT')
         .listen((event) {
-          final id = int.tryParse(
-            '${event.data['conversationId'] ?? event.data['id'] ?? ''}',
-          );
-          if ({
-                'MESSAGE_CREATED',
-                'MESSAGE_UPDATED',
-                'MESSAGE_DELETED',
-              }.contains(event.action) &&
-              id == widget.conversation.id &&
-              mounted) {
-            _reload();
-          }
-        });
+      final id = int.tryParse(
+        '${event.data['conversationId'] ?? event.data['id'] ?? ''}',
+      );
+      if ({
+        'MESSAGE_CREATED',
+        'MESSAGE_UPDATED',
+        'MESSAGE_DELETED',
+      }.contains(event.action) &&
+          id == widget.conversation.id &&
+          mounted) {
+        _reload();
+      }
+    });
     _connectionSubscription ??= CustomerWebSocketService
         .instance
         .connectionStream
         .where((connected) => connected)
         .listen((_) {
-          if (mounted) _reload();
-        });
+      if (mounted) _reload();
+    });
+  }
+
+  Future<void> _loadLatestEssence() async {
+    try {
+      final message = await _api.latestUnreadEssence(widget.conversation.id);
+      if (mounted) setState(() => _latestUnreadEssence = message);
+    } catch (_) {}
   }
 
   Future<ChatMessages> _loadMessages() async {
@@ -96,26 +210,45 @@ class _ChatDetailPageState extends State<ChatDetailPage> {
 
   Future<void> _send() async {
     final content = _input.text.trim();
-    if (content.isEmpty || _sending || !widget.conversation.isActive) return;
+    final imagePath = _pendingImagePath;
+    final quotedMessageId = _quotedMessage?.id;
+    final sendStartedAt = DateTime.now();
+    final currentUserId = AppScope.of(context).auth.user?.id;
+    if ((content.isEmpty && _pendingImagePath == null) ||
+        _sending ||
+        !widget.conversation.isActive) {
+      return;
+    }
     if (_blockState?.blockedByMe == true) {
       AppNotice.show(context, '请先取消拉黑后再发送消息');
       return;
     }
     setState(() => _sending = true);
     try {
-      final sent = await _api.sendChatMessage(
+      final sent = imagePath == null
+          ? await _api.sendChatMessage(
         widget.conversation.id,
         content,
-        quotedMessageId: _quotedMessage?.id,
+        quotedMessageId: quotedMessageId,
+      )
+          : await _api.sendChatImage(
+        conversationId: widget.conversation.id,
+        filePath: imagePath,
+        content: content,
+        quotedMessageId: quotedMessageId,
       );
       _input.clear();
+      _pendingImagePath = null;
       _quotedMessage = null;
       final cached = _cachedMessages;
       if (cached != null && mounted) {
         _messageRequests.begin();
         final updated = ChatMessages(
           conversation: cached.conversation,
-          messages: [...cached.messages, sent],
+          messages: [
+            ...cached.messages.where((message) => message.id != sent.id),
+            sent,
+          ],
         );
         _cachedMessages = updated;
         setState(() => _messagesFuture = Future.value(updated));
@@ -123,18 +256,25 @@ class _ChatDetailPageState extends State<ChatDetailPage> {
         _reload();
       }
     } catch (error) {
-      // The server may have committed the message even if the response was
-      // lost. Reconcile once before reporting a send failure.
-      final currentUserId = AppScope.of(context).auth.user?.id;
       try {
         final recovered = await _api.chatMessages(widget.conversation.id);
-        final delivered = recovered.messages.any(
-          (message) =>
+        final delivered = recovered.messages.any((message) {
+          final createdAt = DateTime.tryParse(message.createdAt);
+          final recent =
+              createdAt == null ||
+                  !createdAt.isBefore(
+                    sendStartedAt.subtract(const Duration(seconds: 5)),
+                  );
+          return imagePath == null &&
               message.senderUserId == currentUserId &&
-              message.content == content,
-        );
+              message.content == content &&
+              !message.isImageShare &&
+              recent;
+        });
         if (delivered) {
           _input.clear();
+          _pendingImagePath = null;
+          _quotedMessage = null;
           _messageRequests.begin();
           _cachedMessages = recovered;
           if (mounted) {
@@ -153,6 +293,76 @@ class _ChatDetailPageState extends State<ChatDetailPage> {
     }
   }
 
+  Future<void> _pickImage(ImageSource source) async {
+    try {
+      final image = await ImagePicker().pickImage(
+        source: source,
+        imageQuality: 82,
+        maxWidth: 2160,
+        maxHeight: 2160,
+      );
+      if (image != null && mounted) {
+        final imagePath = await _compressImageIfNeeded(image.path);
+        if (!mounted) return;
+        setState(() {
+          _pendingImagePath = imagePath;
+          _showEmoji = false;
+        });
+      }
+    } catch (error) {
+      if (mounted) {
+        AppNotice.show(
+          context,
+          error is StateError ? '图片压缩后仍超过5MB，请选择较小的图片' : '无法读取图片，请检查相册或相机权限',
+        );
+      }
+    }
+  }
+
+  Future<String> _compressImageIfNeeded(String path) async {
+    final file = File(path);
+    if (!await file.exists() || await file.length() <= 5 * 1024 * 1024) {
+      return path;
+    }
+    final directory = await getTemporaryDirectory();
+    String smallestPath = path;
+    var smallestLength = await file.length();
+    const attempts = <(int, int)>[(70, 1920), (52, 1600), (36, 1280)];
+    for (var index = 0; index < attempts.length; index++) {
+      final (quality, dimension) = attempts[index];
+      final target =
+          '${directory.path}${Platform.pathSeparator}'
+          'chat_${DateTime.now().microsecondsSinceEpoch}_$index.jpg';
+      final compressed = await FlutterImageCompress.compressAndGetFile(
+        path,
+        target,
+        quality: quality,
+        minWidth: dimension,
+        minHeight: dimension,
+        keepExif: false,
+      );
+      if (compressed == null) continue;
+      final length = await compressed.length();
+      if (length < smallestLength) {
+        smallestLength = length;
+        smallestPath = compressed.path;
+      }
+      if (length <= 5 * 1024 * 1024) return compressed.path;
+    }
+    if (smallestLength <= 5 * 1024 * 1024) return smallestPath;
+    throw StateError('compressed image is still too large');
+  }
+
+  void _insertEmoji(String emoji) {
+    final selection = _input.selection;
+    final start = selection.isValid ? selection.start : _input.text.length;
+    final end = selection.isValid ? selection.end : _input.text.length;
+    _input.value = TextEditingValue(
+      text: _input.text.replaceRange(start, end, emoji),
+      selection: TextSelection.collapsed(offset: start + emoji.length),
+    );
+  }
+
   Future<void> _loadBlockState() async {
     final userId = widget.conversation.directUserId;
     if (userId == null) return;
@@ -162,33 +372,11 @@ class _ChatDetailPageState extends State<ChatDetailPage> {
     } catch (_) {}
   }
 
-  Future<void> _showMessageActions(ChatMessage message, bool mine) async {
-    final action = await showModalBottomSheet<String>(
-      context: context,
-      builder: (context) => SafeArea(
-        child: Wrap(
-          children: [
-            ListTile(
-              leading: const Icon(Icons.format_quote),
-              title: const Text('引用'),
-              onTap: () => Navigator.pop(context, 'quote'),
-            ),
-            if (mine && !message.isRecalled)
-              ListTile(
-                leading: const Icon(Icons.undo),
-                title: const Text('撤回'),
-                onTap: () => Navigator.pop(context, 'recall'),
-              ),
-            ListTile(
-              leading: const Icon(Icons.delete_outline),
-              title: const Text('删除'),
-              onTap: () => Navigator.pop(context, 'delete'),
-            ),
-          ],
-        ),
-      ),
-    );
-    if (!mounted || action == null) return;
+  Future<void> _handleMessageAction(
+      ChatMessage message,
+      bool mine,
+      String action,
+      ) async {
     try {
       if (action == 'quote') {
         setState(() => _quotedMessage = message);
@@ -217,22 +405,51 @@ class _ChatDetailPageState extends State<ChatDetailPage> {
   }
 
   void _jumpToMessage(int messageId) {
-    final target = _messageKeys[messageId]?.currentContext;
-    if (target != null) {
-      Scrollable.ensureVisible(
-        target,
-        duration: const Duration(milliseconds: 220),
-        curve: Curves.easeOut,
-        alignment: 0.25,
-      );
-      _highlightTimer?.cancel();
-      setState(() => _highlightedMessageId = messageId);
-      _highlightTimer = Timer(const Duration(milliseconds: 1400), () {
-        if (mounted) setState(() => _highlightedMessageId = null);
-      });
-    } else {
+    final messages = _cachedMessages?.messages ?? const <ChatMessage>[];
+    final index = messages.indexWhere((message) => message.id == messageId);
+    if (index < 0 || !_itemScrollController.isAttached) {
       AppNotice.show(context, '原消息已删除或不可见');
+      return;
     }
+    _bottomScrollRequest++;
+    _scrollCoordinator.beginQuoteNavigation();
+    final visualIndex = chatVisualIndexFromChronologicalIndex(
+      index,
+      messages.length,
+    );
+    if (chatVisualIndexIsVisible(
+      visualIndex,
+      _itemPositionsListener.itemPositions.value,
+    )) {
+      _itemScrollController.scrollTo(
+        index: visualIndex,
+        alignment: .35,
+        duration: const Duration(milliseconds: 180),
+        curve: Curves.easeOut,
+      );
+    } else {
+      _itemScrollController.jumpTo(index: visualIndex, alignment: .28);
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (!mounted || !_itemScrollController.isAttached) return;
+        if (!chatVisualIndexIsVisible(
+          visualIndex,
+          _itemPositionsListener.itemPositions.value,
+        )) {
+          _itemScrollController.jumpTo(index: visualIndex, alignment: .18);
+        }
+      });
+    }
+    _highlightTimer?.cancel();
+    setState(() => _highlightedMessageId = messageId);
+    _highlightTimer = Timer(const Duration(milliseconds: 1400), () {
+      if (mounted) {
+        final pendingBottom = _scrollCoordinator.endQuoteNavigation();
+        setState(() {
+          _highlightedMessageId = null;
+        });
+        if (pendingBottom) _scheduleScrollToBottom(animate: true);
+      }
+    });
   }
 
   void _showDirectUserInfo() {
@@ -240,39 +457,49 @@ class _ChatDetailPageState extends State<ChatDetailPage> {
     if (userId == null) return;
     Navigator.of(context)
         .push(
-          MaterialPageRoute(
-            builder: (_) => ChatUserDetailPage(
-              userId: userId,
-              nickname: widget.conversation.directUserNickname ?? '用户',
-              avatarUrl: widget.conversation.directUserAvatarUrl,
-            ),
-          ),
-        )
+      MaterialPageRoute(
+        builder: (_) => ChatUserDetailPage(
+          userId: userId,
+          nickname: widget.conversation.directUserNickname ?? '用户',
+          avatarUrl: widget.conversation.directUserAvatarUrl,
+          conversationId: widget.conversation.id,
+        ),
+      ),
+    )
         .then((_) => _loadBlockState());
   }
 
   @override
   void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
+    _keyboardInsetSettler.dispose();
     _wsSubscription?.cancel();
     _connectionSubscription?.cancel();
     _highlightTimer?.cancel();
     _input.dispose();
-    _scrollController.dispose();
+    _inputFocus.dispose();
     super.dispose();
   }
 
   void _scheduleScrollToBottom({required bool animate}) {
+    if (!_scrollCoordinator.requestBottom()) return;
+    final request = ++_bottomScrollRequest;
     WidgetsBinding.instance.addPostFrameCallback((_) {
-      if (!mounted || !_scrollController.hasClients) return;
-      final target = _scrollController.position.maxScrollExtent;
+      if (!mounted ||
+          request != _bottomScrollRequest ||
+          _scrollCoordinator.isNavigatingToQuote ||
+          !_itemScrollController.isAttached) {
+        return;
+      }
       if (animate) {
-        _scrollController.animateTo(
-          target,
+        _itemScrollController.scrollTo(
+          index: 0,
+          alignment: 0,
           duration: const Duration(milliseconds: 180),
           curve: Curves.easeOut,
         );
       } else {
-        _scrollController.jumpTo(target);
+        _itemScrollController.jumpTo(index: 0, alignment: 0);
       }
     });
   }
@@ -281,9 +508,14 @@ class _ChatDetailPageState extends State<ChatDetailPage> {
   Widget build(BuildContext context) {
     final user = AppScope.of(context).auth.user;
     return Scaffold(
-      backgroundColor: const Color(0xFFF5F6F8),
+      backgroundColor: Colors.white,
       appBar: AppBar(
-        title: Text(widget.conversation.title),
+        title: Text(widget.conversation.title, style: const TextStyle(fontWeight: FontWeight.bold)),
+        backgroundColor: Colors.white,
+        foregroundColor: const Color(0xFF242424),
+        surfaceTintColor: Colors.transparent,
+        elevation: 0,
+        scrolledUnderElevation: 0,
         actions: [
           if (!widget.conversation.isDirect)
             IconButton(
@@ -312,6 +544,51 @@ class _ChatDetailPageState extends State<ChatDetailPage> {
               content: Text('该群聊已解散，历史消息仍可查看。'),
               actions: <Widget>[],
             ),
+          if (_latestUnreadEssence != null)
+            Material(
+              color: const Color(0xFFFFF2DF),
+              child: InkWell(
+                onTap: () async {
+                  await _api.markEssencesRead(
+                    widget.conversation.id,
+                    throughMessageId: _latestUnreadEssence!.id,
+                  );
+                  if (!mounted || !context.mounted) return;
+                  setState(() => _latestUnreadEssence = null);
+                  await Navigator.of(context).push(
+                    MaterialPageRoute(
+                      builder: (_) => ChatEssencePage(
+                        conversationId: widget.conversation.id,
+                      ),
+                    ),
+                  );
+                },
+                child: Padding(
+                  padding: const EdgeInsets.fromLTRB(16, 10, 8, 10),
+                  child: Row(
+                    children: [
+                      const Icon(Icons.auto_awesome, color: Color(0xFFE08222)),
+                      const SizedBox(width: 9),
+                      Expanded(
+                        child: Text(
+                          _latestUnreadEssence!.content.isEmpty
+                              ? '有一条新的群精华消息'
+                              : _latestUnreadEssence!.content,
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                        ),
+                      ),
+                      IconButton(
+                        tooltip: '关闭',
+                        icon: const Icon(Icons.close, size: 19),
+                        onPressed: () =>
+                            setState(() => _latestUnreadEssence = null),
+                      ),
+                    ],
+                  ),
+                ),
+              ),
+            ),
           Expanded(
             child: FutureBuilder<ChatMessages>(
               future: _messagesFuture,
@@ -329,74 +606,86 @@ class _ChatDetailPageState extends State<ChatDetailPage> {
                   );
                 }
                 final messages = (snapshot.data ?? _cachedMessages)!.messages;
-                if (_renderedMessageCount != messages.length) {
-                  final animate = _renderedMessageCount >= 0;
-                  _renderedMessageCount = messages.length;
-                  _scheduleScrollToBottom(animate: animate);
+                final initialRender = _renderedMessageCount < 0;
+                _renderedMessageCount = messages.length;
+                final latestMessageId = messages.isEmpty
+                    ? null
+                    : messages.last.id;
+                if (_scrollCoordinator.observeLatestMessage(
+                  latestMessageId,
+                )) {
+                  _scheduleScrollToBottom(animate: !initialRender);
                 }
-                if (messages.isEmpty) return const Center(child: Text('开始聊天吧'));
-                return ListView.builder(
-                  controller: _scrollController,
+                if (messages.isEmpty) {
+                  return const Center(child: Text('开始聊天吧'));
+                }
+                return ScrollablePositionedList.builder(
+                  itemScrollController: _itemScrollController,
+                  itemPositionsListener: _itemPositionsListener,
+                  reverse: true,
                   padding: const EdgeInsets.all(16),
                   itemCount: messages.length,
                   itemBuilder: (context, index) {
-                    final messageIndex = index;
+                    final messageIndex =
+                    chatVisualIndexFromChronologicalIndex(
+                      index,
+                      messages.length,
+                    );
                     final message = messages[messageIndex];
                     final mine = message.senderUserId == user?.id;
                     final timestamp = DateTime.tryParse(message.createdAt);
                     final previous = messageIndex == 0
                         ? null
                         : DateTime.tryParse(
-                            messages[messageIndex - 1].createdAt,
-                          );
-                    return KeyedSubtree(
-                      key: _messageKeys.putIfAbsent(message.id, GlobalKey.new),
-                      child: Column(
-                        children: [
-                          if (timestamp != null &&
-                              shouldShowChatTimestamp(previous, timestamp))
-                            Padding(
-                              padding: const EdgeInsets.only(
-                                bottom: 12,
-                                top: 4,
-                              ),
-                              child: Text(
-                                formatChatMessageTime(timestamp),
-                                style: const TextStyle(
-                                  fontSize: 12,
-                                  color: Color(0xFF8A8A8A),
-                                ),
+                      messages[messageIndex - 1].createdAt,
+                    );
+                    return Column(
+                      key: ValueKey(message.id),
+                      children: [
+                        if (timestamp != null &&
+                            shouldShowChatTimestamp(previous, timestamp))
+                          Padding(
+                            padding: const EdgeInsets.only(
+                              bottom: 12,
+                              top: 4,
+                            ),
+                            child: Text(
+                              formatChatMessageTime(timestamp),
+                              style: const TextStyle(
+                                fontSize: 12,
+                                color: Color(0xFF8A8A8A),
                               ),
                             ),
-                          ChatMessageRow(
-                            message: message,
-                            mine: mine,
-                            groupChat: !widget.conversation.isDirect,
-                            fallbackAvatarUrl: mine
-                                ? user?.avatarUrl
-                                : widget.conversation.directUserAvatarUrl,
-                            fallbackName: mine
-                                ? user?.nickname
-                                : widget.conversation.directUserNickname,
-                            onLongPress: () =>
-                                _showMessageActions(message, mine),
-                            onQuoteTap: message.quotedMessageId == null
-                                ? null
-                                : () =>
-                                      _jumpToMessage(message.quotedMessageId!),
-                            onReEdit:
-                                mine &&
-                                    message.isRecalled &&
-                                    !message.isDishShare &&
-                                    !message.isOrderShare
-                                ? () => setState(
-                                    () => _input.text = message.content,
-                                  )
-                                : null,
-                            highlighted: _highlightedMessageId == message.id,
                           ),
-                        ],
-                      ),
+                        ChatMessageRow(
+                          message: message,
+                          mine: mine,
+                          groupChat: !widget.conversation.isDirect,
+                          fallbackAvatarUrl: mine
+                              ? user?.avatarUrl
+                              : widget.conversation.directUserAvatarUrl,
+                          fallbackName: mine
+                              ? user?.nickname
+                              : widget.conversation.directUserNickname,
+                          onAction: (action) =>
+                              _handleMessageAction(message, mine, action),
+                          onQuoteTap: message.quotedMessageId == null
+                              ? null
+                              : () => _jumpToMessage(
+                            message.quotedMessageId!,
+                          ),
+                          onReEdit:
+                          mine &&
+                              message.isRecalled &&
+                              !message.isDishShare &&
+                              !message.isOrderShare
+                              ? () => setState(
+                                () => _input.text = message.content,
+                          )
+                              : null,
+                          highlighted: _highlightedMessageId == message.id,
+                        ),
+                      ],
                     );
                   },
                 );
@@ -431,12 +720,16 @@ class _ChatDetailPageState extends State<ChatDetailPage> {
                               alignment: Alignment.centerLeft,
                               child: OrderShareCard(message: _quotedMessage!),
                             )
-                          else
-                            Text(
-                              _quotedMessage!.content,
-                              maxLines: 2,
-                              overflow: TextOverflow.ellipsis,
-                            ),
+                          else if (_quotedMessage!.isImageShare)
+                              ChatImageCard(message: _quotedMessage!)
+                            else if (_quotedMessage!.isShopShare)
+                                ShopShareCard(message: _quotedMessage!)
+                              else
+                                Text(
+                                  _quotedMessage!.content,
+                                  maxLines: 2,
+                                  overflow: TextOverflow.ellipsis,
+                                ),
                         ],
                       ),
                     ),
@@ -449,6 +742,31 @@ class _ChatDetailPageState extends State<ChatDetailPage> {
                 ),
               ),
             ),
+          if (_pendingImagePath != null)
+            Container(
+              color: Colors.white,
+              padding: const EdgeInsets.fromLTRB(12, 8, 12, 4),
+              child: Row(
+                children: [
+                  ClipRRect(
+                    borderRadius: BorderRadius.circular(8),
+                    child: Image.file(
+                      File(_pendingImagePath!),
+                      width: 64,
+                      height: 64,
+                      fit: BoxFit.cover,
+                    ),
+                  ),
+                  const SizedBox(width: 10),
+                  const Expanded(child: Text('图片将随消息一起发送')),
+                  IconButton(
+                    tooltip: '移除图片',
+                    icon: const Icon(Icons.close),
+                    onPressed: () => setState(() => _pendingImagePath = null),
+                  ),
+                ],
+              ),
+            ),
           SafeArea(
             top: false,
             child: Container(
@@ -456,15 +774,47 @@ class _ChatDetailPageState extends State<ChatDetailPage> {
               padding: const EdgeInsets.fromLTRB(12, 8, 12, 12),
               child: Row(
                 children: [
+                  PopupMenuButton<ImageSource>(
+                    tooltip: '添加图片',
+                    icon: const Icon(Icons.add_photo_alternate_outlined),
+                    onSelected: _pickImage,
+                    itemBuilder: (_) => const [
+                      PopupMenuItem(
+                        value: ImageSource.gallery,
+                        child: Text('从相册选择'),
+                      ),
+                      PopupMenuItem(
+                        value: ImageSource.camera,
+                        child: Text('拍照'),
+                      ),
+                    ],
+                  ),
                   Expanded(
                     child: TextField(
                       controller: _input,
+                      focusNode: _inputFocus,
+                      onTap: () {
+                        if (_showEmoji) setState(() => _showEmoji = false);
+                      },
                       enabled:
-                          widget.conversation.isActive &&
+                      widget.conversation.isActive &&
                           _blockState?.blockedByMe != true,
                       minLines: 1,
                       maxLines: 4,
                       decoration: const InputDecoration(hintText: '输入消息'),
+                    ),
+                  ),
+                  IconButton(
+                    tooltip: '表情',
+                    onPressed: () {
+                      setState(() => _showEmoji = !_showEmoji);
+                      if (_showEmoji) _inputFocus.unfocus();
+                      _scheduleScrollToBottom(animate: false);
+                    },
+                    icon: Icon(
+                      _showEmoji
+                          ? Icons.keyboard_outlined
+                          : Icons.emoji_emotions_outlined,
                     ),
                   ),
                   IconButton(
@@ -476,6 +826,7 @@ class _ChatDetailPageState extends State<ChatDetailPage> {
               ),
             ),
           ),
+          if (_showEmoji) _EmojiPanel(onSelected: _insertEmoji),
         ],
       ),
     );
@@ -487,6 +838,52 @@ String _friendlyError(Object error) {
   return '网络连接失败，请检查网络后重试';
 }
 
+const customerChatEmojis = <String>[
+  '😀','😁','😂','🤣','😃','😄','😅','😆','😊','🙂','🙃','😉',
+  '😍','🥰','😘','😋','😎','🤩','🥳','🤗','🤭','🤔','🫡','🤐',
+  '😴','😪','😢','😭','😤','😡','😱','😇','👍','👎','👌','✌️',
+  '🤞','🤟','🤝','👏','🙌','🙏','💪','👊','👋','🫶','❤️','🧡',
+  '💛','💚','💙','💜','🤍','💯','✨','🔥','⭐','🌟','💡','🎉',
+  '🎊','🎁','🎂','🌹','💐','🌈','☀️','🌙','☁️','❄️','⚡','☔',
+  '🍚','🍜','🥟','🍲','🍔','🍟','🍕','🥗','🍣','🍱','🍰','🍦',
+  '🍭','☕','🥤','🧋','🍎','🍓','🍉','🍇','🥭','🍊','🍌','🥝',
+  '✅','❌','❓','❗','⚠️','📍','📌','💬','📷','🎵','🏠','🏪',
+  '🚗','🚀','⏰','💰',
+];
+
+class _EmojiPanel extends StatelessWidget {
+  const _EmojiPanel({required this.onSelected});
+  final ValueChanged<String> onSelected;
+
+  @override
+  Widget build(BuildContext context) => SafeArea(
+    top: false,
+    child: Container(
+      height: 210,
+      color: Colors.white,
+      padding: const EdgeInsets.all(12),
+      child: GridView.builder(
+        itemCount: customerChatEmojis.length,
+        gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
+          crossAxisCount: 8,
+          mainAxisSpacing: 8,
+          crossAxisSpacing: 8,
+        ),
+        itemBuilder: (_, index) => InkWell(
+          borderRadius: BorderRadius.circular(8),
+          onTap: () => onSelected(customerChatEmojis[index]),
+          child: Center(
+            child: Text(
+              customerChatEmojis[index],
+              style: const TextStyle(fontSize: 25),
+            ),
+          ),
+        ),
+      ),
+    ),
+  );
+}
+
 class ChatMessageRow extends StatelessWidget {
   const ChatMessageRow({
     super.key,
@@ -495,7 +892,7 @@ class ChatMessageRow extends StatelessWidget {
     required this.groupChat,
     this.fallbackAvatarUrl,
     this.fallbackName,
-    this.onLongPress,
+    this.onAction,
     this.onQuoteTap,
     this.onReEdit,
     this.highlighted = false,
@@ -505,7 +902,7 @@ class ChatMessageRow extends StatelessWidget {
   final bool groupChat;
   final String? fallbackAvatarUrl;
   final String? fallbackName;
-  final VoidCallback? onLongPress;
+  final ValueChanged<String>? onAction;
   final VoidCallback? onQuoteTap;
   final VoidCallback? onReEdit;
   final bool highlighted;
@@ -519,6 +916,36 @@ class ChatMessageRow extends StatelessWidget {
           message.content,
           textAlign: TextAlign.center,
           style: const TextStyle(fontSize: 12, color: Color(0xFF888888)),
+        ),
+      );
+    }
+    if (message.isRecalled) {
+      return Padding(
+        padding: const EdgeInsets.only(bottom: 12, top: 2),
+        child: Center(
+          child: ChatActionOverlay(
+            actions: const [ChatAction('delete', '删除', Icons.delete_outline)],
+            onSelected: (action) => onAction?.call(action),
+            child: InkWell(
+              onTap: onReEdit,
+              borderRadius: BorderRadius.circular(6),
+              child: Padding(
+                padding: const EdgeInsets.symmetric(
+                  horizontal: 10,
+                  vertical: 5,
+                ),
+                child: Text(
+                  mine
+                      ? (onReEdit != null ? '撤回一条消息，重新编辑' : '撤回一条消息')
+                      : '${message.senderNickname ?? '对方'}撤回一条消息',
+                  style: const TextStyle(
+                    fontSize: 12,
+                    color: Color(0xFF888888),
+                  ),
+                ),
+              ),
+            ),
+          ),
         ),
       );
     }
@@ -537,6 +964,64 @@ class ChatMessageRow extends StatelessWidget {
           ? null
           : Text(name.isEmpty ? '?' : name.substring(0, 1)),
     );
+    final Widget messageContent = message.isDishShare
+        ? DishShareCard(message: message)
+        : message.isOrderShare
+        ? OrderShareCard(message: message)
+        : message.isImageShare
+        ? ChatImageCard(message: message, mine: mine)
+        : message.isShopShare
+        ? ShopShareCard(message: message)
+        : Container(
+      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 9),
+      constraints: const BoxConstraints(maxWidth: 280),
+      decoration: BoxDecoration(
+        color: mine ? const Color(0xFFF28C28) : const Color(0xFFF4F4F4),
+        borderRadius: BorderRadius.circular(8),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          if (message.quotedMessageId != null)
+            QuotedMessagePreview(
+              message: message,
+              mine: mine,
+              onTap: onQuoteTap,
+            ),
+          Text(
+            message.content,
+            style: TextStyle(
+              color: mine ? Colors.white : const Color(0xFF242424),
+            ),
+          ),
+        ],
+      ),
+    );
+    final isShareContent =
+        message.isDishShare ||
+            message.isOrderShare ||
+            message.isImageShare ||
+            message.isShopShare;
+    final Widget actionContent =
+    isShareContent && message.quotedMessageId != null
+        ? Column(
+      crossAxisAlignment: mine
+          ? CrossAxisAlignment.end
+          : CrossAxisAlignment.start,
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        ConstrainedBox(
+          constraints: const BoxConstraints(maxWidth: 280),
+          child: QuotedMessagePreview(
+            message: message,
+            mine: mine,
+            onTap: onQuoteTap,
+          ),
+        ),
+        messageContent,
+      ],
+    )
+        : messageContent;
     final bubble = Column(
       crossAxisAlignment: mine
           ? CrossAxisAlignment.end
@@ -553,69 +1038,56 @@ class ChatMessageRow extends StatelessWidget {
         Row(
           mainAxisSize: MainAxisSize.min,
           children: [
+            if (message.deliveryFailed) ...[
+              const Icon(Icons.error, color: Colors.red, size: 18),
+              const SizedBox(width: 5),
+            ],
             Flexible(
-              child: GestureDetector(
-                onLongPress: onLongPress,
+              child: ChatActionOverlay(
+                actions: [
+                  if (!message.isRecalled)
+                    const ChatAction('quote', '引用', Icons.format_quote),
+                  if (mine && !message.isRecalled)
+                    const ChatAction('recall', '撤回', Icons.undo),
+                  const ChatAction('delete', '删除', Icons.delete_outline),
+                ],
+                onSelected: (action) => onAction?.call(action),
                 child: message.isRecalled
                     ? InkWell(
-                        onTap: onReEdit,
-                        child: Padding(
-                          padding: const EdgeInsets.symmetric(vertical: 6),
-                          child: Text(
-                            mine
-                                ? (onReEdit != null ? '撤回一条消息，重新编辑' : '撤回一条消息')
-                                : '${message.senderNickname ?? '对方'}撤回一条消息',
-                            style: const TextStyle(
-                              fontSize: 12,
-                              color: Color(0xFF888888),
-                            ),
-                          ),
-                        ),
-                      )
-                    : message.isDishShare
-                    ? DishShareCard(message: message)
-                    : message.isOrderShare
-                    ? OrderShareCard(message: message)
-                    : Container(
-                        padding: const EdgeInsets.symmetric(
-                          horizontal: 12,
-                          vertical: 9,
-                        ),
-                        constraints: const BoxConstraints(maxWidth: 280),
-                        decoration: BoxDecoration(
-                          color: mine
-                              ? const Color(0xFFF28C28)
-                              : const Color(0xFFF4F4F4),
-                          borderRadius: BorderRadius.circular(8),
-                        ),
-                        child: Column(
-                          crossAxisAlignment: CrossAxisAlignment.start,
-                          children: [
-                            if (message.quotedMessageId != null)
-                              QuotedMessagePreview(
-                                message: message,
-                                mine: mine,
-                                onTap: onQuoteTap,
-                              ),
-                            Text(
-                              message.content,
-                              style: TextStyle(
-                                color: mine
-                                    ? Colors.white
-                                    : const Color(0xFF242424),
-                              ),
-                            ),
-                          ],
-                        ),
+                  onTap: onReEdit,
+                  child: Padding(
+                    padding: const EdgeInsets.symmetric(vertical: 6),
+                    child: Text(
+                      mine
+                          ? (onReEdit != null ? '撤回一条消息，重新编辑' : '撤回一条消息')
+                          : '${message.senderNickname ?? '对方'}撤回一条消息',
+                      style: const TextStyle(
+                        fontSize: 12,
+                        color: Color(0xFF888888),
                       ),
+                    ),
+                  ),
+                )
+                    : actionContent,
               ),
             ),
-            if (message.deliveryFailed) ...[
-              const SizedBox(width: 5),
-              const Icon(Icons.error, color: Colors.red, size: 18),
-            ],
           ],
         ),
+        if (message.essence)
+          const Padding(
+            padding: EdgeInsets.only(top: 4),
+            child: Row(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Icon(Icons.auto_awesome, size: 13, color: Color(0xFFE08222)),
+                SizedBox(width: 3),
+                Text(
+                  '精华',
+                  style: TextStyle(fontSize: 11, color: Color(0xFFE08222)),
+                ),
+              ],
+            ),
+          ),
         if (message.deliveryFailed)
           const Padding(
             padding: EdgeInsets.only(top: 5),
@@ -626,6 +1098,17 @@ class ChatMessageRow extends StatelessWidget {
             ),
           ),
       ],
+    );
+    final animatedBubble = TweenAnimationBuilder<double>(
+      tween: Tween(begin: 0.18, end: 1),
+      duration: const Duration(milliseconds: 320),
+      curve: Curves.easeOutBack,
+      builder: (context, value, child) => Transform.scale(
+        scale: value,
+        alignment: mine ? Alignment.centerRight : Alignment.centerLeft,
+        child: child,
+      ),
+      child: bubble,
     );
     return AnimatedContainer(
       duration: const Duration(milliseconds: 260),
@@ -642,8 +1125,228 @@ class ChatMessageRow extends StatelessWidget {
             : MainAxisAlignment.start,
         crossAxisAlignment: CrossAxisAlignment.start,
         children: mine
-            ? [Flexible(child: bubble), const SizedBox(width: 8), avatar]
-            : [avatar, const SizedBox(width: 8), Flexible(child: bubble)],
+            ? [
+          Flexible(child: animatedBubble),
+          const SizedBox(width: 8),
+          avatar,
+        ]
+            : [
+          avatar,
+          const SizedBox(width: 8),
+          Flexible(child: animatedBubble),
+        ],
+      ),
+    );
+  }
+}
+
+class ChatImageCard extends StatelessWidget {
+  const ChatImageCard({super.key, required this.message, this.mine = false});
+  final ChatMessage message;
+  final bool mine;
+
+  @override
+  Widget build(BuildContext context) {
+    final expired = message.imageExpired || (message.imageUrl ?? '').isEmpty;
+    final hasText = message.content.trim().isNotEmpty;
+    final hasBubble = hasText || message.quotedMessageId != null || expired;
+    return Container(
+      width: 240,
+      padding: hasBubble ? const EdgeInsets.all(8) : EdgeInsets.zero,
+      decoration: BoxDecoration(
+        color: hasBubble
+            ? (mine ? const Color(0xFFF28C28) : const Color(0xFFF4F4F4))
+            : Colors.transparent,
+        borderRadius: BorderRadius.circular(8),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          if (hasText) ...[
+            Padding(
+              padding: const EdgeInsets.fromLTRB(3, 2, 3, 8),
+              child: Text(
+                message.content,
+                style: TextStyle(color: mine ? Colors.white : null),
+              ),
+            ),
+          ],
+          if (expired)
+            const SizedBox(
+              height: 88,
+              child: Center(
+                child: Row(
+                  mainAxisAlignment: MainAxisAlignment.center,
+                  children: [
+                    Icon(Icons.broken_image_outlined, color: Color(0xFF999999)),
+                    SizedBox(width: 7),
+                    Text('图片资源已过期', style: TextStyle(color: Color(0xFF777777))),
+                  ],
+                ),
+              ),
+            )
+          else
+            GestureDetector(
+              onTap: () => _openCustomerChatImage(context, message.imageUrl!),
+              child: ClipRRect(
+                borderRadius: BorderRadius.circular(7),
+                child: Image.network(
+                  resolveCustomerImageUrl(message.imageUrl!),
+                  headers: AppScope.of(context).api.token?.isNotEmpty == true
+                      ? {
+                    'Authorization':
+                    'Bearer ${AppScope.of(context).api.token}',
+                  }
+                      : null,
+                  width: hasBubble ? 224 : 240,
+                  height: 180,
+                  fit: BoxFit.cover,
+                  errorBuilder: (_, _, _) => const SizedBox(
+                    height: 88,
+                    child: Center(child: Text('图片加载失败')),
+                  ),
+                ),
+              ),
+            ),
+        ],
+      ),
+    );
+  }
+}
+
+void _openCustomerChatImage(BuildContext context, String imageUrl) {
+  final token = AppScope.of(context).api.token;
+  Navigator.of(context).push(
+    MaterialPageRoute(
+      builder: (_) => Scaffold(
+        backgroundColor: Colors.black,
+        appBar: AppBar(
+          backgroundColor: Colors.black,
+          foregroundColor: Colors.white,
+          title: const Text('查看图片'),
+        ),
+        body: InteractiveViewer(
+          minScale: .5,
+          maxScale: 5,
+          boundaryMargin: const EdgeInsets.all(80),
+          child: Center(
+            child: Image.network(
+              resolveCustomerImageUrl(imageUrl),
+              headers: token?.isNotEmpty == true
+                  ? {'Authorization': 'Bearer $token'}
+                  : null,
+              fit: BoxFit.contain,
+            ),
+          ),
+        ),
+      ),
+    ),
+  );
+}
+
+class ShopShareCard extends StatelessWidget {
+  const ShopShareCard({super.key, required this.message});
+  final ChatMessage message;
+
+  @override
+  Widget build(BuildContext context) {
+    return Padding(
+      padding: const EdgeInsets.only(left: 8),
+      child: Material(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(12),
+        clipBehavior: Clip.antiAlias,
+        child: InkWell(
+          onTap: message.sharedShopId == null
+              ? null
+              : () => Navigator.of(context).push(
+            MaterialPageRoute(
+              builder: (_) => ShopOrderPage(shopId: message.sharedShopId!),
+            ),
+          ),
+          child: Container(
+            width: 250,
+            padding: const EdgeInsets.all(10),
+            decoration: BoxDecoration(
+              border: Border.all(color: const Color(0xFFF0E7DE)),
+              borderRadius: BorderRadius.circular(12),
+            ),
+            child: Row(
+              crossAxisAlignment: CrossAxisAlignment.center,
+              children: [
+                Container(
+                  width: 48,
+                  height: 48,
+                  clipBehavior: Clip.antiAlias,
+                  decoration: BoxDecoration(
+                    color: const Color(0xFFFFF4E8),
+                    borderRadius: BorderRadius.circular(8),
+                  ),
+                  child: message.sharedShopLogoUrl?.isNotEmpty == true
+                      ? Image.network(
+                    resolveCustomerImageUrl(message.sharedShopLogoUrl!),
+                    fit: BoxFit.cover,
+                    errorBuilder: (_, __, ___) => const Icon(
+                      Icons.storefront_outlined,
+                      color: Color(0xFFF28C28),
+                      size: 24,
+                    ),
+                  )
+                      : const Icon(
+                    Icons.storefront_outlined,
+                    color: Color(0xFFF28C28),
+                    size: 24,
+                  ),
+                ),
+                const SizedBox(width: 10),
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      const Text(
+                        '分享店铺',
+                        style: TextStyle(
+                          fontSize: 10,
+                          color: Color(0xFFF28C28),
+                          fontWeight: FontWeight.bold,
+                        ),
+                      ),
+                      const SizedBox(height: 2),
+                      Text(
+                        message.sharedShopName ?? '店铺',
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: const TextStyle(
+                          fontSize: 14,
+                          fontWeight: FontWeight.w700,
+                          color: Color(0xFF242424),
+                        ),
+                      ),
+                      if (message.sharedShopDescription?.isNotEmpty == true) ...[
+                        const SizedBox(height: 2),
+                        Text(
+                          message.sharedShopDescription!,
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                          style: const TextStyle(
+                            fontSize: 11,
+                            color: Color(0xFF999999),
+                          ),
+                        ),
+                      ],
+                    ],
+                  ),
+                ),
+                const Icon(
+                  Icons.chevron_right,
+                  color: Color(0xFFD0D0D0),
+                  size: 18,
+                ),
+              ],
+            ),
+          ),
+        ),
       ),
     );
   }
@@ -652,11 +1355,19 @@ class ChatMessageRow extends StatelessWidget {
 class DishShareCard extends StatelessWidget {
   const DishShareCard({super.key, required this.message});
   final ChatMessage message;
+
   @override
-  Widget build(BuildContext context) => InkWell(
-    onTap: message.shopId == null
-        ? null
-        : () => Navigator.of(context).push(
+  Widget build(BuildContext context) {
+    return Padding(
+      padding: const EdgeInsets.only(left: 8),
+      child: Material(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(12),
+        clipBehavior: Clip.antiAlias,
+        child: InkWell(
+          onTap: message.shopId == null
+              ? null
+              : () => Navigator.of(context).push(
             MaterialPageRoute(
               builder: (_) => ShopOrderPage(
                 shopId: message.shopId!,
@@ -664,102 +1375,117 @@ class DishShareCard extends StatelessWidget {
               ),
             ),
           ),
-    child: Container(
-      width: 260,
-      clipBehavior: Clip.antiAlias,
-      decoration: BoxDecoration(
-        color: Colors.white,
-        border: Border.all(color: const Color(0xFFE7E7E7)),
-        borderRadius: BorderRadius.circular(8),
-      ),
-      child: Row(
-        children: [
-          SizedBox(
-            width: 88,
-            height: 104,
-            child: message.dishImageUrl?.isNotEmpty == true
-                ? Image.network(
+          child: Container(
+            width: 250,
+            padding: const EdgeInsets.all(10),
+            decoration: BoxDecoration(
+              border: Border.all(color: const Color(0xFFF0E7DE)),
+              borderRadius: BorderRadius.circular(12),
+            ),
+            child: Row(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Container(
+                  width: 64,
+                  height: 64,
+                  clipBehavior: Clip.antiAlias,
+                  decoration: BoxDecoration(
+                    color: const Color(0xFFF7F7F7),
+                    borderRadius: BorderRadius.circular(8),
+                  ),
+                  child: message.dishImageUrl?.isNotEmpty == true
+                      ? Image.network(
                     resolveCustomerImageUrl(message.dishImageUrl!),
                     fit: BoxFit.cover,
-                    errorBuilder: (_, _, _) =>
-                        const Icon(Icons.restaurant_menu),
+                    errorBuilder: (_, __, ___) => const Icon(
+                      Icons.restaurant_menu,
+                      color: Color(0xFFD0D0D0),
+                    ),
                   )
-                : const ColoredBox(
-                    color: Color(0xFFF3F3F3),
-                    child: Icon(Icons.restaurant_menu),
+                      : const Icon(
+                    Icons.restaurant_menu,
+                    color: Color(0xFFD0D0D0),
                   ),
-          ),
-          Expanded(
-            child: Padding(
-              padding: const EdgeInsets.all(10),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  Text(
-                    message.dishName?.isNotEmpty == true
-                        ? message.dishName!
-                        : '分享菜品',
-                    maxLines: 1,
-                    overflow: TextOverflow.ellipsis,
-                    style: const TextStyle(fontWeight: FontWeight.w600),
-                  ),
-                  if ((message.shopName ?? '').isNotEmpty) ...[
-                    const SizedBox(height: 3),
-                    Text(
-                      message.shopName!,
-                      maxLines: 1,
-                      overflow: TextOverflow.ellipsis,
-                      style: const TextStyle(
-                        fontSize: 11,
-                        color: Color(0xFF777777),
-                      ),
-                    ),
-                  ],
-                  const SizedBox(height: 4),
-                  Text(
-                    message.dishDescription?.isNotEmpty == true
-                        ? message.dishDescription!
-                        : '查看菜品详情',
-                    maxLines: 2,
-                    overflow: TextOverflow.ellipsis,
-                    style: const TextStyle(
-                      fontSize: 12,
-                      color: Color(0xFF777777),
-                    ),
-                  ),
-                  const SizedBox(height: 8),
-                  Row(
+                ),
+                const SizedBox(width: 10),
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    mainAxisSize: MainAxisSize.min,
                     children: [
                       Text(
-                        message.dishPrice == null
-                            ? ''
-                            : '¥${message.dishPrice!.toStringAsFixed(2)}',
+                        message.dishName?.isNotEmpty == true
+                            ? message.dishName!
+                            : '分享菜品',
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
                         style: const TextStyle(
-                          color: Color(0xFFE65A3A),
-                          fontWeight: FontWeight.w600,
+                          fontSize: 14,
+                          fontWeight: FontWeight.w700,
+                          color: Color(0xFF242424),
                         ),
                       ),
-                      const Spacer(),
-                      Text(
-                        message.dishSales == null
-                            ? ''
-                            : '已售${message.dishSales}',
-                        style: const TextStyle(
-                          fontSize: 11,
-                          color: Color(0xFF888888),
-                        ),
+                      const SizedBox(height: 4),
+                      Row(
+                        children: [
+                          const Icon(
+                            Icons.storefront_outlined,
+                            size: 13,
+                            color: Color(0xFFF28C28),
+                          ),
+                          const SizedBox(width: 2),
+                          Expanded(
+                            child: Text(
+                              message.shopName?.isNotEmpty == true
+                                  ? message.shopName!
+                                  : '商家',
+                              maxLines: 1,
+                              overflow: TextOverflow.ellipsis,
+                              style: const TextStyle(
+                                fontSize: 11,
+                                color: Color(0xFF777777),
+                              ),
+                            ),
+                          ),
+                        ],
+                      ),
+                      const SizedBox(height: 10),
+                      Row(
+                        crossAxisAlignment: CrossAxisAlignment.end,
+                        children: [
+                          Text(
+                            message.dishPrice == null
+                                ? ''
+                                : '¥${message.dishPrice!.toStringAsFixed(2)}',
+                            style: const TextStyle(
+                              color: Color(0xFFE65A3A),
+                              fontSize: 14,
+                              fontWeight: FontWeight.bold,
+                              height: 1.0,
+                            ),
+                          ),
+                          const Spacer(),
+                          Text(
+                            message.dishSales == null
+                                ? ''
+                                : '已售${message.dishSales}',
+                            style: const TextStyle(
+                              fontSize: 10,
+                              color: Color(0xFF999999),
+                            ),
+                          ),
+                        ],
                       ),
                     ],
                   ),
-                ],
-              ),
+                ),
+              ],
             ),
           ),
-        ],
+        ),
       ),
-    ),
-  );
+    );
+  }
 }
 
 class QuotedMessagePreview extends StatelessWidget {
@@ -790,6 +1516,10 @@ class QuotedMessagePreview extends StatelessWidget {
         alignment: Alignment.centerLeft,
         child: OrderShareCard(message: quoted!),
       );
+    } else if (quoted?.isImageShare == true) {
+      content = ChatImageCard(message: quoted!);
+    } else if (quoted?.isShopShare == true) {
+      content = ShopShareCard(message: quoted!);
     } else {
       content = Text(
         quoted?.content ?? message.quotedContent ?? '消息',

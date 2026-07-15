@@ -89,6 +89,8 @@ class ShopApiService {
 
   Future<CurrentUser> updatePrivateChatSetting({
     required bool allowPrivateChat,
+    bool? showPhone,
+    bool? showJoinedFamilies,
   }) async {
     final current = await fetchCurrentUser();
     final data = await _request<Map<String, dynamic>>(
@@ -99,6 +101,8 @@ class ShopApiService {
         'phone': current.phone,
         'avatarUrl': current.avatarUrl,
         'allowPrivateChat': allowPrivateChat,
+        'showPhone': showPhone ?? current.showPhone,
+        'showJoinedFamilies': showJoinedFamilies ?? current.showJoinedFamilies,
       },
     );
     return CurrentUser.fromJson(data);
@@ -134,6 +138,194 @@ class ShopApiService {
       body: {'content': content.trim(), 'quotedMessageId': quotedMessageId},
     );
     return ChatMessage.fromJson(data);
+  }
+
+  Future<ChatMessage> sendChatImage(
+    int conversationId,
+    String filePath, {
+    String? content,
+    int? quotedMessageId,
+  }) async {
+    final request = http.MultipartRequest(
+      'POST',
+      _uri('/messages/conversations/$conversationId/images'),
+    );
+    request.headers.addAll(await _headers(jsonContent: false));
+    if (content?.trim().isNotEmpty == true) {
+      request.fields['content'] = content!.trim();
+    }
+    if (quotedMessageId != null) {
+      request.fields['quotedMessageId'] = '$quotedMessageId';
+    }
+    request.files.add(await http.MultipartFile.fromPath('image', filePath));
+    final response = await http.Response.fromStream(
+      await _client.send(request),
+    );
+    final decoded = _decode(response);
+    if (decoded is Map<String, dynamic> && decoded['code'] == 0) {
+      return ChatMessage.fromJson(
+        decoded['data'] as Map<String, dynamic>? ?? const {},
+      );
+    }
+    throw ApiException(
+      decoded is Map<String, dynamic>
+          ? decoded['message']?.toString() ?? '图片发送失败'
+          : '图片发送失败',
+    );
+  }
+
+  Future<ChatConversation> updateConversationPreferences(
+    int conversationId, {
+    bool? muted,
+    bool? hidden,
+    bool? pinned,
+  }) async {
+    final data = await _request<Map<String, dynamic>>(
+      'PUT',
+      '/messages/conversations/$conversationId/preferences',
+      body: {'muted': muted, 'hidden': hidden, 'pinned': pinned},
+    );
+    return ChatConversation.fromJson(data);
+  }
+
+  Future<ConversationHideResult> deleteConversation(
+    int conversationId, {
+    int? expectedMessageVersion,
+  }) async {
+    final data = await _request<Map<String, dynamic>>(
+      'DELETE',
+      '/messages/conversations/$conversationId',
+      query: {
+        'guarded': 'true',
+        if (expectedMessageVersion != null)
+          'expectedMessageVersion': '$expectedMessageVersion',
+      },
+    );
+    return ConversationHideResult.fromJson(data);
+  }
+
+  Future<ChatUserProfile> fetchChatUserProfile(
+    int userId, {
+    int? conversationId,
+  }) async {
+    final data = await _request<Map<String, dynamic>>(
+      'GET',
+      '/messages/users/$userId/profile',
+      query: conversationId == null
+          ? null
+          : {'conversationId': '$conversationId'},
+    );
+    return ChatUserProfile.fromJson(data);
+  }
+
+  Future<void> addChatEssence(int conversationId, int messageId) async {
+    await _request<Map<String, dynamic>>(
+      'POST',
+      '/messages/family-groups/$conversationId/essences/$messageId',
+    );
+  }
+
+  Future<void> removeChatEssence(int conversationId, int messageId) =>
+      _request<void>(
+        'DELETE',
+        '/messages/family-groups/$conversationId/essences/$messageId',
+      );
+
+  Future<ChatEssenceList> fetchChatEssences(int conversationId) async {
+    final data = await _request<Map<String, dynamic>>(
+      'GET',
+      '/messages/family-groups/$conversationId/essences',
+    );
+    return ChatEssenceList.fromJson(data);
+  }
+
+  Future<void> setChatEssencePinned(
+    int conversationId,
+    int messageId,
+    bool pinned,
+  ) async {
+    await _request<Map<String, dynamic>>(
+      'PUT',
+      '/messages/family-groups/$conversationId/essences/$messageId/pin',
+      body: {'pinned': pinned},
+    );
+  }
+
+  Future<void> setChatEssenceLiked(
+    int conversationId,
+    int messageId,
+    bool liked,
+  ) async {
+    await _request<Map<String, dynamic>>(
+      'PUT',
+      '/messages/family-groups/$conversationId/essences/$messageId/like',
+      body: {'liked': liked},
+    );
+  }
+
+  Future<void> markChatEssencesRead(
+    int conversationId, {
+    int? throughMessageId,
+  }) => _request<void>(
+    'PUT',
+    '/messages/family-groups/$conversationId/essences/read',
+    body: {'throughMessageId': throughMessageId},
+  );
+
+  Future<ChatMessage?> fetchLatestUnreadChatEssence(int conversationId) async {
+    final data = await _request<dynamic>(
+      'GET',
+      '/messages/family-groups/$conversationId/essences/latest-unread',
+    );
+    if (data is! Map<String, dynamic>) return null;
+    return ChatMessage.fromJson(
+      data['message'] is Map<String, dynamic>
+          ? {
+              ...(data['message'] as Map<String, dynamic>),
+              'essence': true,
+              'essencePinned': data['pinned'],
+              'essenceLikeCount': data['likeCount'],
+              'essenceLikedByMe': data['liked'],
+            }
+          : data,
+    );
+  }
+
+  Future<ChatMessage> shareShopToConversation({
+    required int conversationId,
+    required int shopId,
+    int? quotedMessageId,
+  }) async {
+    final data = await _request<Map<String, dynamic>>(
+      'POST',
+      '/messages/shop-shares',
+      body: {
+        'conversationId': conversationId,
+        'shopId': shopId,
+        'quotedMessageId': quotedMessageId,
+      },
+    );
+    return ChatMessage.fromJson(data);
+  }
+
+  Future<void> registerPushDevice({
+    required String token,
+    required String platform,
+  }) => _request<void>(
+    'POST',
+    '/messages/push-devices',
+    body: {'token': token, 'platform': platform},
+  );
+
+  Future<void> unregisterPushDevice(String token) async {
+    final uri = Uri.parse(
+      '${_uri('/messages/push-devices')}/${Uri.encodeComponent(token)}',
+    );
+    final response = await _client.delete(uri, headers: await _headers());
+    final decoded = _decode(response);
+    if (decoded is Map<String, dynamic> && decoded['code'] != 0) {
+      throw ApiException(decoded['message']?.toString() ?? '取消推送注册失败');
+    }
   }
 
   Future<ChatMessage> recallChatMessage(
@@ -546,7 +738,11 @@ class ShopApiService {
             body: body == null ? null : jsonEncode(body),
           );
         case 'DELETE':
-          response = await _client.delete(uri, headers: headers);
+          response = await _client.delete(
+            uri,
+            headers: headers,
+            body: body == null ? null : jsonEncode(body),
+          );
         default:
           throw ApiException('不支持的请求方法 $method');
       }

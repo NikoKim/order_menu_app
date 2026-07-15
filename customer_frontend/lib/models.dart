@@ -21,6 +21,8 @@ class CustomerUser {
     this.phone,
     this.allowPrivateChat = true,
     this.autoJoinFamilyChat = true,
+    this.showJoinedFamilies = true,
+    this.showPhone = true,
   });
 
   factory CustomerUser.fromJson(Map<String, dynamic> json) {
@@ -32,6 +34,8 @@ class CustomerUser {
       phone: json['phone']?.toString(),
       allowPrivateChat: json['allowPrivateChat'] != false,
       autoJoinFamilyChat: json['autoJoinFamilyChat'] != false,
+      showJoinedFamilies: json['showJoinedFamilies'] != false,
+      showPhone: json['showPhone'] != false,
     );
   }
 
@@ -42,6 +46,8 @@ class CustomerUser {
   final String? phone;
   final bool allowPrivateChat;
   final bool autoJoinFamilyChat;
+  final bool showJoinedFamilies;
+  final bool showPhone;
 }
 
 class ChatConversation {
@@ -52,12 +58,17 @@ class ChatConversation {
     this.name,
     this.coverImageUrl,
     this.lastMessageAt,
+    this.messageVersion = 0,
     this.lastMessageContent,
     this.unreadCount = 0,
     this.muted = false,
     this.directUserId,
     this.directUserNickname,
     this.directUserAvatarUrl,
+    this.pinned = false,
+    this.pinnedAt,
+    this.hidden = false,
+    this.mutedBadge = false,
   });
 
   factory ChatConversation.fromJson(Map<String, dynamic> json) {
@@ -68,6 +79,7 @@ class ChatConversation {
       name: json['name']?.toString(),
       coverImageUrl: json['coverImageUrl']?.toString(),
       lastMessageAt: json['lastMessageAt']?.toString(),
+      messageVersion: _asInt(json['messageVersion']),
       lastMessageContent: (json['lastMessageContent'] ?? json['lastMessage'])
           ?.toString(),
       unreadCount: _asInt(json['unreadCount']),
@@ -77,6 +89,10 @@ class ChatConversation {
           : _asInt(json['directUserId']),
       directUserNickname: json['directUserNickname']?.toString(),
       directUserAvatarUrl: json['directUserAvatarUrl']?.toString(),
+      pinned: json['pinned'] == true,
+      pinnedAt: json['pinnedAt']?.toString(),
+      hidden: json['hidden'] == true,
+      mutedBadge: json['mutedBadge'] == true,
     );
   }
 
@@ -86,12 +102,17 @@ class ChatConversation {
   final String? name;
   final String? coverImageUrl;
   final String? lastMessageAt;
+  final int messageVersion;
   final String? lastMessageContent;
   final int unreadCount;
   final bool muted;
   final int? directUserId;
   final String? directUserNickname;
   final String? directUserAvatarUrl;
+  final bool pinned;
+  final String? pinnedAt;
+  final bool hidden;
+  final bool mutedBadge;
 
   bool get isDirect => type == 'DIRECT';
   bool get isActive => status == 'ACTIVE';
@@ -99,6 +120,7 @@ class ChatConversation {
       isDirect ? (directUserNickname ?? '私聊') : (name ?? '家庭群聊');
   String? get imageUrl => isDirect ? directUserAvatarUrl : coverImageUrl;
   bool get showUnreadBadge => unreadCount > 0 && !muted;
+  bool get showMutedBadge => muted && mutedBadge && unreadCount > 0;
 
   ChatConversation markedRead() => ChatConversation(
     id: id,
@@ -107,13 +129,57 @@ class ChatConversation {
     name: name,
     coverImageUrl: coverImageUrl,
     lastMessageAt: lastMessageAt,
+    messageVersion: messageVersion,
     lastMessageContent: lastMessageContent,
     unreadCount: 0,
     muted: muted,
     directUserId: directUserId,
     directUserNickname: directUserNickname,
     directUserAvatarUrl: directUserAvatarUrl,
+    pinned: pinned,
+    pinnedAt: pinnedAt,
+    hidden: hidden,
+    mutedBadge: false,
   );
+
+  ChatConversation withPreferences({bool? muted, bool? pinned, bool? hidden}) =>
+      ChatConversation(
+        id: id,
+        type: type,
+        status: status,
+        name: name,
+        coverImageUrl: coverImageUrl,
+        lastMessageAt: lastMessageAt,
+        messageVersion: messageVersion,
+        lastMessageContent: lastMessageContent,
+        unreadCount: unreadCount,
+        muted: muted ?? this.muted,
+        directUserId: directUserId,
+        directUserNickname: directUserNickname,
+        directUserAvatarUrl: directUserAvatarUrl,
+        pinned: pinned ?? this.pinned,
+        pinnedAt: pinned == null
+            ? pinnedAt
+            : (pinned ? DateTime.now().toIso8601String() : null),
+        hidden: hidden ?? this.hidden,
+        mutedBadge: (muted ?? this.muted) && unreadCount > 0,
+      );
+}
+
+class ConversationHideResult {
+  const ConversationHideResult({
+    required this.hidden,
+    required this.messageVersion,
+  });
+
+  factory ConversationHideResult.fromJson(Map<String, dynamic> json) =>
+      ConversationHideResult(
+        hidden: json['hidden'] == true,
+        messageVersion: _asInt(json['messageVersion']),
+      );
+
+  final bool hidden;
+  final int messageVersion;
 }
 
 class ChatMessage {
@@ -151,6 +217,17 @@ class ChatMessage {
     this.deliveryStatus = 'DELIVERED',
     this.deliveryFailed = false,
     this.failureReason,
+    this.imageUrl,
+    this.imageExpiresAt,
+    this.imageExpired = false,
+    this.sharedShopId,
+    this.sharedShopName,
+    this.sharedShopLogoUrl,
+    this.sharedShopDescription,
+    this.essence = false,
+    this.essencePinned = false,
+    this.essenceLikeCount = 0,
+    this.essenceLikedByMe = false,
   });
 
   factory ChatMessage.fromJson(Map<String, dynamic> json) => ChatMessage(
@@ -202,6 +279,20 @@ class ChatMessage {
     deliveryStatus: json['deliveryStatus']?.toString() ?? 'DELIVERED',
     deliveryFailed: json['deliveryFailed'] == true,
     failureReason: json['failureReason']?.toString(),
+    imageUrl: json['imageUrl']?.toString(),
+    imageExpiresAt: json['imageExpiresAt']?.toString(),
+    imageExpired: json['imageExpired'] == true,
+    sharedShopId: json['sharedShopId'] == null
+        ? null
+        : _asInt(json['sharedShopId']),
+    sharedShopName: json['sharedShopName']?.toString(),
+    sharedShopLogoUrl: json['sharedShopLogoUrl']?.toString(),
+    sharedShopDescription: json['sharedShopDescription']?.toString(),
+    essence: json['essence'] == true || json['isEssence'] == true,
+    essencePinned: json['essencePinned'] == true,
+    essenceLikeCount: _asInt(json['essenceLikeCount']),
+    essenceLikedByMe:
+        json['essenceLikedByMe'] == true || json['likedByMe'] == true,
   );
 
   final int id;
@@ -237,11 +328,125 @@ class ChatMessage {
   final String deliveryStatus;
   final bool deliveryFailed;
   final String? failureReason;
+  final String? imageUrl;
+  final String? imageExpiresAt;
+  final bool imageExpired;
+  final int? sharedShopId;
+  final String? sharedShopName;
+  final String? sharedShopLogoUrl;
+  final String? sharedShopDescription;
+  final bool essence;
+  final bool essencePinned;
+  final int essenceLikeCount;
+  final bool essenceLikedByMe;
 
   bool get isDishShare => type == 'DISH_SHARE';
   bool get isOrderShare => type == 'ORDER_SHARE';
+  bool get isImageShare => type == 'IMAGE_SHARE';
+  bool get isShopShare => type == 'SHOP_SHARE';
   bool get isSystem => type == 'SYSTEM';
   bool get isRecalled => recalledAt != null && recalledAt!.isNotEmpty;
+}
+
+class ChatUserProfile {
+  const ChatUserProfile({
+    required this.id,
+    required this.nickname,
+    required this.role,
+    this.avatarUrl,
+    this.phone,
+    this.joinedFamilies = const [],
+    this.shopId,
+    this.shopName,
+    this.shopLogoUrl,
+    this.shopDescription,
+  });
+
+  factory ChatUserProfile.fromJson(Map<String, dynamic> json) =>
+      ChatUserProfile(
+        id: _asInt(json['id'] ?? json['userId']),
+        nickname: json['nickname']?.toString() ?? '用户',
+        role: json['role']?.toString() ?? 'CUSTOMER',
+        avatarUrl: json['avatarUrl']?.toString(),
+        phone: json['phoneVisible'] == false ? null : json['phone']?.toString(),
+        joinedFamilies: json['joinedFamiliesVisible'] == false
+            ? const []
+            : (json['joinedFamilies'] as List? ?? const [])
+                  .map(
+                    (item) => item is Map
+                        ? (item['familyName'] ?? item['shopName'] ?? '')
+                              .toString()
+                        : item.toString(),
+                  )
+                  .where((item) => item.isNotEmpty)
+                  .toList(),
+        shopId: _profileShopId(json),
+        shopName: _profileShopValue(json, 'shopName'),
+        shopLogoUrl: _profileShopValue(json, 'shopLogoUrl'),
+        shopDescription: _profileShopValue(json, 'shopDescription'),
+      );
+
+  final int id;
+  final String nickname;
+  final String role;
+  final String? avatarUrl;
+  final String? phone;
+  final List<String> joinedFamilies;
+  final int? shopId;
+  final String? shopName;
+  final String? shopLogoUrl;
+  final String? shopDescription;
+  bool get isMerchant => role == 'SHOP' || role == 'MERCHANT';
+}
+
+class ConversationPreferences {
+  const ConversationPreferences({
+    required this.conversationId,
+    required this.muted,
+    required this.hidden,
+    required this.pinned,
+  });
+
+  factory ConversationPreferences.fromJson(Map<String, dynamic> json) =>
+      ConversationPreferences(
+        conversationId: _asInt(json['conversationId'] ?? json['id']),
+        muted: json['muted'] == true,
+        hidden: json['hidden'] == true,
+        pinned: json['pinned'] == true,
+      );
+
+  final int conversationId;
+  final bool muted;
+  final bool hidden;
+  final bool pinned;
+}
+
+class ChatEssenceList {
+  const ChatEssenceList({required this.items, required this.unreadCount});
+
+  factory ChatEssenceList.fromJson(Map<String, dynamic> json) =>
+      ChatEssenceList(
+        items: (json['items'] as List? ?? const [])
+            .whereType<Map<String, dynamic>>()
+            .map(
+              (item) => ChatMessage.fromJson(
+                item['message'] is Map<String, dynamic>
+                    ? {
+                        ...(item['message'] as Map<String, dynamic>),
+                        'essence': true,
+                        'essencePinned': item['pinned'],
+                        'essenceLikeCount': item['likeCount'],
+                        'essenceLikedByMe': item['liked'],
+                      }
+                    : item,
+              ),
+            )
+            .toList(),
+        unreadCount: _asInt(json['unreadCount']),
+      );
+
+  final List<ChatMessage> items;
+  final int unreadCount;
 }
 
 class OrderShareItem {
@@ -294,6 +499,13 @@ class QuotedChatMessage {
     this.orderItems = const [],
     this.orderTotalAmount,
     this.orderRemark,
+    this.imageUrl,
+    this.imageExpiresAt,
+    this.imageExpired = false,
+    this.sharedShopId,
+    this.sharedShopName,
+    this.sharedShopLogoUrl,
+    this.sharedShopDescription,
   });
 
   factory QuotedChatMessage.fromJson(Map<String, dynamic> json) =>
@@ -328,6 +540,15 @@ class QuotedChatMessage {
             ? null
             : _asDouble(json['orderTotalAmount']),
         orderRemark: json['orderRemark']?.toString(),
+        imageUrl: json['imageUrl']?.toString(),
+        imageExpiresAt: json['imageExpiresAt']?.toString(),
+        imageExpired: json['imageExpired'] == true,
+        sharedShopId: json['sharedShopId'] == null
+            ? null
+            : _asInt(json['sharedShopId']),
+        sharedShopName: json['sharedShopName']?.toString(),
+        sharedShopLogoUrl: json['sharedShopLogoUrl']?.toString(),
+        sharedShopDescription: json['sharedShopDescription']?.toString(),
       );
 
   final int id;
@@ -349,6 +570,13 @@ class QuotedChatMessage {
   final List<OrderShareItem> orderItems;
   final double? orderTotalAmount;
   final String? orderRemark;
+  final String? imageUrl;
+  final String? imageExpiresAt;
+  final bool imageExpired;
+  final int? sharedShopId;
+  final String? sharedShopName;
+  final String? sharedShopLogoUrl;
+  final String? sharedShopDescription;
 
   ChatMessage toChatMessage() => ChatMessage(
     id: id,
@@ -373,6 +601,13 @@ class QuotedChatMessage {
     orderItems: orderItems,
     orderTotalAmount: orderTotalAmount,
     orderRemark: orderRemark,
+    imageUrl: imageUrl,
+    imageExpiresAt: imageExpiresAt,
+    imageExpired: imageExpired,
+    sharedShopId: sharedShopId,
+    sharedShopName: sharedShopName,
+    sharedShopLogoUrl: sharedShopLogoUrl,
+    sharedShopDescription: sharedShopDescription,
   );
 }
 
@@ -1031,6 +1266,17 @@ class FeedbackEntry {
   final String? reply;
   final String status;
   final String createdAt;
+}
+
+int? _profileShopId(Map<String, dynamic> json) {
+  final nested = json['shopProfile'];
+  final value = nested is Map ? nested['shopId'] : json['shopId'];
+  return value == null ? null : _asInt(value);
+}
+
+String? _profileShopValue(Map<String, dynamic> json, String key) {
+  final nested = json['shopProfile'];
+  return (nested is Map ? nested[key] : json[key])?.toString();
 }
 
 int _asInt(Object? value) {

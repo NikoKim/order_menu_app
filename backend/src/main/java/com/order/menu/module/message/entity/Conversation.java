@@ -20,6 +20,7 @@ public class Conversation {
     private String announcement;
     private Boolean joinApprovalRequired;
     private String status;
+    private Long messageVersion;
     private LocalDateTime lastMessageAt;
     private LocalDateTime createdAt;
     private LocalDateTime updatedAt;

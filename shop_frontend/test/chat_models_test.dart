@@ -53,7 +53,7 @@ void main() {
     expect(conversation.shouldShowUnreadBadge, isTrue);
   });
 
-  test('muted conversation suppresses unread badge', () {
+  test('muted conversation keeps unread badge for gray rendering', () {
     final conversation = ChatConversation.fromJson({
       'id': 6,
       'type': 'FAMILY_GROUP',
@@ -62,7 +62,8 @@ void main() {
       'muted': true,
     });
 
-    expect(conversation.shouldShowUnreadBadge, isFalse);
+    expect(conversation.shouldShowUnreadBadge, isTrue);
+    expect(conversation.muted, isTrue);
   });
 
   test('marking a conversation read clears only its unread state', () {
@@ -196,5 +197,154 @@ void main() {
     expect(state.userId, 18);
     expect(state.blockedByMe, isTrue);
     expect(state.blockedMe, isFalse);
+  });
+
+  test('conversation parses pin and merchant profile metadata', () {
+    final conversation = ChatConversation.fromJson({
+      'id': 20,
+      'type': 'DIRECT',
+      'status': 'ACTIVE',
+      'pinned': true,
+      'pinnedAt': '2026-07-13T09:00:00',
+      'directUserRole': 'SHOP',
+      'directShopId': 3,
+      'directShopName': '暖橙小店',
+    });
+
+    expect(conversation.pinned, isTrue);
+    expect(conversation.directUserRole, 'SHOP');
+    expect(conversation.directShopName, '暖橙小店');
+  });
+
+  test('conversation and hide result parse the guarded message version', () {
+    final conversation = ChatConversation.fromJson({
+      'id': 20,
+      'type': 'DIRECT',
+      'status': 'ACTIVE',
+      'messageVersion': 17,
+    });
+    final result = ConversationHideResult.fromJson({
+      'hidden': false,
+      'messageVersion': 18,
+    });
+
+    expect(conversation.messageVersion, 17);
+    expect(result.hidden, isFalse);
+    expect(result.messageVersion, 18);
+  });
+
+  test('optimistic unpin clears the pin timestamp', () {
+    final conversation = ChatConversation.fromJson({
+      'id': 20,
+      'type': 'DIRECT',
+      'status': 'ACTIVE',
+      'pinned': true,
+      'pinnedAt': '2026-07-13T09:00:00',
+    });
+
+    final unpinned = conversation.withPreferences(pinned: false);
+
+    expect(unpinned.pinned, isFalse);
+    expect(unpinned.pinnedAt, isNull);
+  });
+
+  test('image and essence metadata are retained by chat messages', () {
+    final message = ChatMessage.fromJson({
+      'id': 21,
+      'conversationId': 4,
+      'senderUserId': 3,
+      'type': 'IMAGE_SHARE',
+      'imageUrl': '/chat/21.jpg',
+      'imageExpiresAt': '2026-08-13T09:00:00',
+      'essence': true,
+      'essenceLabel': '群公告',
+      'essenceLikes': 5,
+      'essenceLikedByMe': true,
+      'createdAt': '2026-07-13T09:00:00',
+    });
+
+    expect(message.isImage, isTrue);
+    expect(message.imageUrl, '/chat/21.jpg');
+    expect(message.isEssence, isTrue);
+    expect(message.essenceLikes, 5);
+  });
+
+  test('essence pin metadata can be toggled optimistically', () {
+    final message = ChatMessage.fromJson({
+      'id': 21,
+      'conversationId': 4,
+      'senderUserId': 3,
+      'type': 'TEXT',
+      'content': '精华',
+      'essence': true,
+      'essencePinned': true,
+      'createdAt': '2026-07-13T09:00:00',
+    });
+
+    expect(message.withEssencePinned(false).essencePinned, isFalse);
+  });
+
+  test('chat user profile distinguishes merchants and public shop details', () {
+    final profile = ChatUserProfile.fromJson({
+      'userId': 8,
+      'nickname': '店主',
+      'role': 'SHOP',
+      'shopId': 3,
+      'shopName': '暖橙小店',
+      'joinedFamilies': ['午餐家庭'],
+    });
+
+    expect(profile.isMerchant, isTrue);
+    expect(profile.shopName, '暖橙小店');
+    expect(profile.joinedFamilies, ['午餐家庭']);
+  });
+
+  test('essence list parses nested frozen-contract items', () {
+    final list = ChatEssenceList.fromJson({
+      'unreadCount': 1,
+      'items': [
+        {
+          'pinned': true,
+          'liked': true,
+          'likeCount': 4,
+          'message': {
+            'id': 31,
+            'conversationId': 9,
+            'senderUserId': 2,
+            'type': 'TEXT',
+            'content': '重要消息',
+            'createdAt': '2026-07-13T10:00:00',
+          },
+        },
+      ],
+    });
+
+    expect(list.unreadCount, 1);
+    expect(list.items.single.isEssence, isTrue);
+    expect(list.items.single.essencePinned, isTrue);
+    expect(list.items.single.essenceLikedByMe, isTrue);
+    expect(list.items.single.essenceLikes, 4);
+  });
+
+  test('hidden user profile privacy fields are not exposed', () {
+    final profile = ChatUserProfile.fromJson({
+      'userId': 8,
+      'nickname': '用户',
+      'phone': '13800000000',
+      'phoneVisible': false,
+      'joinedFamiliesVisible': false,
+      'joinedFamilies': [
+        {'shopName': '不应显示'},
+      ],
+      'shopProfile': {
+        'shopId': 3,
+        'shopName': '公开店铺',
+        'shopLogoUrl': '/logo.png',
+      },
+    });
+
+    expect(profile.phone, isNull);
+    expect(profile.joinedFamilies, isEmpty);
+    expect(profile.shopName, '公开店铺');
   });
 }

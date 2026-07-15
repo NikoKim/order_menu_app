@@ -10,6 +10,7 @@ import 'auth_page.dart';
 import 'checkout_page.dart';
 import 'dish_detail_page.dart';
 import 'chat_detail_page.dart';
+import 'shop_share_page.dart';
 
 class ShopOrderPage extends StatefulWidget {
   const ShopOrderPage({
@@ -26,7 +27,7 @@ class ShopOrderPage extends StatefulWidget {
 }
 
 class _ShopOrderPageState extends State<ShopOrderPage> {
-  late final CustomerApi _api;
+  late CustomerApi _api;
   late Future<ShopMenu> _menuFuture;
   final Map<String, CartItem> _cart = {};
   final GlobalKey _cartKey = GlobalKey();
@@ -336,6 +337,16 @@ class _ShopOrderPageState extends State<ShopOrderPage> {
             surfaceTintColor: Colors.white,
             elevation: 0,
             actions: [
+              if (menu != null && AppScope.of(context).auth.isLoggedIn)
+                IconButton(
+                  tooltip: '分享店铺',
+                  icon: const Icon(Icons.ios_share_outlined),
+                  onPressed: () => Navigator.of(context).push(
+                    MaterialPageRoute(
+                      builder: (_) => ShopSharePage(shop: menu.shop),
+                    ),
+                  ),
+                ),
               if (menu != null && AppScope.of(context).auth.isLoggedIn)
                 IconButton(
                   tooltip: '联系商家',

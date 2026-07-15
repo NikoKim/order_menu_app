@@ -3,6 +3,34 @@ import 'package:customer_frontend/pages/chat_user_detail_page.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 void main() {
+  test('conversation preserves the guarded delete message version', () {
+    final conversation = ChatConversation.fromJson({
+      'id': 1,
+      'type': 'DIRECT',
+      'status': 'ACTIVE',
+      'messageVersion': 12,
+    });
+
+    expect(conversation.messageVersion, 12);
+    expect(conversation.markedRead().messageVersion, 12);
+    expect(conversation.withPreferences(pinned: true).messageVersion, 12);
+  });
+
+  test('optimistic unpin clears the pin timestamp', () {
+    final conversation = ChatConversation.fromJson({
+      'id': 1,
+      'type': 'DIRECT',
+      'status': 'ACTIVE',
+      'pinned': true,
+      'pinnedAt': '2026-07-13T09:00:00',
+    });
+
+    final unpinned = conversation.withPreferences(pinned: false);
+
+    expect(unpinned.pinned, isFalse);
+    expect(unpinned.pinnedAt, isNull);
+  });
+
   test('conversation parses preview and unread badge fields', () {
     final conversation = ChatConversation.fromJson({
       'id': 7,

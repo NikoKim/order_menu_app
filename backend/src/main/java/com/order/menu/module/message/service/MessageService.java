@@ -1,6 +1,7 @@
 package com.order.menu.module.message.service;
 
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
+import com.baomidou.mybatisplus.core.conditions.update.UpdateWrapper;
 import com.order.menu.common.constant.RoleConstants;
 import com.order.menu.common.exception.BusinessException;
 import com.order.menu.common.exception.ErrorCode;
@@ -21,6 +22,10 @@ import com.order.menu.module.message.mapper.ChatMessageDeletionMapper;
 import com.order.menu.module.message.mapper.ConversationMapper;
 import com.order.menu.module.message.mapper.ConversationMemberMapper;
 import com.order.menu.module.message.mapper.UserNotificationMapper;
+import com.order.menu.module.message.mapper.MessageEssenceMapper;
+import com.order.menu.module.message.mapper.MessageEssenceLikeMapper;
+import com.order.menu.module.message.entity.MessageEssence;
+import com.order.menu.module.message.entity.MessageEssenceLike;
 import com.order.menu.module.shop.entity.Shop;
 import com.order.menu.module.shop.mapper.ShopMapper;
 import com.order.menu.module.order.entity.Order;
@@ -31,9 +36,11 @@ import com.order.menu.module.user.entity.User;
 import com.order.menu.module.user.mapper.UserMapper;
 import com.order.menu.websocket.WsPushService;
 import java.time.LocalDateTime;
+import java.time.ZoneId;
 import java.util.Comparator;
 import java.util.List;
 import java.util.Map;
+import java.util.Objects;
 import java.util.Set;
 import java.util.HashSet;
 import com.fasterxml.jackson.core.JsonProcessingException;
@@ -73,6 +80,21 @@ public class MessageService {
     private final OrderItemMapper orderItemMapper;
     private final UserNotificationMapper userNotificationMapper;
     private final WsPushService wsPushService;
+    private MobilePushService mobilePushService;
+    private MessageEssenceMapper messageEssenceMapper;
+    private MessageEssenceLikeMapper messageEssenceLikeMapper;
+
+    @Autowired(required = false)
+    void setMobilePushService(MobilePushService mobilePushService) {
+        this.mobilePushService = mobilePushService;
+    }
+
+    @Autowired(required = false)
+    void setMessageEssenceMappers(MessageEssenceMapper messageEssenceMapper,
+                                  MessageEssenceLikeMapper messageEssenceLikeMapper) {
+        this.messageEssenceMapper = messageEssenceMapper;
+        this.messageEssenceLikeMapper = messageEssenceLikeMapper;
+    }
 
     public MessageService(ConversationMapper conversationMapper,
                           ConversationMemberMapper conversationMemberMapper,
@@ -103,6 +125,9 @@ public class MessageService {
         if (notification.getId() != null) pushData.put("notificationId", notification.getId());
         pushData.put("unreadCount", unreadCount);
         wsPushService.pushToUser(userId, "NOTIFICATION", "CREATED", pushData);
+        if (mobilePushService != null) {
+            afterCommit(() -> mobilePushService.dispatch(userId, title, content, payload));
+        }
         return toNotificationResponse(notification);
     }
 
@@ -269,6 +294,7 @@ public class MessageService {
         if (member == null || !PENDING.equals(member.getMemberStatus())) {
             throw new BusinessException(ErrorCode.CONFLICT, "当前没有待处理的群聊邀请");
         }
+        conversation = lockConversationForMessage(conversation);
         member.setMemberStatus(ACTIVE);
         member.setJoinedAt(LocalDateTime.now());
         member.setLeftAt(null);
@@ -295,6 +321,7 @@ public class MessageService {
         if (member == null || !PENDING.equals(member.getMemberStatus())) {
             throw new BusinessException(ErrorCode.CONFLICT, "该成员不在待审核状态");
         }
+        conversation = lockConversationForMessage(conversation);
         member.setMemberStatus(ACTIVE);
         member.setJoinedAt(LocalDateTime.now());
         member.setLeftAt(null);
@@ -328,6 +355,7 @@ public class MessageService {
         ConversationMember member = member(conversationId, userId);
         boolean needsApproval = Boolean.TRUE.equals(conversation.getJoinApprovalRequired());
         if (member == null) {
+            if (!needsApproval) conversation = lockConversationForMessage(conversation);
             insertMember(conversationId, userId, "MEMBER", needsApproval ? PENDING : ACTIVE);
             if (needsApproval) notifyOwnerOfJoinRequest(conversation, userId);
             else insertSystemMessage(conversation, userId, displayName(userId) + "加入了群聊");
@@ -337,6 +365,7 @@ public class MessageService {
         if ("OWNER".equals(member.getRole())) {
             throw new BusinessException(ErrorCode.FORBIDDEN, "群主无需重新加入群聊");
         }
+        if (!needsApproval) conversation = lockConversationForMessage(conversation);
         member.setMemberStatus(needsApproval ? PENDING : ACTIVE);
         member.setJoinedAt(needsApproval ? null : LocalDateTime.now());
         member.setLeftAt(null);
@@ -353,6 +382,7 @@ public class MessageService {
         if (member == null || "OWNER".equals(member.getRole())) {
             throw new BusinessException(ErrorCode.FORBIDDEN, "群主不能退出家庭群聊");
         }
+        conversation = lockConversationForMessage(conversation);
         markMemberLeft(member, "LEFT");
         insertSystemMessage(conversation, userId, displayName(userId) + "退出了群聊");
         pushMemberUpdated(conversationId, userId);
@@ -433,17 +463,10 @@ public class MessageService {
         message.setDishPrice(dish.getPrice());
         message.setDishDescription(dish.getDescription());
         message.setDishSalesCount(dish.getSalesCount());
+        conversation = prepareCreatedMessage(conversation, userId, deliveryFailed);
         message.setCreatedAt(LocalDateTime.now());
         chatMessageMapper.insert(message);
-        if (deliveryFailed) {
-            pushChatMessageCreatedToUser(userId, conversation.getId(), message.getId());
-            pushConversationUpdatedToUser(userId, conversation.getId());
-        } else {
-            conversation.setLastMessageAt(message.getCreatedAt());
-            conversationMapper.updateById(conversation);
-            pushChatMessageCreated(conversation.getId(), message.getId());
-            pushConversationUpdated(conversation.getId());
-        }
+        finishCreatedMessage(conversation, message, userId, deliveryFailed);
         return toMessageResponse(message);
     }
 
@@ -497,17 +520,104 @@ public class MessageService {
         message.setOrderItemsJson(writeOrderItems(items));
         message.setOrderTotalAmount(order.getTotalAmount());
         message.setOrderRemark(order.getRemark());
+        conversation = prepareCreatedMessage(conversation, userId, deliveryFailed);
         message.setCreatedAt(LocalDateTime.now());
         chatMessageMapper.insert(message);
-        if (deliveryFailed) {
-            pushChatMessageCreatedToUser(userId, conversation.getId(), message.getId());
-            pushConversationUpdatedToUser(userId, conversation.getId());
-        } else {
-            conversation.setLastMessageAt(message.getCreatedAt());
-            conversationMapper.updateById(conversation);
-            pushChatMessageCreated(conversation.getId(), message.getId());
-            pushConversationUpdated(conversation.getId());
+        finishCreatedMessage(conversation, message, userId, deliveryFailed);
+        return toMessageResponse(message);
+    }
+
+    @Transactional
+    public MessageDtos.ChatMessageResponse shareShop(Long userId, MessageDtos.ShareShopRequest request) {
+        if (request.conversationId() == null || request.shopId() == null) {
+            throw new BusinessException(ErrorCode.BAD_REQUEST, "请选择会话和店铺");
         }
+        Conversation conversation = requireConversationMember(userId, request.conversationId());
+        requireActiveConversation(conversation);
+        Shop shop = shopMapper.selectById(request.shopId());
+        if (shop == null || shop.getStatus() == null || shop.getStatus() != 1) {
+            throw new BusinessException(ErrorCode.NOT_FOUND, "店铺不存在");
+        }
+        if (FAMILY_GROUP.equals(conversation.getType())) {
+            if (!request.shopId().equals(conversation.getShopId())) {
+                throw new BusinessException(ErrorCode.FORBIDDEN, "店铺只能分享到该店铺的家庭群聊");
+            }
+            if (!userId.equals(conversation.getOwnerUserId())) requireApprovedFamilyMember(userId, shop.getId());
+        } else if (DIRECT.equals(conversation.getType())) {
+            Long recipientId = requireDirectRecipient(conversation, userId);
+            if ("FAMILY".equals(shop.getVisibilityType())) {
+                if (!recipientId.equals(shop.getOwnerUserId())) {
+                    requireApprovedFamilyMember(recipientId, shop.getId());
+                }
+                if (!userId.equals(shop.getOwnerUserId())) {
+                    requireApprovedFamilyMember(userId, shop.getId());
+                }
+            }
+        } else {
+            throw new BusinessException(ErrorCode.FORBIDDEN, "该会话不支持分享店铺");
+        }
+        boolean failed = directDeliveryFailed(conversation, userId);
+        ChatMessage message = new ChatMessage();
+        message.setConversationId(conversation.getId());
+        message.setSenderUserId(userId);
+        message.setType("SHOP_SHARE");
+        message.setDeliveryStatus(failed ? FAILED_BLOCKED : DELIVERED);
+        message.setDeliveryFailureReason(failed ? BLOCKED_MESSAGE : null);
+        message.setSharedShopId(shop.getId());
+        message.setSharedShopName(shop.getName());
+        message.setSharedShopLogoUrl(shop.getCoverImageUrl());
+        message.setSharedShopDescription(shop.getDescription());
+        applyQuote(message, request.quotedMessageId(), conversation.getId());
+        conversation = prepareCreatedMessage(conversation, userId, failed);
+        message.setCreatedAt(LocalDateTime.now());
+        chatMessageMapper.insert(message);
+        finishCreatedMessage(conversation, message, userId, failed);
+        return toMessageResponse(message);
+    }
+
+    public void assertCanUploadImage(Long userId, Long conversationId) {
+        Conversation conversation = requireConversationMember(userId, conversationId);
+        if (!ACTIVE.equals(conversation.getStatus())) {
+            throw new BusinessException(ErrorCode.FORBIDDEN, "该会话已不可用");
+        }
+        if (DIRECT.equals(conversation.getType())) {
+            Long recipientId = requireDirectRecipient(conversation, userId);
+            if (hasBlocked(userId, recipientId)) {
+                throw new BusinessException(ErrorCode.FORBIDDEN, "您已拉黑对方，请先取消拉黑后再发送图片");
+            }
+            directDeliveryFailed(conversation, userId);
+        }
+    }
+
+    public void assertCanAccessConversation(Long userId, Long conversationId) {
+        requireConversationMember(userId, conversationId);
+    }
+
+    @Transactional
+    public MessageDtos.ChatMessageResponse sendImage(Long userId, Long conversationId, String content,
+                                                       Long quotedMessageId, ChatMediaService.StoredImage image) {
+        Conversation conversation = requireConversationMember(userId, conversationId);
+        requireActiveConversation(conversation);
+        String normalizedContent = trimToNull(content);
+        if (normalizedContent != null && normalizedContent.length() > 2000) {
+            throw new BusinessException(ErrorCode.BAD_REQUEST, "消息内容不能超过2000个字符");
+        }
+        boolean failed = directDeliveryFailed(conversation, userId);
+        ChatMessage message = new ChatMessage();
+        message.setConversationId(conversationId);
+        message.setSenderUserId(userId);
+        message.setType("IMAGE_SHARE");
+        message.setContent(normalizedContent);
+        message.setImageUrl(image.url());
+        message.setImageStoragePath(image.storagePath());
+        message.setImageExpiresAt(image.expiresAt());
+        message.setDeliveryStatus(failed ? FAILED_BLOCKED : DELIVERED);
+        message.setDeliveryFailureReason(failed ? BLOCKED_MESSAGE : null);
+        applyQuote(message, quotedMessageId, conversationId);
+        conversation = prepareCreatedMessage(conversation, userId, failed);
+        message.setCreatedAt(LocalDateTime.now());
+        chatMessageMapper.insert(message);
+        finishCreatedMessage(conversation, message, userId, failed);
         return toMessageResponse(message);
     }
 
@@ -580,7 +690,9 @@ public class MessageService {
     }
 
     public List<MessageDtos.ConversationResponse> conversations(Long userId) {
-        List<ConversationMember> memberships = activeMembers(userId);
+        List<ConversationMember> memberships = activeMembers(userId).stream()
+                .filter(member -> member.getHiddenAt() == null)
+                .toList();
         if (memberships.isEmpty()) {
             return List.of();
         }
@@ -589,9 +701,109 @@ public class MessageService {
                 .filter(conversation -> ACTIVE.equals(conversation.getStatus())
                         || (FAMILY_GROUP.equals(conversation.getType()) && "DISSOLVED".equals(conversation.getStatus())))
                 .map(conversation -> toConversationResponse(conversation, userId))
-                .sorted(Comparator.comparing(MessageDtos.ConversationResponse::lastMessageAt,
-                        Comparator.nullsLast(Comparator.reverseOrder())))
+                .sorted(Comparator.comparing(MessageDtos.ConversationResponse::pinnedAt,
+                                Comparator.nullsLast(Comparator.reverseOrder()))
+                        .thenComparing(MessageDtos.ConversationResponse::lastMessageAt,
+                                Comparator.nullsLast(Comparator.reverseOrder())))
                 .toList();
+    }
+
+    public MessageDtos.ConversationPreferenceResponse conversationPreferences(Long userId, Long conversationId) {
+        requireConversationMember(userId, conversationId);
+        return toPreference(member(conversationId, userId));
+    }
+
+    @Transactional
+    public MessageDtos.ConversationPreferenceResponse updateConversationPreferences(
+            Long userId, Long conversationId, MessageDtos.ConversationPreferenceRequest request) {
+        Conversation conversation = requireConversationMember(userId, conversationId);
+        ConversationMember membership = member(conversationId, userId);
+        User viewer = requireEnabledUser(userId);
+        UpdateWrapper<ConversationMember> update = new UpdateWrapper<ConversationMember>()
+                .eq("conversation_id", conversationId)
+                .eq("user_id", userId);
+        boolean changed = false;
+        if (request.muted() != null) {
+            membership.setMuted(request.muted());
+            update.set("muted", request.muted());
+            changed = true;
+        }
+        if (request.pinned() != null) {
+            LocalDateTime pinnedAt = request.pinned() ? LocalDateTime.now() : null;
+            membership.setPinnedAt(pinnedAt);
+            update.set("pinned_at", pinnedAt);
+            changed = true;
+        }
+        if (request.hidden() != null) {
+            if (request.hidden() && FAMILY_GROUP.equals(conversation.getType())
+                    && userId.equals(conversation.getOwnerUserId())) {
+                throw new BusinessException(ErrorCode.FORBIDDEN, "不能删除自己的家庭群聊");
+            }
+            if (!request.hidden() && RoleConstants.SHOP.equals(viewer.getRole())
+                    && DIRECT.equals(conversation.getType()) && membership.getHiddenAt() != null) {
+                throw new BusinessException(ErrorCode.FORBIDDEN, "商家隐藏的私聊只能由顾客新消息恢复");
+            }
+            LocalDateTime hiddenAt = request.hidden() ? LocalDateTime.now() : null;
+            membership.setHiddenAt(hiddenAt);
+            update.set("hidden_at", hiddenAt);
+            changed = true;
+        }
+        if (changed) conversationMemberMapper.update(null, update);
+        pushConversationUpdatedToUser(userId, conversationId);
+        return toPreference(membership);
+    }
+
+    @Transactional
+    public void hideConversation(Long userId, Long conversationId) {
+        hideConversation(userId, conversationId, false, null);
+    }
+
+    @Transactional
+    public MessageDtos.ConversationHideResponse hideConversation(Long userId, Long conversationId, boolean guarded,
+                                                                 Long expectedMessageVersion) {
+        requireConversationMember(userId, conversationId);
+        Conversation locked = conversationMapper.selectByIdForUpdate(conversationId);
+        if (locked == null) {
+            throw new BusinessException(ErrorCode.NOT_FOUND, "会话不存在");
+        }
+        long currentVersion = messageVersion(locked);
+        if (guarded && !Objects.equals(currentVersion, expectedMessageVersion)) {
+            return new MessageDtos.ConversationHideResponse(false, currentVersion);
+        }
+        updateConversationPreferences(userId, conversationId,
+                new MessageDtos.ConversationPreferenceRequest(null, true, null));
+        return new MessageDtos.ConversationHideResponse(true, currentVersion);
+    }
+
+    public MessageDtos.ChatUserProfileResponse chatUserProfile(Long viewerUserId, Long targetUserId,
+                                                                Long conversationId) {
+        Conversation conversation = requireConversationMember(viewerUserId, conversationId);
+        ConversationMember targetMember = member(conversationId, targetUserId);
+        if (targetMember == null || !ACTIVE.equals(targetMember.getMemberStatus())) {
+            throw new BusinessException(ErrorCode.FORBIDDEN, "只能查看当前会话成员资料");
+        }
+        User target = requireEnabledUser(targetUserId);
+        boolean phoneVisible = !Boolean.FALSE.equals(target.getShowPhone());
+        boolean familiesVisible = !Boolean.FALSE.equals(target.getShowJoinedFamilies());
+        List<MessageDtos.JoinedFamilyProfile> families = familiesVisible
+                ? familyMemberMapper.selectList(new LambdaQueryWrapper<FamilyMember>()
+                        .eq(FamilyMember::getUserId, targetUserId).eq(FamilyMember::getStatus, "APPROVED"))
+                    .stream().map(family -> {
+                        Shop shop = shopMapper.selectById(family.getShopId());
+                        Conversation group = familyConversationForShop(family.getShopId());
+                        return new MessageDtos.JoinedFamilyProfile(family.getShopId(),
+                                shop == null ? null : shop.getName(), group == null ? null : group.getId());
+                    }).toList()
+                : List.of();
+        Shop ownedShop = RoleConstants.SHOP.equals(target.getRole())
+                ? shopMapper.selectOne(new LambdaQueryWrapper<Shop>()
+                    .eq(Shop::getOwnerUserId, targetUserId).last("limit 1")) : null;
+        MessageDtos.ShopProfileSnapshot shopProfile = ownedShop == null ? null
+                : new MessageDtos.ShopProfileSnapshot(ownedShop.getId(), ownedShop.getName(),
+                ownedShop.getCoverImageUrl(), ownedShop.getDescription());
+        return new MessageDtos.ChatUserProfileResponse(targetUserId, target.getNickname(), target.getAvatarUrl(),
+                target.getRole(), phoneVisible ? target.getPhone() : null, phoneVisible, familiesVisible,
+                families, shopProfile);
     }
 
     public MessageDtos.ConversationMessagesResponse messages(Long userId, Long conversationId) {
@@ -606,6 +818,27 @@ public class MessageService {
                 .map(this::toMessageResponse)
                 .toList();
         return new MessageDtos.ConversationMessagesResponse(toConversationResponse(conversation, userId), messages);
+    }
+
+    public void assertCanAccessChatImage(Long userId, Long conversationId, String filename) {
+        requireConversationMember(userId, conversationId);
+        if (filename == null || filename.isBlank()) {
+            throw new BusinessException(ErrorCode.NOT_FOUND, "图片不存在或已过期");
+        }
+        ChatMessage message = chatMessageMapper.selectOne(new LambdaQueryWrapper<ChatMessage>()
+                .eq(ChatMessage::getConversationId, conversationId)
+                .like(ChatMessage::getImageUrl, "/" + filename)
+                .last("limit 1"));
+        boolean unavailable = message == null || message.getRecalledAt() != null
+                || ChatMediaService.isExpiredAt(message, LocalDateTime.now(ZoneId.of("Asia/Shanghai")));
+        if (!unavailable && chatMessageDeletionMapper != null) {
+            unavailable = chatMessageDeletionMapper.selectCount(new LambdaQueryWrapper<ChatMessageDeletion>()
+                    .eq(ChatMessageDeletion::getMessageId, message.getId())
+                    .eq(ChatMessageDeletion::getUserId, userId)) > 0;
+        }
+        if (unavailable) {
+            throw new BusinessException(ErrorCode.NOT_FOUND, "图片不存在或已过期");
+        }
     }
 
     public MessageDtos.ChatBlockResponse chatBlock(Long userId, Long otherUserId) {
@@ -667,18 +900,11 @@ public class MessageService {
         message.setDeliveryStatus(deliveryFailed ? FAILED_BLOCKED : DELIVERED);
         message.setDeliveryFailureReason(deliveryFailed ? BLOCKED_MESSAGE : null);
         applyQuote(message, request.quotedMessageId(), conversationId);
+        conversation = prepareCreatedMessage(conversation, userId, deliveryFailed);
         message.setCreatedAt(LocalDateTime.now());
         chatMessageMapper.insert(message);
 
-        if (deliveryFailed) {
-            pushChatMessageCreatedToUser(userId, conversation.getId(), message.getId());
-            pushConversationUpdatedToUser(userId, conversation.getId());
-        } else {
-            conversation.setLastMessageAt(message.getCreatedAt());
-            conversationMapper.updateById(conversation);
-            pushChatMessageCreated(conversation.getId(), message.getId());
-            pushConversationUpdated(conversation.getId());
-        }
+        finishCreatedMessage(conversation, message, userId, deliveryFailed);
         return toMessageResponse(message);
     }
 
@@ -700,6 +926,7 @@ public class MessageService {
         }
         message.setRecalledAt(LocalDateTime.now());
         chatMessageMapper.updateById(message);
+        removeEssenceForRecalledMessage(messageId);
         pushMessageChanged(conversationId, messageId, "MESSAGE_UPDATED", null);
         pushConversationUpdated(conversationId);
         return toMessageResponse(message);
@@ -725,20 +952,162 @@ public class MessageService {
         pushMessageChanged(conversationId, messageId, "MESSAGE_DELETED", userId);
     }
 
+    @Transactional
+    public MessageDtos.EssenceItemResponse addEssence(Long ownerUserId, Long conversationId, Long messageId) {
+        Conversation conversation = requireActiveOwnedFamilyGroup(ownerUserId, conversationId);
+        ChatMessage message = requireMessageInConversation(conversationId, messageId);
+        if (message.getRecalledAt() != null || "SYSTEM".equals(message.getType())) {
+            throw new BusinessException(ErrorCode.FORBIDDEN, "该消息不能设为精华");
+        }
+        MessageEssence essence = essenceByMessage(messageId);
+        if (essence == null) {
+            essence = new MessageEssence();
+            essence.setConversationId(conversationId);
+            essence.setMessageId(messageId);
+            essence.setCreatedByUserId(ownerUserId);
+            essence.setCreatedAt(LocalDateTime.now());
+            messageEssenceMapper.insert(essence);
+            if (!ownerUserId.equals(message.getSenderUserId())) {
+                createNotification(message.getSenderUserId(), "MESSAGE_ESSENCE", "消息被设为精华",
+                        "您在“" + conversation.getName() + "”中的消息已被设为精华",
+                        familyGroupPayload(conversationId));
+            }
+        }
+        pushMessageChanged(conversationId, messageId, "MESSAGE_UPDATED", null);
+        return toEssenceItem(essence, ownerUserId);
+    }
+
+    @Transactional
+    public void removeEssence(Long ownerUserId, Long conversationId, Long messageId) {
+        requireActiveOwnedFamilyGroup(ownerUserId, conversationId);
+        MessageEssence essence = requireEssence(conversationId, messageId);
+        messageEssenceLikeMapper.delete(new LambdaQueryWrapper<MessageEssenceLike>()
+                .eq(MessageEssenceLike::getEssenceId, essence.getId()));
+        messageEssenceMapper.deleteById(essence.getId());
+        pushMessageChanged(conversationId, messageId, "MESSAGE_UPDATED", null);
+    }
+
+    public MessageDtos.EssenceListResponse essences(Long userId, Long conversationId) {
+        requireActiveFamilyGroupMember(userId, conversationId);
+        ConversationMember membership = member(conversationId, userId);
+        List<MessageEssence> entities = messageEssenceMapper.selectList(new LambdaQueryWrapper<MessageEssence>()
+                .eq(MessageEssence::getConversationId, conversationId)
+                .orderByDesc(MessageEssence::getPinnedAt)
+                .orderByDesc(MessageEssence::getCreatedAt)
+                .orderByDesc(MessageEssence::getId)).stream()
+                .filter(item -> essenceVisibleToUser(item, userId))
+                .sorted(essenceOrdering())
+                .toList();
+        long unread = entities.stream().filter(item -> membership.getLastEssenceReadAt() == null
+                || item.getCreatedAt().isAfter(membership.getLastEssenceReadAt())).count();
+        return new MessageDtos.EssenceListResponse(entities.stream()
+                .map(item -> toEssenceItem(item, userId)).toList(), unread);
+    }
+
+    public MessageDtos.EssenceItemResponse latestUnreadEssence(Long userId, Long conversationId) {
+        requireActiveFamilyGroupMember(userId, conversationId);
+        ConversationMember membership = member(conversationId, userId);
+        return messageEssenceMapper.selectList(new LambdaQueryWrapper<MessageEssence>()
+                        .eq(MessageEssence::getConversationId, conversationId)
+                        .gt(membership.getLastEssenceReadAt() != null, MessageEssence::getCreatedAt,
+                                membership.getLastEssenceReadAt())
+                        .orderByDesc(MessageEssence::getCreatedAt)
+                        .orderByDesc(MessageEssence::getId))
+                .stream().filter(item -> essenceVisibleToUser(item, userId)).findFirst()
+                .map(item -> toEssenceItem(item, userId)).orElse(null);
+    }
+
+    @Transactional
+    public MessageDtos.EssenceItemResponse pinEssence(Long ownerUserId, Long conversationId, Long messageId,
+                                                       boolean pinned) {
+        requireActiveOwnedFamilyGroup(ownerUserId, conversationId);
+        MessageEssence essence = requireEssence(conversationId, messageId);
+        LocalDateTime pinnedAt = pinned ? LocalDateTime.now() : null;
+        essence.setPinnedAt(pinnedAt);
+        messageEssenceMapper.update(null, new UpdateWrapper<MessageEssence>()
+                .eq("id", essence.getId())
+                .set("pinned_at", pinnedAt));
+        return toEssenceItem(essence, ownerUserId);
+    }
+
+    @Transactional
+    public MessageDtos.EssenceItemResponse likeEssence(Long userId, Long conversationId, Long messageId,
+                                                        boolean liked) {
+        requireActiveFamilyGroupMember(userId, conversationId);
+        MessageEssence essence = requireEssence(conversationId, messageId);
+        MessageEssenceLike existing = messageEssenceLikeMapper.selectOne(
+                new LambdaQueryWrapper<MessageEssenceLike>()
+                        .eq(MessageEssenceLike::getEssenceId, essence.getId())
+                        .eq(MessageEssenceLike::getUserId, userId).last("limit 1"));
+        if (liked && existing == null) {
+            MessageEssenceLike like = new MessageEssenceLike();
+            like.setEssenceId(essence.getId());
+            like.setUserId(userId);
+            like.setCreatedAt(LocalDateTime.now());
+            messageEssenceLikeMapper.insert(like);
+        } else if (!liked && existing != null) {
+            messageEssenceLikeMapper.deleteById(existing.getId());
+        }
+        return toEssenceItem(essence, userId);
+    }
+
+    @Transactional
+    public void markEssencesRead(Long userId, Long conversationId, Long throughMessageId) {
+        requireActiveFamilyGroupMember(userId, conversationId);
+        ConversationMember membership = member(conversationId, userId);
+        LocalDateTime readAt = LocalDateTime.now();
+        if (throughMessageId != null) {
+            MessageEssence essence = requireEssence(conversationId, throughMessageId);
+            readAt = essence.getCreatedAt();
+        }
+        if (membership.getLastEssenceReadAt() == null || readAt.isAfter(membership.getLastEssenceReadAt())) {
+            membership.setLastEssenceReadAt(readAt);
+            conversationMemberMapper.updateById(membership);
+        }
+    }
+
+    private boolean essenceVisibleToUser(MessageEssence essence, Long userId) {
+        ChatMessage message = chatMessageMapper.selectById(essence.getMessageId());
+        if (message == null || message.getRecalledAt() != null) return false;
+        if (chatMessageDeletionMapper == null) return true;
+        Long deleted = chatMessageDeletionMapper.selectCount(new LambdaQueryWrapper<ChatMessageDeletion>()
+                .eq(ChatMessageDeletion::getMessageId, essence.getMessageId())
+                .eq(ChatMessageDeletion::getUserId, userId));
+        return deleted == null || deleted == 0;
+    }
+
+    private void removeEssenceForRecalledMessage(Long messageId) {
+        if (messageEssenceMapper == null) return;
+        MessageEssence essence = essenceByMessage(messageId);
+        if (essence == null) return;
+        if (messageEssenceLikeMapper != null) {
+            messageEssenceLikeMapper.delete(new LambdaQueryWrapper<MessageEssenceLike>()
+                    .eq(MessageEssenceLike::getEssenceId, essence.getId()));
+        }
+        messageEssenceMapper.deleteById(essence.getId());
+    }
+
     private MessageDtos.ConversationResponse resolveDirectConversation(Long requesterUserId, Long recipientUserId) {
         if (requesterUserId == null || requesterUserId.equals(recipientUserId)) {
             throw new BusinessException(ErrorCode.BAD_REQUEST, "不能与自己发起私聊");
         }
         requireEnabledUser(requesterUserId);
         User recipient = requireEnabledUser(recipientUserId);
-        if (Boolean.FALSE.equals(recipient.getAllowPrivateChat())) {
-            throw new BusinessException(ErrorCode.FORBIDDEN, "对方未开启私聊");
-        }
 
         String directKey = directKey(requesterUserId, recipientUserId);
         Conversation existing = findDirectConversation(directKey);
         if (existing != null) {
+            User requester = requireEnabledUser(requesterUserId);
+            ConversationMember requesterMembership = member(existing.getId(), requesterUserId);
+            if (requesterMembership != null && requesterMembership.getHiddenAt() != null
+                    && RoleConstants.CUSTOMER.equals(requester.getRole())) {
+                requesterMembership.setHiddenAt(null);
+                conversationMemberMapper.updateById(requesterMembership);
+            }
             return toConversationResponse(existing, requesterUserId);
+        }
+        if (Boolean.FALSE.equals(recipient.getAllowPrivateChat())) {
+            throw new BusinessException(ErrorCode.FORBIDDEN, "对方未开启私聊");
         }
 
         Conversation conversation = new Conversation();
@@ -781,11 +1150,13 @@ public class MessageService {
             return;
         }
         User user = requireEnabledUser(userId);
+        boolean active = !Boolean.FALSE.equals(user.getAutoJoinFamilyChat());
+        if (active) conversation = lockConversationForMessage(conversation);
         ConversationMember member = new ConversationMember();
         member.setConversationId(conversation.getId());
         member.setUserId(userId);
         member.setRole("MEMBER");
-        member.setMemberStatus(Boolean.FALSE.equals(user.getAutoJoinFamilyChat()) ? PENDING : ACTIVE);
+        member.setMemberStatus(active ? ACTIVE : PENDING);
         member.setMuted(false);
         if (ACTIVE.equals(member.getMemberStatus())) {
             member.setJoinedAt(LocalDateTime.now());
@@ -840,6 +1211,24 @@ public class MessageService {
             throw new BusinessException(ErrorCode.FORBIDDEN, "你当前不是有效群成员");
         }
         return conversation;
+    }
+
+    private Conversation requireActiveOwnedFamilyGroup(Long ownerUserId, Long conversationId) {
+        Conversation conversation = requireOwnedFamilyGroup(ownerUserId, conversationId);
+        requireActiveConversation(conversation);
+        return conversation;
+    }
+
+    private Conversation requireActiveFamilyGroupMember(Long userId, Long conversationId) {
+        Conversation conversation = requireFamilyGroupMember(userId, conversationId);
+        requireActiveConversation(conversation);
+        return conversation;
+    }
+
+    private void requireActiveConversation(Conversation conversation) {
+        if (!ACTIVE.equals(conversation.getStatus())) {
+            throw new BusinessException(ErrorCode.FORBIDDEN, "该会话已不可用");
+        }
     }
 
     private ConversationMember member(Long conversationId, Long userId) {
@@ -925,6 +1314,8 @@ public class MessageService {
         if ("DISH_SHARE".equals(quoted.getType())) return quoted.getDishName();
         if ("ORDER_SHARE".equals(quoted.getType())) return "订单 " +
                 (StringUtils.hasText(quoted.getOrderNo()) ? quoted.getOrderNo() : "分享");
+        if ("IMAGE_SHARE".equals(quoted.getType())) return "[图片]";
+        if ("SHOP_SHARE".equals(quoted.getType())) return "[店铺] " + quoted.getSharedShopName();
         return quoted.getContent();
     }
 
@@ -988,7 +1379,10 @@ public class MessageService {
                 message.getDishImageUrl(), message.getDishPrice(), message.getDishDescription(),
                 message.getDishSalesCount(), message.getOrderId(), message.getOrderNo(), message.getOrderCreatedAt(),
                 message.getOrderStatus(), message.getOrderShopName(), readOrderItems(message.getOrderItemsJson()),
-                message.getOrderTotalAmount(), message.getOrderRemark());
+                message.getOrderTotalAmount(), message.getOrderRemark(),
+                imageUrlIfActive(message), message.getImageExpiresAt(), imageExpired(message),
+                message.getSharedShopId(), message.getSharedShopName(), message.getSharedShopLogoUrl(),
+                message.getSharedShopDescription());
     }
 
     private String displayName(Long userId) {
@@ -1012,6 +1406,8 @@ public class MessageService {
     }
 
     private void insertSystemMessage(Conversation conversation, Long actorUserId, String content) {
+        conversation = lockConversationForMessage(conversation);
+        restoreHiddenForDeliveredMessage(conversation.getId(), actorUserId);
         ChatMessage message = new ChatMessage();
         message.setConversationId(conversation.getId());
         message.setSenderUserId(actorUserId);
@@ -1019,14 +1415,126 @@ public class MessageService {
         message.setContent(content);
         message.setCreatedAt(LocalDateTime.now());
         chatMessageMapper.insert(message);
-        conversation.setLastMessageAt(message.getCreatedAt());
-        conversationMapper.updateById(conversation);
+        advanceConversationMessageVersion(conversation, message.getCreatedAt());
         pushChatMessageCreated(conversation.getId(), message.getId());
         pushConversationUpdated(conversation.getId());
     }
 
     private String trimToNull(String value) {
         return StringUtils.hasText(value) ? value.trim() : null;
+    }
+
+    private boolean directDeliveryFailed(Conversation conversation, Long senderUserId) {
+        if (!DIRECT.equals(conversation.getType())) return false;
+        Long recipient = requireDirectRecipient(conversation, senderUserId);
+        if (hasBlocked(senderUserId, recipient)) {
+            throw new BusinessException(ErrorCode.FORBIDDEN, "您已拉黑对方，请先取消拉黑后再发送");
+        }
+        boolean failed = hasBlocked(recipient, senderUserId);
+        if (!failed) {
+            assertDirectRecipientAllowsPrivateChat(conversation, senderUserId);
+            assertDirectMessageAllowed(conversation, senderUserId);
+        }
+        return failed;
+    }
+
+    private void finishCreatedMessage(Conversation conversation, ChatMessage message,
+                                      Long senderUserId, boolean deliveryFailed) {
+        if (deliveryFailed) {
+            pushChatMessageCreatedToUser(senderUserId, conversation.getId(), message.getId());
+            pushConversationUpdatedToUser(senderUserId, conversation.getId());
+            return;
+        }
+        advanceConversationMessageVersion(conversation, message.getCreatedAt());
+        pushChatMessageCreated(conversation.getId(), message.getId());
+        pushConversationUpdated(conversation.getId());
+    }
+
+    private Conversation prepareCreatedMessage(Conversation conversation, Long senderUserId,
+                                                boolean deliveryFailed) {
+        if (deliveryFailed) return conversation;
+        Conversation locked = lockConversationForMessage(conversation);
+        restoreHiddenForDeliveredMessage(locked.getId(), senderUserId);
+        return locked;
+    }
+
+    private Conversation lockConversationForMessage(Conversation conversation) {
+        Conversation locked = conversationMapper.selectByIdForUpdate(conversation.getId());
+        return locked == null ? conversation : locked;
+    }
+
+    private void advanceConversationMessageVersion(Conversation conversation, LocalDateTime lastMessageAt) {
+        conversation.setMessageVersion(messageVersion(conversation) + 1);
+        conversation.setLastMessageAt(lastMessageAt);
+        conversationMapper.updateById(conversation);
+    }
+
+    private long messageVersion(Conversation conversation) {
+        return conversation.getMessageVersion() == null ? 0L : conversation.getMessageVersion();
+    }
+
+    private void restoreHiddenForDeliveredMessage(Long conversationId, Long senderUserId) {
+        for (ConversationMember membership : conversationMemberMapper.selectList(
+                new LambdaQueryWrapper<ConversationMember>()
+                        .eq(ConversationMember::getConversationId, conversationId)
+                        .eq(ConversationMember::getMemberStatus, ACTIVE))) {
+            boolean recipient = !membership.getUserId().equals(senderUserId);
+            if (recipient && membership.getHiddenAt() != null) {
+                membership.setHiddenAt(null);
+                conversationMemberMapper.update(null, new UpdateWrapper<ConversationMember>()
+                        .eq("conversation_id", conversationId)
+                        .eq("user_id", membership.getUserId())
+                        .set("hidden_at", null));
+            }
+        }
+    }
+
+    private MessageDtos.ConversationPreferenceResponse toPreference(ConversationMember member) {
+        return new MessageDtos.ConversationPreferenceResponse(member.getConversationId(),
+                Boolean.TRUE.equals(member.getMuted()), member.getHiddenAt() != null,
+                member.getPinnedAt() != null, member.getPinnedAt(), member.getLastEssenceReadAt());
+    }
+
+    private ChatMessage requireMessageInConversation(Long conversationId, Long messageId) {
+        ChatMessage message = chatMessageMapper.selectById(messageId);
+        if (message == null || !conversationId.equals(message.getConversationId())) {
+            throw new BusinessException(ErrorCode.NOT_FOUND, "消息不存在");
+        }
+        return message;
+    }
+
+    private MessageEssence essenceByMessage(Long messageId) {
+        if (messageEssenceMapper == null) return null;
+        return messageEssenceMapper.selectOne(new LambdaQueryWrapper<MessageEssence>()
+                .eq(MessageEssence::getMessageId, messageId).last("limit 1"));
+    }
+
+    private MessageEssence requireEssence(Long conversationId, Long messageId) {
+        MessageEssence essence = essenceByMessage(messageId);
+        if (essence == null || !conversationId.equals(essence.getConversationId())) {
+            throw new BusinessException(ErrorCode.NOT_FOUND, "精华消息不存在");
+        }
+        return essence;
+    }
+
+    private MessageDtos.EssenceItemResponse toEssenceItem(MessageEssence essence, Long viewerUserId) {
+        ChatMessage message = requireMessageInConversation(essence.getConversationId(), essence.getMessageId());
+        long likes = messageEssenceLikeMapper.selectCount(new LambdaQueryWrapper<MessageEssenceLike>()
+                .eq(MessageEssenceLike::getEssenceId, essence.getId()));
+        boolean liked = messageEssenceLikeMapper.selectCount(new LambdaQueryWrapper<MessageEssenceLike>()
+                .eq(MessageEssenceLike::getEssenceId, essence.getId())
+                .eq(MessageEssenceLike::getUserId, viewerUserId)) > 0;
+        return new MessageDtos.EssenceItemResponse(toMessageResponse(message), essence.getPinnedAt() != null,
+                essence.getPinnedAt(), liked, likes, essence.getCreatedAt());
+    }
+
+    static Comparator<MessageEssence> essenceOrdering() {
+        return Comparator.comparing(MessageEssence::getPinnedAt,
+                        Comparator.nullsLast(Comparator.reverseOrder()))
+                .thenComparing(MessageEssence::getCreatedAt,
+                        Comparator.nullsLast(Comparator.reverseOrder()))
+                .thenComparing(MessageEssence::getId,
+                        Comparator.nullsLast(Comparator.reverseOrder()));
     }
 
     private void assertDirectMessageAllowed(Conversation conversation, Long userId) {
@@ -1124,12 +1632,18 @@ public class MessageService {
                 ? "撤回了一条消息" : ("DISH_SHARE".equals(latest.getType())
                 ? "[菜品] " + latest.getDishName() : ("ORDER_SHARE".equals(latest.getType())
                 ? "[订单] " + (StringUtils.hasText(latest.getOrderNo()) ? latest.getOrderNo() : "订单分享")
-                : latest.getContent())));
+                : ("IMAGE_SHARE".equals(latest.getType()) ? "[图片]"
+                : ("SHOP_SHARE".equals(latest.getType()) ? "[店铺] " + latest.getSharedShopName()
+                : latest.getContent())))));
         boolean muted = viewer != null && Boolean.TRUE.equals(viewer.getMuted());
+        boolean pinned = viewer != null && viewer.getPinnedAt() != null;
+        boolean hidden = viewer != null && viewer.getHiddenAt() != null;
         if (!DIRECT.equals(conversation.getType())) {
             return new MessageDtos.ConversationResponse(conversation.getId(), conversation.getType(), conversation.getName(),
-                    conversation.getCoverImageUrl(), conversation.getStatus(), visibleLastMessageAt, null, null, null,
-                    lastContent, unread, muted);
+                    conversation.getCoverImageUrl(), conversation.getStatus(), visibleLastMessageAt,
+                    messageVersion(conversation), null, null, null,
+                    lastContent, unread, muted, pinned, viewer == null ? null : viewer.getPinnedAt(), hidden,
+                    muted && unread > 0);
         }
         Long directUserId = otherDirectUserId(conversation.getDirectKey(), viewerUserId);
         User directUser = directUserId == null ? null : userMapper.selectById(directUserId);
@@ -1147,8 +1661,9 @@ public class MessageService {
             }
         }
         return new MessageDtos.ConversationResponse(conversation.getId(), conversation.getType(), null, null,
-                conversation.getStatus(), visibleLastMessageAt, directUserId,
-                displayName, displayAvatar, lastContent, unread, muted);
+                conversation.getStatus(), visibleLastMessageAt, messageVersion(conversation), directUserId,
+                displayName, displayAvatar, lastContent, unread, muted, pinned,
+                viewer == null ? null : viewer.getPinnedAt(), hidden, muted && unread > 0);
     }
 
     private void markConversationRead(Long userId, Long conversationId, List<ChatMessage> messages) {
@@ -1178,6 +1693,10 @@ public class MessageService {
         ChatMessage quoted = message.getQuotedMessageId() == null ? null
                 : chatMessageMapper.selectById(message.getQuotedMessageId());
         String deliveryStatus = StringUtils.hasText(message.getDeliveryStatus()) ? message.getDeliveryStatus() : DELIVERED;
+        MessageEssence essence = essenceByMessage(message.getId());
+        long essenceLikes = essence == null || messageEssenceLikeMapper == null ? 0L
+                : messageEssenceLikeMapper.selectCount(new LambdaQueryWrapper<MessageEssenceLike>()
+                    .eq(MessageEssenceLike::getEssenceId, essence.getId()));
         return new MessageDtos.ChatMessageResponse(message.getId(), message.getConversationId(), message.getSenderUserId(),
                 senderName, senderAvatar, message.getType(), message.getContent(), message.getDishId(), message.getShopId(),
                 message.getShopName(), message.getDishName(), message.getDishImageUrl(), message.getDishPrice(),
@@ -1188,7 +1707,21 @@ public class MessageService {
                 message.getQuotedType(), message.getQuotedContent(), message.getQuotedSenderName(),
                 toQuotedSnapshot(quoted), deliveryStatus, FAILED_BLOCKED.equals(deliveryStatus),
                 message.getDeliveryFailureReason(),
+                imageUrlIfActive(message), message.getImageExpiresAt(), imageExpired(message),
+                message.getSharedShopId(), message.getSharedShopName(), message.getSharedShopLogoUrl(),
+                message.getSharedShopDescription(), essence != null,
+                essence != null && essence.getPinnedAt() != null, essenceLikes,
                 message.getRecalledAt(), message.getCreatedAt());
+    }
+
+    private boolean imageExpired(ChatMessage message) {
+        return "IMAGE_SHARE".equals(message.getType()) && (message.getImageUrl() == null
+                || (message.getImageExpiresAt() != null && !message.getImageExpiresAt().isAfter(
+                        LocalDateTime.now(ZoneId.of("Asia/Shanghai")))));
+    }
+
+    private String imageUrlIfActive(ChatMessage message) {
+        return imageExpired(message) ? null : message.getImageUrl();
     }
 
     private MessageDtos.NotificationResponse toNotificationResponse(UserNotification notification) {
@@ -1223,11 +1756,31 @@ public class MessageService {
     }
 
     private void pushChatMessageCreatedNow(Long conversationId, Long messageId) {
+        ChatMessage message = chatMessageMapper.selectById(messageId);
         conversationMemberMapper.selectList(new LambdaQueryWrapper<ConversationMember>()
                         .eq(ConversationMember::getConversationId, conversationId)
                         .eq(ConversationMember::getMemberStatus, ACTIVE))
-                .forEach(member -> wsPushService.pushToUser(member.getUserId(), "CHAT", "MESSAGE_CREATED", Map.of(
-                        "conversationId", conversationId, "messageId", messageId)));
+                .forEach(member -> {
+                    wsPushService.pushToUser(member.getUserId(), "CHAT", "MESSAGE_CREATED", Map.of(
+                            "conversationId", conversationId, "messageId", messageId));
+                    if (mobilePushService != null && message != null
+                            && !member.getUserId().equals(message.getSenderUserId())
+                            && !Boolean.TRUE.equals(member.getMuted())) {
+                        mobilePushService.dispatch(member.getUserId(), displayName(message.getSenderUserId()),
+                                notificationPreview(message), "{\"conversationId\":" + conversationId
+                                        + ",\"messageId\":" + messageId + "}");
+                    }
+                });
+    }
+
+    private String notificationPreview(ChatMessage message) {
+        return switch (message.getType()) {
+            case "IMAGE_SHARE" -> "[图片]";
+            case "DISH_SHARE" -> "[菜品] " + message.getDishName();
+            case "ORDER_SHARE" -> "[订单]";
+            case "SHOP_SHARE" -> "[店铺] " + message.getSharedShopName();
+            default -> StringUtils.hasText(message.getContent()) ? message.getContent() : "您有一条新消息";
+        };
     }
 
     private void pushConversationUpdated(Long conversationId) {

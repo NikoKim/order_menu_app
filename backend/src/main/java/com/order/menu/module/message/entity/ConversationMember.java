@@ -16,6 +16,9 @@ public class ConversationMember {
     private String role;
     private String memberStatus;
     private Boolean muted;
+    private LocalDateTime hiddenAt;
+    private LocalDateTime pinnedAt;
+    private LocalDateTime lastEssenceReadAt;
     private Long lastReadMessageId;
     private LocalDateTime joinedAt;
     private LocalDateTime leftAt;

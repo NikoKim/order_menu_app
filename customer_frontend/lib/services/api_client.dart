@@ -59,8 +59,12 @@ class ApiClient {
     return _request('PUT', path, decode, body: body);
   }
 
-  Future<T> delete<T>(String path, T Function(Object? json) decode) {
-    return _request('DELETE', path, decode);
+  Future<T> delete<T>(
+    String path,
+    T Function(Object? json) decode, {
+    Map<String, String?> query = const {},
+  }) {
+    return _request('DELETE', path, decode, query: query);
   }
 
   Future<T> upload<T>(
@@ -68,6 +72,7 @@ class ApiClient {
     T Function(Object? json) decode, {
     required String field,
     required String filePath,
+    Map<String, String> fields = const {},
   }) async {
     final uri = Uri.parse('$baseUrl$path');
     final request = http.MultipartRequest('POST', uri)
@@ -76,6 +81,7 @@ class ApiClient {
         if (token != null && token!.isNotEmpty)
           'Authorization': 'Bearer $token',
       })
+      ..fields.addAll(fields)
       ..files.add(await http.MultipartFile.fromPath(field, filePath));
     final streamed = await _httpClient.send(request).timeout(requestTimeout);
     final response = await http.Response.fromStream(
@@ -200,6 +206,7 @@ class AuthController extends ChangeNotifier {
   CustomerUser? user;
   bool isReady = false;
   bool isBusy = false;
+  Future<void> Function()? beforeLogout;
 
   bool get isLoggedIn => user != null && api.token != null;
 
@@ -263,6 +270,8 @@ class AuthController extends ChangeNotifier {
     String? avatarUrl,
     bool? allowPrivateChat,
     bool? autoJoinFamilyChat,
+    bool? showJoinedFamilies,
+    bool? showPhone,
   }) async {
     final updated = await api.put<CustomerUser>(
       '/users/me',
@@ -273,6 +282,8 @@ class AuthController extends ChangeNotifier {
         'avatarUrl': avatarUrl,
         'allowPrivateChat': allowPrivateChat,
         'autoJoinFamilyChat': autoJoinFamilyChat,
+        'showJoinedFamilies': showJoinedFamilies,
+        'showPhone': showPhone,
       },
     );
     user = updated;
@@ -295,6 +306,18 @@ class AuthController extends ChangeNotifier {
     );
   }
 
+  Future<CustomerUser> updatePrivacySettings({
+    required bool allowPrivateChat,
+    required bool autoJoinFamilyChat,
+    required bool showJoinedFamilies,
+    required bool showPhone,
+  }) => updateMe(
+    allowPrivateChat: allowPrivateChat,
+    autoJoinFamilyChat: autoJoinFamilyChat,
+    showJoinedFamilies: showJoinedFamilies,
+    showPhone: showPhone,
+  );
+
   Future<String> uploadAvatar(String filePath) async {
     final avatarUrl = await api.upload<String>(
       '/upload/avatar',
@@ -314,6 +337,9 @@ class AuthController extends ChangeNotifier {
   }
 
   Future<void> logout() async {
+    try {
+      await beforeLogout?.call();
+    } catch (_) {}
     api.token = null;
     user = null;
     try {
@@ -359,6 +385,8 @@ class AuthController extends ChangeNotifier {
             'phone': user!.phone,
             'allowPrivateChat': user!.allowPrivateChat,
             'autoJoinFamilyChat': user!.autoJoinFamilyChat,
+            'showJoinedFamilies': user!.showJoinedFamilies,
+            'showPhone': user!.showPhone,
           }),
         );
       }
@@ -547,6 +575,133 @@ class CustomerApi {
   Future<ChatMessages> chatMessages(int conversationId) => api.get(
     '/messages/conversations/$conversationId/messages',
     (json) => ChatMessages.fromJson(json as Map<String, dynamic>),
+  );
+
+  Future<ChatUserProfile> chatUserProfile(int userId, {int? conversationId}) =>
+      api.get(
+        '/messages/users/$userId/profile',
+        (json) => ChatUserProfile.fromJson(json as Map<String, dynamic>),
+        query: {'conversationId': conversationId?.toString()},
+      );
+
+  Future<ConversationPreferences> conversationPreferences(int conversationId) =>
+      api.get(
+        '/messages/conversations/$conversationId/preferences',
+        (json) =>
+            ConversationPreferences.fromJson(json as Map<String, dynamic>),
+      );
+
+  Future<ConversationPreferences> updateConversationPreferences(
+    int conversationId, {
+    bool? muted,
+    bool? hidden,
+    bool? pinned,
+  }) => api.put(
+    '/messages/conversations/$conversationId/preferences',
+    (json) => ConversationPreferences.fromJson(json as Map<String, dynamic>),
+    body: <String, bool?>{'muted': muted, 'hidden': hidden, 'pinned': pinned}
+      ..removeWhere((_, value) => value == null),
+  );
+
+  Future<ConversationHideResult> hideConversation(
+    int conversationId, {
+    required int expectedMessageVersion,
+  }) => api.delete(
+    '/messages/conversations/$conversationId',
+    (json) => ConversationHideResult.fromJson(json as Map<String, dynamic>),
+    query: {
+      'guarded': 'true',
+      'expectedMessageVersion': '$expectedMessageVersion',
+    },
+  );
+
+  Future<void> setConversationMuted(int conversationId, bool muted) => api.put(
+    '/messages/conversations/$conversationId/mute',
+    (_) {},
+    body: {'muted': muted},
+  );
+
+  Future<ChatMessage> sendChatImage({
+    required int conversationId,
+    required String filePath,
+    String? content,
+    int? quotedMessageId,
+  }) => api.upload(
+    '/messages/conversations/$conversationId/images',
+    (json) => ChatMessage.fromJson(json as Map<String, dynamic>),
+    field: 'image',
+    filePath: filePath,
+    fields: {
+      if (content != null && content.trim().isNotEmpty)
+        'content': content.trim(),
+      if (quotedMessageId != null)
+        'quotedMessageId': quotedMessageId.toString(),
+    },
+  );
+
+  Future<ChatMessage> shareShop({
+    required int conversationId,
+    required int shopId,
+    int? quotedMessageId,
+  }) => api.post(
+    '/messages/shop-shares',
+    (json) => ChatMessage.fromJson(json as Map<String, dynamic>),
+    body: {
+      'conversationId': conversationId,
+      'shopId': shopId,
+      'quotedMessageId': quotedMessageId,
+    },
+  );
+
+  Future<ChatEssenceList> chatEssences(int conversationId) => api.get(
+    '/messages/family-groups/$conversationId/essences',
+    (json) => ChatEssenceList.fromJson(json as Map<String, dynamic>),
+  );
+
+  Future<ChatMessage?> latestUnreadEssence(int conversationId) => api.get(
+    '/messages/family-groups/$conversationId/essences/latest-unread',
+    (json) {
+      if (json is! Map<String, dynamic>) return null;
+      return ChatMessage.fromJson(
+        json['message'] is Map<String, dynamic>
+            ? {
+                ...(json['message'] as Map<String, dynamic>),
+                'essence': true,
+                'essencePinned': json['pinned'],
+                'essenceLikeCount': json['likeCount'],
+                'essenceLikedByMe': json['liked'],
+              }
+            : json,
+      );
+    },
+  );
+
+  Future<void> markEssencesRead(int conversationId, {int? throughMessageId}) =>
+      api.put(
+        '/messages/family-groups/$conversationId/essences/read',
+        (_) {},
+        body: {'throughMessageId': throughMessageId},
+      );
+
+  Future<void> setEssenceLiked(int conversationId, int messageId, bool liked) =>
+      api.put(
+        '/messages/family-groups/$conversationId/essences/$messageId/like',
+        (_) {},
+        body: {'liked': liked},
+      );
+
+  Future<void> registerPushDevice({
+    required String token,
+    required String platform,
+  }) => api.post(
+    '/messages/push-devices',
+    (_) {},
+    body: {'token': token, 'platform': platform},
+  );
+
+  Future<void> unregisterPushDevice(String token) => api.delete(
+    '/messages/push-devices/${Uri.encodeComponent(token)}',
+    (_) {},
   );
 
   Future<ChatMessage> sendChatMessage(

@@ -70,8 +70,8 @@ class ProfilePage extends StatelessWidget {
                   const _SectionDivider(),
                   _ProfileMenuTile(
                     icon: Icons.lock_outline,
-                    title: '聊天设置',
-                    subtitle: '管理私聊和家庭群聊权限',
+                    title: '隐私设置',
+                    subtitle: '管理聊天和个人信息隐私',
                     enabled: loggedIn,
                     destination: const ChatSettingsPage(),
                   ),

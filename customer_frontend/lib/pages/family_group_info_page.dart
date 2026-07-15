@@ -5,6 +5,7 @@ import '../models.dart';
 import '../services/api_client.dart';
 import '../widgets/app_notice.dart';
 import 'chat_user_detail_page.dart';
+import 'chat_essence_page.dart';
 
 class FamilyGroupInfoPage extends StatefulWidget {
   const FamilyGroupInfoPage({
@@ -19,7 +20,7 @@ class FamilyGroupInfoPage extends StatefulWidget {
 }
 
 class _FamilyGroupInfoPageState extends State<FamilyGroupInfoPage> {
-  late final CustomerApi _api;
+  late CustomerApi _api;
   late Future<FamilyGroup> _group;
   bool _working = false;
   @override
@@ -104,6 +105,19 @@ class _FamilyGroupInfoPageState extends State<FamilyGroupInfoPage> {
             _GroupCard(
               child: Column(
                 children: [
+                  if (active)
+                    ListTile(
+                      leading: const Icon(Icons.auto_awesome_outlined),
+                      title: const Text('群精华'),
+                      trailing: const Icon(Icons.chevron_right),
+                      onTap: () => Navigator.of(context).push(
+                        MaterialPageRoute(
+                          builder: (_) =>
+                              ChatEssencePage(conversationId: group.id),
+                        ),
+                      ),
+                    ),
+                  if (active) const Divider(height: 1, indent: 56),
                   if (group.announcement?.isNotEmpty == true)
                     ListTile(
                       leading: const Icon(Icons.campaign_outlined),
@@ -197,6 +211,7 @@ class _FamilyGroupInfoPageState extends State<FamilyGroupInfoPage> {
                                   userId: group.members[index].userId,
                                   nickname: group.members[index].nickname,
                                   avatarUrl: group.members[index].avatarUrl,
+                                  conversationId: group.id,
                                   shopId: group.members[index].role == 'OWNER'
                                       ? group.shopId
                                       : null,

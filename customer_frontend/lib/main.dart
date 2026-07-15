@@ -15,6 +15,7 @@ import 'package:open_filex/open_filex.dart';
 
 import 'services/customer_websocket_service.dart';
 import 'services/latest_request.dart';
+import 'services/push_device_registration.dart';
 import 'widgets/app_notice.dart';
 
 void main() {
@@ -139,6 +140,7 @@ class _CustomerShellState extends State<CustomerShell> {
   bool _autoSelectedLogin = false;
   bool _hasCheckedUpdate = false;
   late CustomerApi _customerApi;
+  late AuthController _auth;
   String? _webSocketToken;
   StreamSubscription<CustomerWsMessage>? _chatBadgeSubscription;
   StreamSubscription<CustomerWsMessage>? _notificationBadgeSubscription;
@@ -150,7 +152,11 @@ class _CustomerShellState extends State<CustomerShell> {
   @override
   void didChangeDependencies() {
     super.didChangeDependencies();
-    _customerApi = CustomerApi(AppScope.of(context).api);
+    final services = AppScope.of(context);
+    _customerApi = CustomerApi(services.api);
+    _auth = services.auth;
+    _auth.beforeLogout = () =>
+        PushDeviceRegistration.instance.unregister(_customerApi);
     _chatBadgeSubscription ??= CustomerWebSocketService.instance
         .streamForModule('CHAT')
         .listen((_) => _refreshChatBadge());
@@ -198,6 +204,7 @@ class _CustomerShellState extends State<CustomerShell> {
       if (_webSocketToken != token) {
         _webSocketToken = token;
         CustomerWebSocketService.instance.connect(token, force: true);
+        PushDeviceRegistration.instance.sync(_customerApi).catchError((_) {});
         _refreshChatBadge();
         _refreshNotificationBadge();
       }
@@ -239,6 +246,7 @@ class _CustomerShellState extends State<CustomerShell> {
 
   @override
   void dispose() {
+    _auth.beforeLogout = null;
     _chatBadgeSubscription?.cancel();
     _notificationBadgeSubscription?.cancel();
     _connectionSubscription?.cancel();

@@ -36,6 +36,8 @@ class CurrentUser {
     this.avatarUrl,
     this.phone,
     this.allowPrivateChat = true,
+    this.showPhone = true,
+    this.showJoinedFamilies = true,
   });
 
   factory CurrentUser.fromJson(Map<String, dynamic> json) {
@@ -46,6 +48,8 @@ class CurrentUser {
       avatarUrl: json['avatarUrl'] as String?,
       phone: json['phone'] as String?,
       allowPrivateChat: json['allowPrivateChat'] != false,
+      showPhone: json['showPhone'] != false,
+      showJoinedFamilies: json['showJoinedFamilies'] != false,
     );
   }
 
@@ -55,6 +59,8 @@ class CurrentUser {
   final String? avatarUrl;
   final String? phone;
   final bool allowPrivateChat;
+  final bool showPhone;
+  final bool showJoinedFamilies;
 }
 
 class ChatConversation {
@@ -68,14 +74,22 @@ class ChatConversation {
     this.directUserNickname,
     this.directUserAvatarUrl,
     this.lastMessageAt,
+    this.messageVersion = 0,
     this.lastMessageContent,
     this.unreadCount = 0,
     this.muted = false,
+    this.pinned = false,
+    this.pinnedAt,
+    this.hidden = false,
+    this.mutedBadge = false,
+    this.directUserRole,
+    this.directShopId,
+    this.directShopName,
   });
 
   factory ChatConversation.fromJson(Map<String, dynamic> json) =>
       ChatConversation(
-        id: _asInt(json['id']),
+        id: _asInt(json['id'] ?? json['conversationId']),
         type: _asString(json['type'], fallback: 'DIRECT'),
         status: _asString(json['status'], fallback: 'ACTIVE'),
         name: json['name']?.toString(),
@@ -86,9 +100,19 @@ class ChatConversation {
         directUserNickname: json['directUserNickname']?.toString(),
         directUserAvatarUrl: json['directUserAvatarUrl']?.toString(),
         lastMessageAt: json['lastMessageAt']?.toString(),
+        messageVersion: _asInt(json['messageVersion']),
         lastMessageContent: json['lastMessageContent']?.toString(),
         unreadCount: _asInt(json['unreadCount']),
         muted: json['muted'] == true,
+        pinned: json['pinned'] == true,
+        pinnedAt: json['pinnedAt']?.toString(),
+        hidden: json['hidden'] == true,
+        mutedBadge: json['mutedBadge'] == true,
+        directUserRole: json['directUserRole']?.toString(),
+        directShopId: json['directShopId'] == null
+            ? null
+            : _asInt(json['directShopId']),
+        directShopName: json['directShopName']?.toString(),
       );
 
   final int id;
@@ -100,16 +124,25 @@ class ChatConversation {
   final String? directUserNickname;
   final String? directUserAvatarUrl;
   final String? lastMessageAt;
+  final int messageVersion;
   final String? lastMessageContent;
   final int unreadCount;
   final bool muted;
+  final bool pinned;
+  final String? pinnedAt;
+  final bool hidden;
+  final bool mutedBadge;
+  final String? directUserRole;
+  final int? directShopId;
+  final String? directShopName;
 
   bool get isDirect => type == 'DIRECT';
   bool get isActive => status == 'ACTIVE';
   String get title =>
       isDirect ? (directUserNickname ?? '私聊') : (name ?? '家庭群聊');
   String? get imageUrl => isDirect ? directUserAvatarUrl : coverImageUrl;
-  bool get shouldShowUnreadBadge => unreadCount > 0 && !muted;
+  bool get shouldShowUnreadBadge => unreadCount > 0;
+  bool get canDeleteFromList => isDirect;
 
   ChatConversation markedRead() => ChatConversation(
     id: id,
@@ -121,10 +154,138 @@ class ChatConversation {
     directUserNickname: directUserNickname,
     directUserAvatarUrl: directUserAvatarUrl,
     lastMessageAt: lastMessageAt,
+    messageVersion: messageVersion,
     lastMessageContent: lastMessageContent,
     unreadCount: 0,
     muted: muted,
+    pinned: pinned,
+    pinnedAt: pinnedAt,
+    hidden: hidden,
+    mutedBadge: mutedBadge,
+    directUserRole: directUserRole,
+    directShopId: directShopId,
+    directShopName: directShopName,
   );
+
+  ChatConversation withPreferences({bool? muted, bool? pinned, bool? hidden}) =>
+      ChatConversation(
+        id: id,
+        type: type,
+        status: status,
+        name: name,
+        coverImageUrl: coverImageUrl,
+        directUserId: directUserId,
+        directUserNickname: directUserNickname,
+        directUserAvatarUrl: directUserAvatarUrl,
+        lastMessageAt: lastMessageAt,
+        messageVersion: messageVersion,
+        lastMessageContent: lastMessageContent,
+        unreadCount: unreadCount,
+        muted: muted ?? this.muted,
+        pinned: pinned ?? this.pinned,
+        pinnedAt: pinned == null
+            ? pinnedAt
+            : (pinned ? DateTime.now().toIso8601String() : null),
+        hidden: hidden ?? this.hidden,
+        mutedBadge: (muted ?? this.muted) && unreadCount > 0,
+        directUserRole: directUserRole,
+        directShopId: directShopId,
+        directShopName: directShopName,
+      );
+}
+
+class ConversationHideResult {
+  const ConversationHideResult({
+    required this.hidden,
+    required this.messageVersion,
+  });
+
+  factory ConversationHideResult.fromJson(Map<String, dynamic> json) =>
+      ConversationHideResult(
+        hidden: json['hidden'] == true,
+        messageVersion: _asInt(json['messageVersion']),
+      );
+
+  final bool hidden;
+  final int messageVersion;
+}
+
+List<ChatConversation> sortChatConversations(
+  Iterable<ChatConversation> conversations,
+) {
+  final result = conversations.where((item) => !item.hidden).toList();
+  DateTime time(String? value) => DateTime.tryParse(value ?? '') ?? DateTime(0);
+  result.sort((a, b) {
+    if (a.pinned != b.pinned) return a.pinned ? -1 : 1;
+    final aTime = a.pinned ? a.pinnedAt : a.lastMessageAt;
+    final bTime = b.pinned ? b.pinnedAt : b.lastMessageAt;
+    return time(bTime).compareTo(time(aTime));
+  });
+  return result;
+}
+
+class PinnedConversationMerge {
+  const PinnedConversationMerge({
+    required this.conversations,
+    required this.confirmedIds,
+  });
+
+  final List<ChatConversation> conversations;
+  final Set<int> confirmedIds;
+}
+
+PinnedConversationMerge mergePinnedConversationOverrides(
+  Iterable<ChatConversation> conversations,
+  Map<int, bool> overrides, {
+  Set<int> pendingIds = const {},
+}) {
+  final confirmedIds = <int>{};
+  final merged = conversations.map((conversation) {
+    final pinned = overrides[conversation.id];
+    if (pinned == null) return conversation;
+    if (!pendingIds.contains(conversation.id) &&
+        conversation.pinned == pinned) {
+      confirmedIds.add(conversation.id);
+      return conversation;
+    }
+    return conversation.withPreferences(pinned: pinned);
+  }).toList();
+  return PinnedConversationMerge(
+    conversations: merged,
+    confirmedIds: confirmedIds,
+  );
+}
+
+bool shouldRemoveConversationAfterHide(
+  ConversationHideResult result,
+  ChatConversation? current,
+) =>
+    result.hidden &&
+    (current == null || current.messageVersion <= result.messageVersion);
+
+class EssencePinnedMerge {
+  const EssencePinnedMerge({required this.items, required this.confirmedIds});
+
+  final List<ChatMessage> items;
+  final Set<int> confirmedIds;
+}
+
+EssencePinnedMerge mergeEssencePinnedOverrides(
+  Iterable<ChatMessage> items,
+  Map<int, bool> overrides, {
+  Set<int> pendingIds = const {},
+}) {
+  final confirmedIds = <int>{};
+  final merged = items.map((item) {
+    final pinned = overrides[item.id];
+    if (pinned == null) return item;
+    if (!pendingIds.contains(item.id) && item.essencePinned == pinned) {
+      confirmedIds.add(item.id);
+      return item;
+    }
+    return item.withEssencePinned(pinned);
+  }).toList();
+  return EssencePinnedMerge(items: merged, confirmedIds: confirmedIds);
 }
 
 class ChatMessage {
@@ -162,6 +323,18 @@ class ChatMessage {
     this.orderTotalAmount,
     this.orderRemark,
     this.recalledAt,
+    this.imageUrl,
+    this.imageExpiresAt,
+    this.imageExpired = false,
+    this.isEssence = false,
+    this.essencePinned = false,
+    this.essenceLikes = 0,
+    this.essenceLabel,
+    this.essenceLikedByMe = false,
+    this.sharedShopId,
+    this.sharedShopName,
+    this.sharedShopLogoUrl,
+    this.sharedShopDescription,
   });
   factory ChatMessage.fromJson(Map<String, dynamic> json) => ChatMessage(
     id: _asInt(json['id']),
@@ -213,6 +386,20 @@ class ChatMessage {
         : _asDouble(json['orderTotalAmount']),
     orderRemark: json['orderRemark']?.toString(),
     recalledAt: json['recalledAt']?.toString(),
+    imageUrl: json['imageUrl']?.toString(),
+    imageExpiresAt: json['imageExpiresAt']?.toString(),
+    imageExpired: json['imageExpired'] == true,
+    isEssence: json['essence'] == true,
+    essencePinned: json['essencePinned'] == true,
+    essenceLikes: _asInt(json['essenceLikeCount'] ?? json['essenceLikes']),
+    essenceLabel: json['essenceLabel']?.toString(),
+    essenceLikedByMe: json['essenceLikedByMe'] == true,
+    sharedShopId: json['sharedShopId'] == null
+        ? null
+        : _asInt(json['sharedShopId']),
+    sharedShopName: json['sharedShopName']?.toString(),
+    sharedShopLogoUrl: json['sharedShopLogoUrl']?.toString(),
+    sharedShopDescription: json['sharedShopDescription']?.toString(),
   );
   final int id;
   final int conversationId;
@@ -247,12 +434,74 @@ class ChatMessage {
   final double? orderTotalAmount;
   final String? orderRemark;
   final String? recalledAt;
+  final String? imageUrl;
+  final String? imageExpiresAt;
+  final bool imageExpired;
+  final bool isEssence;
+  final bool essencePinned;
+  final int essenceLikes;
+  final String? essenceLabel;
+  final bool essenceLikedByMe;
+  final int? sharedShopId;
+  final String? sharedShopName;
+  final String? sharedShopLogoUrl;
+  final String? sharedShopDescription;
 
   bool get isDishShare => type == 'DISH_SHARE';
   bool get isOrderShare => type == 'ORDER_SHARE';
+  bool get isImage => type == 'IMAGE_SHARE';
+  bool get isShopShare => type == 'SHOP_SHARE';
   bool get isSystem => type == 'SYSTEM';
   bool get isRecalled => recalledAt != null && recalledAt!.isNotEmpty;
   DateTime? get sentAt => DateTime.tryParse(createdAt);
+
+  ChatMessage withEssencePinned(bool pinned) => ChatMessage(
+    id: id,
+    conversationId: conversationId,
+    senderUserId: senderUserId,
+    type: type,
+    content: content,
+    createdAt: createdAt,
+    dishId: dishId,
+    shopId: shopId,
+    shopName: shopName,
+    dishName: dishName,
+    dishImageUrl: dishImageUrl,
+    dishPrice: dishPrice,
+    dishDescription: dishDescription,
+    dishSalesCount: dishSalesCount,
+    senderNickname: senderNickname,
+    senderAvatarUrl: senderAvatarUrl,
+    quotedMessageId: quotedMessageId,
+    quotedType: quotedType,
+    quotedContent: quotedContent,
+    quotedSenderName: quotedSenderName,
+    quotedMessage: quotedMessage,
+    deliveryStatus: deliveryStatus,
+    deliveryFailed: deliveryFailed,
+    failureReason: failureReason,
+    orderId: orderId,
+    orderNo: orderNo,
+    orderCreatedAt: orderCreatedAt,
+    orderStatus: orderStatus,
+    orderShopName: orderShopName,
+    orderItems: orderItems,
+    orderTotalAmount: orderTotalAmount,
+    orderRemark: orderRemark,
+    recalledAt: recalledAt,
+    imageUrl: imageUrl,
+    imageExpiresAt: imageExpiresAt,
+    imageExpired: imageExpired,
+    isEssence: isEssence,
+    essencePinned: pinned,
+    essenceLikes: essenceLikes,
+    essenceLabel: essenceLabel,
+    essenceLikedByMe: essenceLikedByMe,
+    sharedShopId: sharedShopId,
+    sharedShopName: sharedShopName,
+    sharedShopLogoUrl: sharedShopLogoUrl,
+    sharedShopDescription: sharedShopDescription,
+  );
 }
 
 bool shouldShowChatTimestamp(DateTime current, DateTime? previous) {
@@ -845,6 +1094,94 @@ class ChatBlockState {
   final int userId;
   final bool blockedByMe;
   final bool blockedMe;
+}
+
+class ChatUserProfile {
+  const ChatUserProfile({
+    required this.userId,
+    required this.nickname,
+    this.avatarUrl,
+    this.phone,
+    this.role,
+    this.joinedFamilies = const [],
+    this.shopId,
+    this.shopName,
+    this.shopLogoUrl,
+    this.shopDescription,
+  });
+
+  factory ChatUserProfile.fromJson(Map<String, dynamic> json) =>
+      ChatUserProfile(
+        userId: _asInt(json['userId'] ?? json['id']),
+        nickname: _asString(json['nickname'], fallback: '用户'),
+        avatarUrl: json['avatarUrl']?.toString(),
+        phone: json['phoneVisible'] == false ? null : json['phone']?.toString(),
+        role: json['role']?.toString(),
+        joinedFamilies: json['joinedFamiliesVisible'] == false
+            ? const []
+            : (json['joinedFamilies'] as List? ?? const [])
+                  .map(
+                    (item) => item is Map
+                        ? (item['familyName'] ??
+                                  item['shopName'] ??
+                                  item['name'] ??
+                                  '')
+                              .toString()
+                        : item.toString(),
+                  )
+                  .where((item) => item.isNotEmpty)
+                  .toList(),
+        shopId: (json['shopProfile'] as Map?)?['shopId'] == null
+            ? (json['shopId'] == null ? null : _asInt(json['shopId']))
+            : _asInt((json['shopProfile'] as Map)['shopId']),
+        shopName:
+            (json['shopProfile'] as Map?)?['shopName']?.toString() ??
+            json['shopName']?.toString(),
+        shopLogoUrl:
+            (json['shopProfile'] as Map?)?['shopLogoUrl']?.toString() ??
+            json['shopLogoUrl']?.toString(),
+        shopDescription:
+            (json['shopProfile'] as Map?)?['shopDescription']?.toString() ??
+            json['shopDescription']?.toString(),
+      );
+
+  final int userId;
+  final String nickname;
+  final String? avatarUrl;
+  final String? phone;
+  final String? role;
+  final List<String> joinedFamilies;
+  final int? shopId;
+  final String? shopName;
+  final String? shopLogoUrl;
+  final String? shopDescription;
+  bool get isMerchant => role == 'SHOP' || shopId != null;
+}
+
+class ChatEssenceList {
+  const ChatEssenceList({required this.items, required this.unreadCount});
+  factory ChatEssenceList.fromJson(Map<String, dynamic> json) =>
+      ChatEssenceList(
+        items: (json['items'] as List? ?? const [])
+            .whereType<Map<String, dynamic>>()
+            .map(
+              (item) => ChatMessage.fromJson(
+                item['message'] is Map<String, dynamic>
+                    ? {
+                        ...(item['message'] as Map<String, dynamic>),
+                        'essence': true,
+                        'essencePinned': item['pinned'],
+                        'essenceLikeCount': item['likeCount'],
+                        'essenceLikedByMe': item['liked'],
+                      }
+                    : item,
+              ),
+            )
+            .toList(),
+        unreadCount: _asInt(json['unreadCount']),
+      );
+  final List<ChatMessage> items;
+  final int unreadCount;
 }
 
 int _asInt(Object? value, {int fallback = 0}) {

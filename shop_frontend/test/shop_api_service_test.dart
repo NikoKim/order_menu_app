@@ -88,4 +88,109 @@ void main() {
     expect(result.records.single.name, '牛肉饭');
     expect(result.records.single.isOnSale, isTrue);
   });
+
+  test('conversation preferences use the frozen message contract', () async {
+    final service = ShopApiService(
+      baseUrl: 'http://example.test/api',
+      token: 'token-1',
+      client: MockClient((request) async {
+        expect(request.method, 'PUT');
+        expect(
+          request.url.toString(),
+          'http://example.test/api/messages/conversations/9/preferences',
+        );
+        expect(jsonDecode(request.body), {
+          'muted': true,
+          'hidden': null,
+          'pinned': true,
+        });
+        return http.Response(
+          jsonEncode({
+            'code': 0,
+            'message': 'success',
+            'data': {
+              'conversationId': 9,
+              'muted': true,
+              'hidden': false,
+              'pinned': true,
+            },
+          }),
+          200,
+        );
+      }),
+    );
+
+    await service.updateConversationPreferences(9, muted: true, pinned: true);
+  });
+
+  test('guarded conversation deletion includes the message version', () async {
+    final service = ShopApiService(
+      baseUrl: 'http://example.test/api',
+      token: 'token-1',
+      client: MockClient((request) async {
+        expect(request.method, 'DELETE');
+        expect(request.url.path, '/api/messages/conversations/9');
+        expect(request.url.queryParameters, {
+          'guarded': 'true',
+          'expectedMessageVersion': '12',
+        });
+        return http.Response(
+          jsonEncode({
+            'code': 0,
+            'data': {'hidden': true, 'messageVersion': 12},
+          }),
+          200,
+        );
+      }),
+    );
+
+    final result = await service.deleteConversation(
+      9,
+      expectedMessageVersion: 12,
+    );
+
+    expect(result.hidden, isTrue);
+    expect(result.messageVersion, 12);
+  });
+
+  test(
+    'guarded empty conversation deletion omits the snapshot parameter',
+    () async {
+      final service = ShopApiService(
+        baseUrl: 'http://example.test/api',
+        token: 'token-1',
+        client: MockClient((request) async {
+          expect(request.url.queryParameters, {'guarded': 'true'});
+          return http.Response(
+            jsonEncode({
+              'code': 0,
+              'data': {'hidden': false, 'messageVersion': 0},
+            }),
+            200,
+          );
+        }),
+      );
+
+      final result = await service.deleteConversation(9);
+
+      expect(result.hidden, isFalse);
+    },
+  );
+
+  test('push token deletion encodes the token in the route', () async {
+    final service = ShopApiService(
+      baseUrl: 'http://example.test/api',
+      token: 'token-1',
+      client: MockClient((request) async {
+        expect(request.method, 'DELETE');
+        expect(
+          request.url.toString(),
+          'http://example.test/api/messages/push-devices/token%2Fwith%20space',
+        );
+        return http.Response(jsonEncode({'code': 0, 'data': null}), 200);
+      }),
+    );
+
+    await service.unregisterPushDevice('token/with space');
+  });
 }

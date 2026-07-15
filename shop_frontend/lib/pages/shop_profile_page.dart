@@ -185,6 +185,13 @@ class _ShopProfilePageState extends State<ShopProfilePage>
           '店铺资料',
           style: TextStyle(fontWeight: FontWeight.w700),
         ),
+        actions: [
+          IconButton(
+            tooltip: '分享店铺',
+            onPressed: _shareShop,
+            icon: const Icon(Icons.ios_share_outlined),
+          ),
+        ],
       ),
       body: RefreshIndicator(
         color: _warmOrange,
@@ -194,6 +201,78 @@ class _ShopProfilePageState extends State<ShopProfilePage>
       ),
       bottomNavigationBar: _buildBottomBar(),
     );
+  }
+
+  Future<void> _shareShop() async {
+    try {
+      final results = await Future.wait([
+        shopApi.fetchMyShop(),
+        shopApi.fetchConversations(),
+      ]);
+      if (!mounted) return;
+      final shop = results[0] as ShopInfo;
+      final allConversations = results[1] as List<ChatConversation>;
+      final familyConversation = allConversations
+          .where((item) => !item.isDirect && item.isActive)
+          .firstOrNull;
+      final activeMembers = <int>{};
+      if (familyConversation != null) {
+        final group = await shopApi.fetchFamilyGroup(familyConversation.id);
+        activeMembers.addAll(
+          group.members
+              .where((member) => member.memberStatus == 'ACTIVE')
+              .map((member) => member.userId),
+        );
+      }
+      final conversations = allConversations
+          .where(
+            (item) =>
+                item.isActive &&
+                !item.hidden &&
+                (!item.isDirect || activeMembers.contains(item.directUserId)),
+          )
+          .toList();
+      if (conversations.isEmpty) {
+        AppNotice.show(context, '暂无可分享的本店家庭群或合规成员会话');
+        return;
+      }
+      final selected = await showModalBottomSheet<ChatConversation>(
+        context: context,
+        showDragHandle: true,
+        builder: (context) => SafeArea(
+          child: ListView(
+            shrinkWrap: true,
+            padding: const EdgeInsets.fromLTRB(16, 0, 16, 20),
+            children: [
+              const Text(
+                '分享到聊天',
+                style: TextStyle(fontSize: 18, fontWeight: FontWeight.w800),
+              ),
+              const SizedBox(height: 10),
+              for (final conversation in conversations)
+                ListTile(
+                  leading: Icon(
+                    conversation.isDirect
+                        ? Icons.person_outline
+                        : Icons.groups_outlined,
+                  ),
+                  title: Text(conversation.title),
+                  subtitle: Text(conversation.isDirect ? '家庭成员会话' : '本店家庭群'),
+                  onTap: () => Navigator.pop(context, conversation),
+                ),
+            ],
+          ),
+        ),
+      );
+      if (selected == null || !mounted) return;
+      await shopApi.shareShopToConversation(
+        conversationId: selected.id,
+        shopId: shop.id,
+      );
+      if (mounted) AppNotice.show(context, '店铺卡片已分享');
+    } on ApiException catch (error) {
+      if (mounted) AppNotice.show(context, error.message);
+    }
   }
 
   Widget _buildBody() {

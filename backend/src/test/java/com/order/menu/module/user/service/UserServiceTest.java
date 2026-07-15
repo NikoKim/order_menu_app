@@ -64,4 +64,28 @@ class UserServiceTest {
         assertEquals(false, response.allowPrivateChat());
         assertEquals(false, response.autoJoinFamilyChat());
     }
+
+    @Test
+    void updateMePersistsIndependentProfilePrivacyFlags() {
+        User current = new User();
+        current.setId(7L);
+        current.setNickname("old");
+        current.setRole("CUSTOMER");
+        current.setStatus(1);
+        current.setShowPhone(true);
+        current.setShowJoinedFamilies(true);
+        when(userMapper.selectById(7L)).thenReturn(current);
+
+        UserDtos.CurrentUserResponse response = serviceUpdate(current,
+                new UserDtos.UpdateMeRequest(null, null, null, null, null, false, true));
+
+        assertEquals(false, current.getShowJoinedFamilies());
+        assertEquals(true, current.getShowPhone());
+        assertEquals(false, response.showJoinedFamilies());
+        assertEquals(true, response.showPhone());
+    }
+
+    private UserDtos.CurrentUserResponse serviceUpdate(User current, UserDtos.UpdateMeRequest request) {
+        return new UserService(userMapper).updateMe(current.getId(), request);
+    }
 }

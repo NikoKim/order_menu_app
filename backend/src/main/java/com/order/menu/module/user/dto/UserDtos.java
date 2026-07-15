@@ -11,8 +11,14 @@ public final class UserDtos {
             @Size(max = 30, message = "Phone must not exceed 30 characters") String phone,
             @Size(max = 255, message = "Avatar URL must not exceed 255 characters") String avatarUrl,
             Boolean allowPrivateChat,
-            Boolean autoJoinFamilyChat
+            Boolean autoJoinFamilyChat,
+            Boolean showJoinedFamilies,
+            Boolean showPhone
     ) {
+        public UpdateMeRequest(String nickname, String phone, String avatarUrl,
+                               Boolean allowPrivateChat, Boolean autoJoinFamilyChat) {
+            this(nickname, phone, avatarUrl, allowPrivateChat, autoJoinFamilyChat, null, null);
+        }
     }
 
     public record CurrentUserResponse(
@@ -22,7 +28,9 @@ public final class UserDtos {
             String avatarUrl,
             String phone,
             Boolean allowPrivateChat,
-            Boolean autoJoinFamilyChat
+            Boolean autoJoinFamilyChat,
+            Boolean showJoinedFamilies,
+            Boolean showPhone
     ) {
     }
 }

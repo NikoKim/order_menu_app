@@ -110,7 +110,10 @@ class _MessageCenterPageState extends State<MessageCenterPage> {
   Widget build(BuildContext context) {
     final future = _notificationsFuture;
     return Scaffold(
+      backgroundColor: const Color(0xFFF5F5F5),
       appBar: AppBar(
+        backgroundColor: const Color(0xFFF5F5F5),
+        surfaceTintColor: Colors.transparent,
         title: const Text('消息通知'),
         actions: [
           FutureBuilder<NotificationList>(
@@ -156,71 +159,76 @@ class _MessageCenterPageState extends State<MessageCenterPage> {
               );
             }
             return ListView.separated(
-              padding: const EdgeInsets.symmetric(vertical: 8),
+              padding: const EdgeInsets.all(16),
               itemCount: notifications.length,
-              separatorBuilder: (_, _) => const Divider(height: 1, indent: 72),
+              separatorBuilder: (_, _) => const SizedBox(height: 10),
               itemBuilder: (context, index) {
                 final notification = notifications[index];
-                return ListTile(
-                  onTap: () => _markRead(notification),
-                  leading: Stack(
-                    clipBehavior: Clip.none,
-                    children: [
-                      CircleAvatar(
-                        backgroundColor: const Color(0xFFFFF4E8),
-                        child: Icon(
-                          _notificationIcon(notification.type),
-                          color: const Color(0xFFF28C28),
-                        ),
-                      ),
-                      if (notification.isUnread)
-                        const Positioned(
-                          top: -1,
-                          right: -1,
-                          child: CircleAvatar(
-                            radius: 5,
-                            backgroundColor: Colors.red,
+                return Material(
+                  color: Colors.white,
+                  borderRadius: BorderRadius.circular(12),
+                  clipBehavior: Clip.antiAlias,
+                  child: ListTile(
+                    onTap: () => _markRead(notification),
+                    leading: Stack(
+                      clipBehavior: Clip.none,
+                      children: [
+                        CircleAvatar(
+                          backgroundColor: const Color(0xFFFFF4E8),
+                          child: Icon(
+                            _notificationIcon(notification.type),
+                            color: const Color(0xFFF28C28),
                           ),
                         ),
-                    ],
-                  ),
-                  title: Text(
-                    notification.title,
-                    style: TextStyle(
-                      fontWeight: notification.isUnread
-                          ? FontWeight.w700
-                          : FontWeight.w400,
+                        if (notification.isUnread)
+                          const Positioned(
+                            top: -1,
+                            right: -1,
+                            child: CircleAvatar(
+                              radius: 5,
+                              backgroundColor: Colors.red,
+                            ),
+                          ),
+                      ],
                     ),
-                  ),
-                  subtitle: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      const SizedBox(height: 3),
-                      Text(notification.content),
-                      if (notification.type == 'FAMILY_GROUP_INVITE' &&
-                          notification.isUnread)
-                        Row(
-                          children: [
-                            TextButton(
-                              onPressed: () =>
-                                  _handleInvitation(notification, false),
-                              child: const Text('暂不加入'),
-                            ),
-                            FilledButton(
-                              onPressed: () =>
-                                  _handleInvitation(notification, true),
-                              child: const Text('加入群聊'),
-                            ),
-                          ],
-                        ),
-                      const SizedBox(height: 4),
-                      Text(
-                        _formatNotificationTime(notification.createdAt),
-                        style: const TextStyle(fontSize: 12),
+                    title: Text(
+                      notification.title,
+                      style: TextStyle(
+                        fontWeight: notification.isUnread
+                            ? FontWeight.w700
+                            : FontWeight.w400,
                       ),
-                    ],
+                    ),
+                    subtitle: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        const SizedBox(height: 3),
+                        Text(notification.content),
+                        if (notification.type == 'FAMILY_GROUP_INVITE' &&
+                            notification.isUnread)
+                          Row(
+                            children: [
+                              TextButton(
+                                onPressed: () =>
+                                    _handleInvitation(notification, false),
+                                child: const Text('暂不加入'),
+                              ),
+                              FilledButton(
+                                onPressed: () =>
+                                    _handleInvitation(notification, true),
+                                child: const Text('加入群聊'),
+                              ),
+                            ],
+                          ),
+                        const SizedBox(height: 4),
+                        Text(
+                          _formatNotificationTime(notification.createdAt),
+                          style: const TextStyle(fontSize: 12),
+                        ),
+                      ],
+                    ),
+                    isThreeLine: true,
                   ),
-                  isThreeLine: true,
                 );
               },
             );

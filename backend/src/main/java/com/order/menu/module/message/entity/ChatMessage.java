@@ -34,6 +34,13 @@ public class ChatMessage {
     private String orderItemsJson;
     private BigDecimal orderTotalAmount;
     private String orderRemark;
+    private String imageUrl;
+    private String imageStoragePath;
+    private LocalDateTime imageExpiresAt;
+    private Long sharedShopId;
+    private String sharedShopName;
+    private String sharedShopLogoUrl;
+    private String sharedShopDescription;
     private Long quotedMessageId;
     private String quotedType;
     private String quotedContent;

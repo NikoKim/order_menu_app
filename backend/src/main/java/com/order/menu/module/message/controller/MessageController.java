@@ -3,6 +3,8 @@ package com.order.menu.module.message.controller;
 import com.order.menu.common.response.ApiResponse;
 import com.order.menu.module.message.dto.MessageDtos;
 import com.order.menu.module.message.service.MessageService;
+import com.order.menu.module.message.service.ChatMediaService;
+import com.order.menu.module.message.service.MobilePushService;
 import com.order.menu.security.UserContext;
 import jakarta.validation.Valid;
 import java.util.List;
@@ -16,12 +18,31 @@ import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
+import org.springframework.web.bind.annotation.RequestPart;
+import org.springframework.web.multipart.MultipartFile;
+import org.springframework.core.io.Resource;
+import org.springframework.http.MediaType;
+import org.springframework.http.ResponseEntity;
 
 @RestController
 @RequestMapping("/api/messages")
 @RequiredArgsConstructor
 public class MessageController {
     private final MessageService messageService;
+    private final ChatMediaService chatMediaService;
+    private final MobilePushService mobilePushService;
+
+    @PostMapping("/push-devices")
+    public ApiResponse<Void> registerPushDevice(@Valid @RequestBody MessageDtos.PushDeviceRequest request) {
+        mobilePushService.register(UserContext.get().userId(), request);
+        return ApiResponse.success();
+    }
+
+    @DeleteMapping("/push-devices/{token}")
+    public ApiResponse<Void> unregisterPushDevice(@PathVariable String token) {
+        mobilePushService.unregister(UserContext.get().userId(), token);
+        return ApiResponse.success();
+    }
 
     @PostMapping("/direct/users/{userId}")
     public ApiResponse<MessageDtos.ConversationResponse> createDirectWithUser(@PathVariable Long userId) {
@@ -41,6 +62,42 @@ public class MessageController {
     @GetMapping("/conversations")
     public ApiResponse<List<MessageDtos.ConversationResponse>> conversations() {
         return ApiResponse.success(messageService.conversations(UserContext.get().userId()));
+    }
+
+    @GetMapping("/conversations/{conversationId}/preferences")
+    public ApiResponse<MessageDtos.ConversationPreferenceResponse> conversationPreferences(
+            @PathVariable Long conversationId) {
+        return ApiResponse.success(messageService.conversationPreferences(UserContext.get().userId(), conversationId));
+    }
+
+    @PutMapping("/conversations/{conversationId}/preferences")
+    public ApiResponse<MessageDtos.ConversationPreferenceResponse> updateConversationPreferences(
+            @PathVariable Long conversationId,
+            @RequestBody MessageDtos.ConversationPreferenceRequest request) {
+        return ApiResponse.success(messageService.updateConversationPreferences(
+                UserContext.get().userId(), conversationId, request));
+    }
+
+    @PutMapping("/conversations/{conversationId}/mute")
+    public ApiResponse<MessageDtos.ConversationPreferenceResponse> muteConversation(
+            @PathVariable Long conversationId, @RequestBody MessageDtos.SetMuteRequest request) {
+        return ApiResponse.success(messageService.updateConversationPreferences(UserContext.get().userId(),
+                conversationId, new MessageDtos.ConversationPreferenceRequest(request.muted(), null, null)));
+    }
+
+    @DeleteMapping("/conversations/{conversationId}")
+    public ApiResponse<MessageDtos.ConversationHideResponse> hideConversation(
+            @PathVariable Long conversationId,
+            @RequestParam(defaultValue = "false") boolean guarded,
+            @RequestParam(required = false) Long expectedMessageVersion) {
+        return ApiResponse.success(messageService.hideConversation(UserContext.get().userId(), conversationId,
+                guarded, expectedMessageVersion));
+    }
+
+    @GetMapping("/users/{userId}/profile")
+    public ApiResponse<MessageDtos.ChatUserProfileResponse> chatUserProfile(
+            @PathVariable Long userId, @RequestParam Long conversationId) {
+        return ApiResponse.success(messageService.chatUserProfile(UserContext.get().userId(), userId, conversationId));
     }
 
     @GetMapping("/notifications")
@@ -92,6 +149,35 @@ public class MessageController {
             @PathVariable Long conversationId,
             @Valid @RequestBody MessageDtos.SendMessageRequest request) {
         return ApiResponse.success(messageService.sendMessage(UserContext.get().userId(), conversationId, request));
+    }
+
+    @PostMapping(value = "/conversations/{conversationId}/images", consumes = "multipart/form-data")
+    public ApiResponse<MessageDtos.ChatMessageResponse> sendImage(
+            @PathVariable Long conversationId,
+            @RequestPart("image") MultipartFile image,
+            @RequestPart(value = "content", required = false) String content,
+            @RequestPart(value = "quotedMessageId", required = false) Long quotedMessageId) {
+        Long userId = UserContext.get().userId();
+        if (content != null && content.length() > 2000) {
+            throw new com.order.menu.common.exception.BusinessException(
+                    com.order.menu.common.exception.ErrorCode.BAD_REQUEST, "消息内容不能超过2000个字符");
+        }
+        messageService.assertCanUploadImage(userId, conversationId);
+        ChatMediaService.StoredImage stored = chatMediaService.store(conversationId, image);
+        try {
+            return ApiResponse.success(messageService.sendImage(userId, conversationId, content, quotedMessageId, stored));
+        } catch (RuntimeException exception) {
+            chatMediaService.discard(stored);
+            throw exception;
+        }
+    }
+
+    @GetMapping("/conversations/{conversationId}/images/{filename:.+}")
+    public ResponseEntity<Resource> image(@PathVariable Long conversationId, @PathVariable String filename) {
+        messageService.assertCanAccessChatImage(UserContext.get().userId(), conversationId, filename);
+        ChatMediaService.MediaResource media = chatMediaService.load(conversationId, filename);
+        return ResponseEntity.ok().contentType(MediaType.parseMediaType(media.contentType()))
+                .body(media.resource());
     }
 
     @PostMapping("/conversations/{conversationId}/messages/{messageId}/recall")
@@ -199,5 +285,57 @@ public class MessageController {
     public ApiResponse<MessageDtos.ChatMessageResponse> shareOrder(
             @Valid @RequestBody MessageDtos.ShareOrderRequest request) {
         return ApiResponse.success(messageService.shareOrder(UserContext.get().userId(), request));
+    }
+
+    @PostMapping("/shop-shares")
+    public ApiResponse<MessageDtos.ChatMessageResponse> shareShop(
+            @Valid @RequestBody MessageDtos.ShareShopRequest request) {
+        return ApiResponse.success(messageService.shareShop(UserContext.get().userId(), request));
+    }
+
+    @PostMapping("/family-groups/{conversationId}/essences/{messageId}")
+    public ApiResponse<MessageDtos.EssenceItemResponse> addEssence(
+            @PathVariable Long conversationId, @PathVariable Long messageId) {
+        return ApiResponse.success(messageService.addEssence(UserContext.get().userId(), conversationId, messageId));
+    }
+
+    @DeleteMapping("/family-groups/{conversationId}/essences/{messageId}")
+    public ApiResponse<Void> removeEssence(@PathVariable Long conversationId, @PathVariable Long messageId) {
+        messageService.removeEssence(UserContext.get().userId(), conversationId, messageId);
+        return ApiResponse.success();
+    }
+
+    @GetMapping("/family-groups/{conversationId}/essences")
+    public ApiResponse<MessageDtos.EssenceListResponse> essences(@PathVariable Long conversationId) {
+        return ApiResponse.success(messageService.essences(UserContext.get().userId(), conversationId));
+    }
+
+    @GetMapping("/family-groups/{conversationId}/essences/latest-unread")
+    public ApiResponse<MessageDtos.EssenceItemResponse> latestUnreadEssence(@PathVariable Long conversationId) {
+        return ApiResponse.success(messageService.latestUnreadEssence(UserContext.get().userId(), conversationId));
+    }
+
+    @PutMapping("/family-groups/{conversationId}/essences/{messageId}/pin")
+    public ApiResponse<MessageDtos.EssenceItemResponse> pinEssence(
+            @PathVariable Long conversationId, @PathVariable Long messageId,
+            @RequestBody MessageDtos.EssenceToggleRequest request) {
+        return ApiResponse.success(messageService.pinEssence(UserContext.get().userId(), conversationId,
+                messageId, Boolean.TRUE.equals(request.pinned())));
+    }
+
+    @PutMapping("/family-groups/{conversationId}/essences/{messageId}/like")
+    public ApiResponse<MessageDtos.EssenceItemResponse> likeEssence(
+            @PathVariable Long conversationId, @PathVariable Long messageId,
+            @RequestBody MessageDtos.LikeToggleRequest request) {
+        return ApiResponse.success(messageService.likeEssence(UserContext.get().userId(), conversationId,
+                messageId, Boolean.TRUE.equals(request.liked())));
+    }
+
+    @PutMapping("/family-groups/{conversationId}/essences/read")
+    public ApiResponse<Void> readEssences(@PathVariable Long conversationId,
+                                          @RequestBody(required = false) MessageDtos.EssenceReadRequest request) {
+        messageService.markEssencesRead(UserContext.get().userId(), conversationId,
+                request == null ? null : request.throughMessageId());
+        return ApiResponse.success();
     }
 }

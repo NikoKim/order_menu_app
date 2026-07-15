@@ -13,6 +13,7 @@ import 'pages/order_manage_page.dart';
 import 'pages/shop_login_page.dart';
 import 'pages/shop_profile_page.dart';
 import 'services/shop_api_service.dart';
+import 'services/push_token_service.dart';
 import 'widgets/app_notice.dart';
 import 'shop_mock_data.dart';
 import 'package:package_info_plus/package_info_plus.dart'; // 新增
@@ -142,6 +143,7 @@ class _ShopShellState extends State<ShopShell> {
           if (_loggedIn) {
             _loadNotifications();
             _loadChatBadge();
+            unawaited(startShopPushTokens().catchError((_) {}));
           }
         });
   }
@@ -405,11 +407,13 @@ class _ShopShellState extends State<ShopShell> {
         _loadNotifications();
         _loadChatBadge();
         ShopWebSocketService.instance.connect();
+        unawaited(startShopPushTokens().catchError((_) {}));
       }
     }
   }
 
   Future<void> _logout() async {
+    await shopPushTokens.clear().catchError((_) {});
     ShopWebSocketService.instance.disconnect();
     await shopApi.logout();
     if (mounted) {
@@ -473,6 +477,7 @@ class _ShopShellState extends State<ShopShell> {
           _loadNotifications();
           _loadChatBadge();
           ShopWebSocketService.instance.connect(force: true);
+          unawaited(startShopPushTokens().catchError((_) {}));
         },
       );
     }

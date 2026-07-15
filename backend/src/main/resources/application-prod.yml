@@ -21,6 +21,8 @@ app:
   upload:
     base-path: ${ORDER_MENU_UPLOAD_BASE_PATH:/www/server/SpringBoot/order_menu_image}
     public-base-url: https://order-menu-backend.zsj-unknown.top
+  chat-media:
+    public-base-url: https://order-menu-backend.zsj-unknown.top
   cors:
     allowed-origins:
       - https://order-menu-backend.zsj-unknown.top

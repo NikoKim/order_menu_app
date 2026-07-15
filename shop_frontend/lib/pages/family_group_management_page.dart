@@ -8,6 +8,7 @@ import '../services/shop_api_service.dart';
 import '../services/websocket_service.dart';
 import '../widgets/app_notice.dart';
 import 'chat_user_detail_page.dart';
+import 'chat_essence_page.dart';
 
 const _orange = Color(0xFFF28C28);
 const _pageBackground = Color(0xFFF5F6F8);
@@ -325,6 +326,21 @@ class _FamilyGroupManagementPageState extends State<FamilyGroupManagementPage> {
                 : (value) => _save(joinApprovalRequired: value),
           ),
         ),
+        const SizedBox(height: 12),
+        _Card(
+          child: ListTile(
+            contentPadding: EdgeInsets.zero,
+            leading: const Icon(Icons.star_outline, color: _orange),
+            title: const Text('群精华'),
+            subtitle: const Text('管理群内的重要消息与多条置顶'),
+            trailing: const Icon(Icons.chevron_right),
+            onTap: () => Navigator.of(context).push(
+              MaterialPageRoute(
+                builder: (_) => ChatEssencePage(conversationId: group.id),
+              ),
+            ),
+          ),
+        ),
         if (pending.isNotEmpty) ...[
           const SizedBox(height: 12),
           _Card(
@@ -400,6 +416,7 @@ class _FamilyGroupManagementPageState extends State<FamilyGroupManagementPage> {
             userId: member.userId,
             nickname: member.nickname,
             avatarUrl: member.avatarUrl,
+            conversationId: widget.conversationId,
             statusText: member.role == 'OWNER'
                 ? '群主'
                 : familyMemberStatusLabel(member.memberStatus),

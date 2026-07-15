@@ -55,6 +55,12 @@ public class UserService {
         if (request.autoJoinFamilyChat() != null) {
             user.setAutoJoinFamilyChat(request.autoJoinFamilyChat());
         }
+        if (request.showJoinedFamilies() != null) {
+            user.setShowJoinedFamilies(request.showJoinedFamilies());
+        }
+        if (request.showPhone() != null) {
+            user.setShowPhone(request.showPhone());
+        }
         userMapper.updateById(user);
         return toResponse(userMapper.selectById(user.getId()));
     }
@@ -67,7 +73,9 @@ public class UserService {
                 user.getAvatarUrl(),
                 user.getPhone(),
                 user.getAllowPrivateChat(),
-                user.getAutoJoinFamilyChat());
+                user.getAutoJoinFamilyChat(),
+                user.getShowJoinedFamilies(),
+                user.getShowPhone());
     }
 
     private String emptyToNull(String value) {

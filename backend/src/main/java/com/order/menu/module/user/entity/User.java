@@ -19,6 +19,8 @@ public class User {
     private Integer status;
     private Boolean allowPrivateChat = true;
     private Boolean autoJoinFamilyChat = true;
+    private Boolean showJoinedFamilies = true;
+    private Boolean showPhone = true;
     private LocalDateTime createdAt;
     private LocalDateTime updatedAt;
 }
