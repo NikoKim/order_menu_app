@@ -50,6 +50,31 @@ class ShopFrontendApp extends StatelessWidget {
           surfaceTintColor: Colors.white,
           elevation: 0,
         ),
+        dialogTheme: DialogThemeData(
+          backgroundColor: Colors.white,
+          surfaceTintColor: Colors.white,
+          elevation: 12,
+          shadowColor: const Color(0x33000000),
+          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
+        ),
+        bottomSheetTheme: const BottomSheetThemeData(
+          backgroundColor: Colors.white,
+          modalBackgroundColor: Colors.white,
+          surfaceTintColor: Colors.white,
+          elevation: 12,
+          modalElevation: 12,
+          shadowColor: Color(0x33000000),
+          shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.vertical(top: Radius.circular(8)),
+          ),
+        ),
+        popupMenuTheme: PopupMenuThemeData(
+          color: Colors.white,
+          surfaceTintColor: Colors.white,
+          elevation: 10,
+          shadowColor: const Color(0x33000000),
+          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
+        ),
         filledButtonTheme: FilledButtonThemeData(
           style: FilledButton.styleFrom(
             backgroundColor: warmOrange,

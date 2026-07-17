@@ -1,0 +1,12 @@
+package com.order.menu.module.moment.service;
+
+import static org.junit.jupiter.api.Assertions.*;
+import com.order.menu.common.exception.BusinessException; import com.order.menu.config.UploadProperties; import java.awt.image.BufferedImage; import java.io.*; import java.nio.file.*; import javax.imageio.ImageIO; import org.junit.jupiter.api.*; import org.springframework.mock.web.MockMultipartFile; import org.springframework.test.util.ReflectionTestUtils;
+
+class MomentMediaServiceTest {
+  Path root; MomentMediaService service;
+  @BeforeEach void setup() throws Exception {root=Files.createTempDirectory("moment-media");UploadProperties p=new UploadProperties();p.setBasePath(root.toString());p.setImageUrlPrefix("/images");p.setAllowedExtensions(java.util.List.of("jpg","jpeg","png","webp"));service=new MomentMediaService(p);ReflectionTestUtils.setField(service,"maxOriginalBytes",30L*1024*1024);ReflectionTestUtils.setField(service,"maxMomentBytes",150_000L);ReflectionTestUtils.setField(service,"maxCommentBytes",100_000L);ReflectionTestUtils.setField(service,"maxPixels",16_000_000L);}
+  @AfterEach void cleanup() throws Exception {try(var walk=Files.walk(root)){walk.sorted(java.util.Comparator.reverseOrder()).forEach(p->{try{Files.deleteIfExists(p);}catch(IOException ignored){}});}}
+  @Test void validatesMagicInsteadOfTrustingFilename(){MockMultipartFile fake=new MockMultipartFile("image","x.jpg","image/jpeg","not image".getBytes());assertThrows(BusinessException.class,()->service.store(1L,fake,false));}
+  @Test void compressesOversizedCommentImageBelowConfiguredLimit() throws Exception {BufferedImage image=new BufferedImage(1000,1000,BufferedImage.TYPE_INT_RGB);for(int y=0;y<1000;y++)for(int x=0;x<1000;x++)image.setRGB(x,y,(x*31+y*17));ByteArrayOutputStream out=new ByteArrayOutputStream();ImageIO.write(image,"png",out);assertTrue(out.size()>100_000);var response=service.store(7L,new MockMultipartFile("image","large.png","image/png",out.toByteArray()),true);String filename=response.url().substring(response.url().lastIndexOf('/')+1);Path stored=root.resolve("moment_mes/7").resolve(filename);assertTrue(Files.size(stored)<100_000L);assertTrue(filename.endsWith(".jpg"));}
+}

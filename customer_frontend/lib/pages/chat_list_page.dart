@@ -7,7 +7,10 @@ import '../models.dart';
 import '../services/api_client.dart';
 import '../services/customer_websocket_service.dart';
 import '../widgets/app_notice.dart';
+import '../widgets/ui_utils.dart';
 import 'chat_detail_page.dart';
+import 'moment_feed_page.dart';
+import '../services/moment_api.dart';
 
 class ChatListPage extends StatefulWidget {
   const ChatListPage({super.key});
@@ -23,8 +26,12 @@ class _ChatListPageState extends State<ChatListPage>
   List<ChatConversation>? _conversations;
   int _fetchId = 0; // 用于防止网络请求竞态覆盖
   bool _hasError = false;
+  bool _showMoments = false;
+  int _momentUnread = 0;
+  double _selectorCollapse = 0;
 
   StreamSubscription<CustomerWsMessage>? _wsSubscription;
+  StreamSubscription<CustomerWsMessage>? _momentWsSubscription;
   StreamSubscription<bool>? _connectionSubscription;
   bool _initialized = false;
   final _searchController = TextEditingController();
@@ -38,6 +45,39 @@ class _ChatListPageState extends State<ChatListPage>
   final Map<int, HiddenConversationOverride> _hiddenOverrides = {};
   final ValueNotifier<Object?> _openSwipeTile = ValueNotifier(null);
 
+  int get _chatUnread =>
+      _conversations?.fold<int>(
+        0,
+        (total, conversation) => total + conversation.unreadCount,
+      ) ??
+      0;
+
+  void _selectSection(bool moments) {
+    setState(() {
+      _showMoments = moments;
+      _selectorCollapse = 0;
+    });
+  }
+
+  bool _handleMomentScroll(ScrollNotification notification) {
+    if (!_showMoments || notification.metrics.axis != Axis.vertical) {
+      return false;
+    }
+    if (notification is! ScrollUpdateNotification) {
+      return false;
+    }
+    final next = resolveMomentSelectorCollapse(
+      current: _selectorCollapse,
+      scrollDelta: notification.scrollDelta ?? 0,
+      offset: notification.metrics.pixels,
+      maxScrollExtent: notification.metrics.maxScrollExtent,
+    );
+    if ((next - _selectorCollapse).abs() > 0.0001) {
+      setState(() => _selectorCollapse = next);
+    }
+    return false;
+  }
+
   @override
   void didChangeDependencies() {
     super.didChangeDependencies();
@@ -48,6 +88,7 @@ class _ChatListPageState extends State<ChatListPage>
 
     // 首次进入加载数据
     _loadData();
+    _loadMomentUnread();
 
     // 监听 WebSocket，随时静默获取最新数据
     _wsSubscription = CustomerWebSocketService.instance
@@ -59,22 +100,46 @@ class _ChatListPageState extends State<ChatListPage>
           if (event.action == 'MESSAGE_CREATED' && conversationId != null) {
             _hiddenOverrides.remove(conversationId);
           }
-          if (mounted) _loadData();
+          if (mounted) {
+            _loadData();
+            _loadMomentUnread();
+          }
+        });
+    _momentWsSubscription = CustomerWebSocketService.instance
+        .streamForModule('MOMENT')
+        .listen((_) {
+          if (mounted) _loadMomentUnread();
         });
 
     _connectionSubscription = CustomerWebSocketService.instance.connectionStream
         .where((connected) => connected)
         .listen((_) {
-          if (mounted) _loadData();
+          if (mounted) {
+            _loadData();
+            _loadMomentUnread();
+          }
         });
     _refreshTimer = Timer.periodic(const Duration(seconds: 3), (_) {
-      if (mounted) _loadData();
+      if (mounted) {
+        _loadData();
+        _loadMomentUnread();
+      }
     });
+  }
+
+  Future<void> _loadMomentUnread() async {
+    try {
+      final count = await _api.relatedMomentUnreadCount();
+      if (mounted) setState(() => _momentUnread = count);
+    } catch (_) {}
   }
 
   @override
   void didChangeAppLifecycleState(AppLifecycleState state) {
-    if (state == AppLifecycleState.resumed) _loadData();
+    if (state == AppLifecycleState.resumed) {
+      _loadData();
+      _loadMomentUnread();
+    }
   }
 
   // 核心：无感刷新逻辑
@@ -283,6 +348,7 @@ class _ChatListPageState extends State<ChatListPage>
   void dispose() {
     WidgetsBinding.instance.removeObserver(this);
     _wsSubscription?.cancel();
+    _momentWsSubscription?.cancel();
     _connectionSubscription?.cancel();
     _searchDebounce?.cancel();
     _refreshTimer?.cancel();
@@ -294,124 +360,176 @@ class _ChatListPageState extends State<ChatListPage>
   @override
   Widget build(BuildContext context) => Scaffold(
     backgroundColor: const Color(0xFFF7F7F7),
-    appBar: AppBar(
-      title: const Text('聊天', style: TextStyle(fontWeight: FontWeight.bold)),
-      backgroundColor: const Color(0xFFF7F7F7),
-      foregroundColor: const Color(0xFF242424),
-      surfaceTintColor: Colors.transparent,
-      elevation: 0,
-      scrolledUnderElevation: 0,
-    ),
-    body: Column(
-      children: [
-        Padding(
-          padding: const EdgeInsets.fromLTRB(16, 4, 16, 10),
-          child: TextField(
-            controller: _searchController,
-            onChanged: _onSearchChanged,
-            decoration: InputDecoration(
-              hintText: '搜索用户',
-              prefixIcon: const Icon(Icons.search),
-              filled: true,
-              fillColor: Colors.white,
-              border: OutlineInputBorder(
-                borderRadius: BorderRadius.circular(12),
-                borderSide: BorderSide.none,
+    appBar: PreferredSize(
+      preferredSize: Size.fromHeight(
+        momentSelectorHeight * (1 - _selectorCollapse),
+      ),
+      child: ClipRect(
+        child: SizedBox(
+          height: momentSelectorHeight * (1 - _selectorCollapse),
+          child: Opacity(
+            opacity: 1 - _selectorCollapse,
+            child: AppBar(
+              toolbarHeight: momentSelectorHeight,
+              title: Row(
+                children: [
+                  _TopSectionButton(
+                    text: '聊天',
+                    selected: !_showMoments,
+                    count: _chatUnread,
+                    onTap: () => _selectSection(false),
+                  ),
+                  const SizedBox(width: 6),
+                  _TopSectionButton(
+                    text: '动态',
+                    selected: _showMoments,
+                    count: _momentUnread,
+                    onTap: () => _selectSection(true),
+                  ),
+                ],
               ),
-              suffixIcon: _searching
-                  ? const Padding(
-                      padding: EdgeInsets.all(14),
-                      child: SizedBox.square(
-                        dimension: 16,
-                        child: CircularProgressIndicator(strokeWidth: 2),
-                      ),
-                    )
-                  : _searchController.text.trim().isNotEmpty
-                  ? IconButton(
-                      tooltip: '关闭搜索',
-                      onPressed: () {
-                        _searchController.clear();
-                        _searchDebounce?.cancel();
-                        setState(() {
-                          _searchResults = const [];
-                          _searching = false;
-                        });
-                      },
-                      icon: const Icon(Icons.close),
-                    )
-                  : null,
+              backgroundColor: const Color(0xFFF7F7F7),
+              foregroundColor: const Color(0xFF242424),
+              surfaceTintColor: Colors.transparent,
+              elevation: 0,
+              scrolledUnderElevation: 0,
             ),
           ),
         ),
-        if (_searchResults.isNotEmpty)
-          ConstrainedBox(
-            constraints: const BoxConstraints(maxHeight: 220),
-            child: ListView.builder(
-              shrinkWrap: true,
-              itemCount: _searchResults.length,
-              itemBuilder: (_, index) => Container(
-                margin: const EdgeInsets.fromLTRB(16, 0, 16, 8),
-                decoration: BoxDecoration(
-                  color: Colors.white,
-                  borderRadius: BorderRadius.circular(10),
-                ),
-                child: ListTile(
-                  leading: CircleAvatar(
-                    backgroundImage:
-                        _searchResults[index].avatarUrl?.isNotEmpty == true
-                        ? NetworkImage(
-                            resolveCustomerImageUrl(
-                              _searchResults[index].avatarUrl!,
+      ),
+    ),
+    body: NotificationListener<ScrollNotification>(
+      onNotification: _handleMomentScroll,
+      child: IndexedStack(
+        index: _showMoments ? 0 : 1,
+        children: [
+          MomentFeedPage(
+            key: const ValueKey('customer-moment-pane'),
+            embedded: true,
+            active: _showMoments,
+            onRelatedUnreadChanged: (count) {
+              if (mounted && count != _momentUnread)
+                setState(() => _momentUnread = count);
+            },
+          ),
+          Column(
+            children: [
+              Padding(
+                padding: const EdgeInsets.fromLTRB(16, 4, 16, 10),
+                child: TextField(
+                  controller: _searchController,
+                  onChanged: _onSearchChanged,
+                  decoration: InputDecoration(
+                    hintText: '搜索用户',
+                    prefixIcon: const Icon(Icons.search),
+                    filled: true,
+                    fillColor: Colors.white,
+                    border: OutlineInputBorder(
+                      borderRadius: BorderRadius.circular(12),
+                      borderSide: BorderSide.none,
+                    ),
+                    suffixIcon: _searching
+                        ? const Padding(
+                            padding: EdgeInsets.all(14),
+                            child: SizedBox.square(
+                              dimension: 16,
+                              child: CircularProgressIndicator(strokeWidth: 2),
                             ),
                           )
+                        : _searchController.text.trim().isNotEmpty
+                        ? IconButton(
+                            tooltip: '关闭搜索',
+                            onPressed: () {
+                              _searchController.clear();
+                              _searchDebounce?.cancel();
+                              setState(() {
+                                _searchResults = const [];
+                                _searching = false;
+                              });
+                            },
+                            icon: const Icon(Icons.close),
+                          )
                         : null,
-                    child: _searchResults[index].avatarUrl?.isNotEmpty == true
-                        ? null
-                        : const Icon(Icons.person_outline),
                   ),
-                  title: Text(_searchResults[index].nickname),
-                  onTap: () => _openSearchResult(_searchResults[index]),
                 ),
               ),
-            ),
+              if (_searchResults.isNotEmpty)
+                ConstrainedBox(
+                  constraints: const BoxConstraints(maxHeight: 220),
+                  child: ListView.builder(
+                    shrinkWrap: true,
+                    itemCount: _searchResults.length,
+                    itemBuilder: (_, index) => Container(
+                      margin: const EdgeInsets.fromLTRB(16, 0, 16, 8),
+                      decoration: BoxDecoration(
+                        color: Colors.white,
+                        borderRadius: BorderRadius.circular(10),
+                      ),
+                      child: ListTile(
+                        leading: CircleAvatar(
+                          backgroundImage:
+                              _searchResults[index].avatarUrl?.isNotEmpty ==
+                                  true
+                              ? NetworkImage(
+                                  resolveCustomerImageUrl(
+                                    _searchResults[index].avatarUrl!,
+                                  ),
+                                )
+                              : null,
+                          child:
+                              _searchResults[index].avatarUrl?.isNotEmpty ==
+                                  true
+                              ? null
+                              : const Icon(Icons.person_outline),
+                        ),
+                        title: Text(_searchResults[index].nickname),
+                        onTap: () => _openSearchResult(_searchResults[index]),
+                      ),
+                    ),
+                  ),
+                ),
+              if (shouldShowNoChatUser(
+                query: _searchController.text,
+                searching: _searching,
+                resultCount: _searchResults.length,
+              ))
+                Expanded(
+                  child: Center(
+                    child: Container(
+                      padding: const EdgeInsets.symmetric(
+                        horizontal: 28,
+                        vertical: 20,
+                      ),
+                      decoration: BoxDecoration(
+                        color: Colors.white,
+                        borderRadius: BorderRadius.circular(12),
+                      ),
+                      child: const Text('没有该用户'),
+                    ),
+                  ),
+                )
+              else if (shouldShowConversationsForSearch(_searchController.text))
+                Expanded(
+                  child: RefreshIndicator(
+                    onRefresh: _loadData,
+                    child: _buildBody(),
+                  ),
+                )
+              else
+                const Spacer(),
+            ],
           ),
-        if (shouldShowNoChatUser(
-          query: _searchController.text,
-          searching: _searching,
-          resultCount: _searchResults.length,
-        ))
-          Expanded(
-            child: Center(
-              child: Container(
-                padding: const EdgeInsets.symmetric(
-                  horizontal: 28,
-                  vertical: 20,
-                ),
-                decoration: BoxDecoration(
-                  color: Colors.white,
-                  borderRadius: BorderRadius.circular(12),
-                ),
-                child: const Text('没有该用户'),
-              ),
-            ),
-          )
-        else if (shouldShowConversationsForSearch(_searchController.text))
-          Expanded(
-            child: RefreshIndicator(onRefresh: _loadData, child: _buildBody()),
-          )
-        else
-          const Spacer(),
-      ],
+        ],
+      ),
     ),
   );
 
   Widget _buildBody() {
-    // 1. 首次加载中
+    // 1. 首次加载中：使用骨架加载动画
     if (_conversations == null && !_hasError) {
-      return const Center(child: CircularProgressIndicator());
+      return const ChatListSkeleton();
     }
 
-    // 2. 加载失败（使用 ListView 确保依然可以下拉刷新）
     if (_hasError) {
       return ListView(
         children: [
@@ -428,7 +546,6 @@ class _ChatListPageState extends State<ChatListPage>
 
     final conversations = _conversations!;
 
-    // 3. 数据为空
     if (conversations.isEmpty) {
       return ListView(
         children: const [
@@ -438,7 +555,6 @@ class _ChatListPageState extends State<ChatListPage>
       );
     }
 
-    // 4. 正常渲染列表（无感刷新：只要 _conversations 更新，ListView 瞬间重绘）
     final pinned = conversations.where((item) => item.pinned).toList()
       ..sort((a, b) => (b.pinnedAt ?? '').compareTo(a.pinnedAt ?? ''));
     final regular = conversations.where((item) => !item.pinned).toList();
@@ -470,26 +586,31 @@ class _ChatListPageState extends State<ChatListPage>
     onPin: () => _setPinned(item),
     onDelete: () => _hideConversation(item),
     child: Material(
-      color: Colors.white,
-      borderRadius: BorderRadius.circular(12),
+      color: Colors.white, // 白色内容区
+      borderRadius: BorderRadius.circular(12), // 圆角
       clipBehavior: Clip.antiAlias,
       child: ListTile(
-        contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 4),
+        contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
         leading: Stack(
           clipBehavior: Clip.none,
           children: [
-            CircleAvatar(
-              backgroundImage: item.imageUrl?.isNotEmpty == true
-                  ? NetworkImage(resolveCustomerImageUrl(item.imageUrl!))
-                  : null,
-              child: item.imageUrl?.isNotEmpty == true
-                  ? null
-                  : Icon(item.isDirect ? Icons.person : Icons.groups),
-            ),
+            // 使用新优化的 ShimmerImage 替换 CircleAvatar 中的 backgroundImage
+            if (item.imageUrl?.isNotEmpty == true)
+              ShimmerImage(
+                url: resolveCustomerImageUrl(item.imageUrl!),
+                width: 48,
+                height: 48,
+                borderRadius: 24,
+              )
+            else
+              CircleAvatar(
+                radius: 24,
+                child: Icon(item.isDirect ? Icons.person : Icons.groups),
+              ),
             if (item.showUnreadBadge || item.showMutedBadge)
               Positioned(
-                right: -7,
-                top: -7,
+                right: -4,
+                top: -4,
                 child: _UnreadBadge(
                   count: item.unreadCount,
                   muted: item.showMutedBadge,
@@ -542,6 +663,78 @@ class _ChatListPageState extends State<ChatListPage>
       ),
     ),
   );
+}
+
+class _TopSectionButton extends StatelessWidget {
+  const _TopSectionButton({
+    required this.text,
+    required this.selected,
+    required this.onTap,
+    this.count = 0,
+  });
+  final String text;
+  final bool selected;
+  final VoidCallback onTap;
+  final int count;
+  @override
+  Widget build(BuildContext context) => InkWell(
+    borderRadius: BorderRadius.circular(6),
+    onTap: onTap,
+    child: Stack(
+      clipBehavior: Clip.none,
+      children: [
+        Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 7),
+          child: Text(
+            text,
+            style: TextStyle(
+              fontSize: 18,
+              fontWeight: selected ? FontWeight.w800 : FontWeight.w500,
+              color: selected
+                  ? const Color(0xFF242424)
+                  : const Color(0xFF888888),
+            ),
+          ),
+        ),
+        if (count > 0)
+          Positioned(
+            right: -3,
+            top: -2,
+            child: Container(
+              constraints: const BoxConstraints(minWidth: 17, minHeight: 17),
+              padding: const EdgeInsets.symmetric(horizontal: 4),
+              alignment: Alignment.center,
+              decoration: const BoxDecoration(
+                color: Colors.red,
+                shape: BoxShape.circle,
+              ),
+              child: Text(
+                count > 99 ? '99+' : '$count',
+                style: const TextStyle(color: Colors.white, fontSize: 9),
+              ),
+            ),
+          ),
+      ],
+    ),
+  );
+}
+
+const double momentSelectorHeight = 56;
+const double momentSelectorMinScrollableExtent = 300;
+
+bool momentListCanHideSelector(double maxScrollExtent) =>
+    maxScrollExtent >= momentSelectorMinScrollableExtent;
+
+double resolveMomentSelectorCollapse({
+  required double current,
+  required double scrollDelta,
+  required double offset,
+  required double maxScrollExtent,
+  double extent = momentSelectorHeight,
+}) {
+  if (!momentListCanHideSelector(maxScrollExtent) || extent <= 0) return 0;
+  if (offset <= 0 && scrollDelta <= 0) return 0;
+  return (current + scrollDelta / extent).clamp(0.0, 1.0).toDouble();
 }
 
 // ---------------- 以下辅助组件保留原有实现即可 ----------------

@@ -6,12 +6,15 @@ import org.springframework.boot.autoconfigure.SpringBootApplication;
 import org.springframework.scheduling.annotation.EnableScheduling;
 import org.springframework.scheduling.annotation.EnableAsync;
 
+import java.util.TimeZone;
+
 @SpringBootApplication
 @EnableScheduling
 @EnableAsync
 @MapperScan("com.order.menu.module.*.mapper")
 public class OrderMenuApplication {
     public static void main(String[] args) {
+        TimeZone.setDefault(TimeZone.getTimeZone("Asia/Shanghai"));
         SpringApplication.run(OrderMenuApplication.class, args);
     }
 }

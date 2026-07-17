@@ -97,7 +97,10 @@ public final class MessageDtos {
             BigDecimal orderTotalAmount, String orderRemark,
             String imageUrl, LocalDateTime imageExpiresAt, Boolean imageExpired,
             Long sharedShopId, String sharedShopName, String sharedShopLogoUrl,
-            String sharedShopDescription) {
+            String sharedShopDescription, Long sharedMomentId, Long sharedMomentCommentId,
+            String sharedMomentTitle, String sharedMomentContent, String sharedMomentPreview,
+            String sharedCommentPreview, String sharedMomentAuthorName, String sharedMomentAuthorAvatar,
+            String sharedMomentCoverUrl, String sharedCardIcon) {
     }
 
     public record CustomerSearchResponse(Long id, String nickname, String avatarUrl) {
@@ -162,6 +165,16 @@ public final class MessageDtos {
             String sharedShopName,
             String sharedShopLogoUrl,
             String sharedShopDescription,
+            Long sharedMomentId,
+            Long sharedMomentCommentId,
+            String sharedMomentTitle,
+            String sharedMomentContent,
+            String sharedMomentPreview,
+            String sharedCommentPreview,
+            String sharedMomentAuthorName,
+            String sharedMomentAuthorAvatar,
+            String sharedMomentCoverUrl,
+            String sharedCardIcon,
             Boolean essence,
             Boolean essencePinned,
             Long essenceLikeCount,

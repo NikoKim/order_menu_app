@@ -1,9 +1,12 @@
 import 'package:flutter/material.dart';
 
 import '../models/shop_api_models.dart';
+import '../models/moment_models.dart';
 import '../services/api_config.dart';
 import '../services/shop_api_service.dart';
 import '../widgets/app_notice.dart';
+import '../widgets/skeleton_box.dart';
+import 'moment_pages.dart';
 
 const _orange = Color(0xFFF28C28);
 const _pageBackground = Color(0xFFF5F6F8);
@@ -40,13 +43,92 @@ class _ChatUserDetailPageState extends State<ChatUserDetailPage> {
   ChatUserProfile? _profile;
   late bool _mutedConversation;
   bool _saving = false;
+  MomentPrivacy? _momentPrivacy;
+  MomentProfileSummary? _momentSummary;
+  bool _profileLoaded = false;
 
   @override
   void initState() {
     super.initState();
     _mutedConversation = widget.initialMuted;
     _loadProfile();
+    _loadMomentPrivacy();
+    _loadMomentSummary();
     if (widget.canBlock) _loadBlock();
+  }
+
+  Future<void> _loadMomentSummary() async {
+    try {
+      final value = await shopApi.fetchMomentProfileSummary(widget.userId);
+      if (mounted) setState(() => _momentSummary = value);
+    } on ApiException catch (_) {}
+  }
+
+  Future<void> _loadMomentPrivacy() async {
+    try {
+      final value = await shopApi.fetchMomentPrivacy(widget.userId);
+      if (mounted) setState(() => _momentPrivacy = value);
+    } on ApiException catch (error) {
+      if (mounted) AppNotice.show(context, error.message);
+    }
+  }
+
+  Future<void> _updateMomentPrivacy({bool? hideTheirs, bool? hideMine}) async {
+    final current = _momentPrivacy ?? const MomentPrivacy();
+    setState(() => _saving = true);
+    try {
+      final value = await shopApi.updateMomentPrivacy(
+        widget.userId,
+        hideTheirMoments: hideTheirs ?? current.hideTheirMoments,
+        hideMineFromThem: hideMine ?? current.hideMineFromThem,
+      );
+      if (mounted) {
+        setState(() => _momentPrivacy = value);
+        await _loadMomentSummary();
+      }
+    } on ApiException catch (error) {
+      if (mounted) AppNotice.show(context, error.message);
+    } finally {
+      if (mounted) setState(() => _saving = false);
+    }
+  }
+
+  Future<void> _openUserMoments() async {
+    final privacy = _momentPrivacy;
+    if (privacy?.hideTheirMoments == true) {
+      final close = await showDialog<bool>(
+        context: context,
+        builder: (context) => AlertDialog(
+          title: const Text('无法查看动态'),
+          content: const Text('您已设置不看Ta动态。关闭该设置后即可查看。'),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(context, false),
+              child: const Text('取消'),
+            ),
+            FilledButton(
+              onPressed: () => Navigator.pop(context, true),
+              child: const Text('关闭并查看'),
+            ),
+          ],
+        ),
+      );
+      if (close != true) return;
+      await _updateMomentPrivacy(hideTheirs: false);
+    }
+    if (!mounted) return;
+    Navigator.push(
+      context,
+      MaterialPageRoute(
+        builder: (_) => UserMomentsPage(
+          userId: widget.userId,
+          nickname: _profile?.nickname ?? widget.nickname,
+          blockedReason: _momentSummary?.canView == false
+              ? (_momentSummary?.reason ?? '对方的动态页当前不可见')
+              : null,
+        ),
+      ),
+    );
   }
 
   Future<void> _loadProfile() async {
@@ -58,6 +140,8 @@ class _ChatUserDetailPageState extends State<ChatUserDetailPage> {
       if (mounted) setState(() => _profile = value);
     } on ApiException catch (error) {
       if (mounted) AppNotice.show(context, error.message);
+    } finally {
+      if (mounted) setState(() => _profileLoaded = true);
     }
   }
 
@@ -138,6 +222,13 @@ class _ChatUserDetailPageState extends State<ChatUserDetailPage> {
     final avatar = rawAvatar?.isNotEmpty == true
         ? ApiConfig.resolveImageUrl(rawAvatar!)
         : null;
+    if (!_profileLoaded) {
+      return Scaffold(
+        backgroundColor: _pageBackground,
+        appBar: AppBar(title: const Text('用户资料')),
+        body: const _ChatUserProfileSkeleton(),
+      );
+    }
     return Scaffold(
       backgroundColor: _pageBackground,
       appBar: AppBar(title: const Text('用户资料')),
@@ -200,10 +291,8 @@ class _ChatUserDetailPageState extends State<ChatUserDetailPage> {
                 _InfoRow(label: '用户编号', value: '#${widget.userId}'),
                 _InfoRow(
                   label: '联系电话',
-                  value: profile == null
-                      ? '加载中'
-                      : profile.phone?.isNotEmpty == true
-                      ? profile.phone!
+                  value: (profile?.phone ?? widget.phone)?.isNotEmpty == true
+                      ? (profile?.phone ?? widget.phone)!
                       : '未公开',
                 ),
                 if (profile?.joinedFamilies.isNotEmpty == true)
@@ -279,6 +368,89 @@ class _ChatUserDetailPageState extends State<ChatUserDetailPage> {
               ),
             ),
           ],
+          const SizedBox(height: 12),
+          Container(
+            decoration: BoxDecoration(
+              color: Colors.white,
+              borderRadius: BorderRadius.circular(8),
+            ),
+            child: Column(
+              children: [
+                ListTile(
+                  leading: const Icon(
+                    Icons.dynamic_feed_outlined,
+                    color: _orange,
+                  ),
+                  title: Text('${profile?.nickname ?? widget.nickname}的动态'),
+                  subtitle: Text(
+                    _momentSummary == null
+                        ? '查看该用户发布过的动态'
+                        : '共 ${_momentSummary!.momentCount} 条动态',
+                  ),
+                  trailing: const Icon(Icons.chevron_right),
+                  onTap: _openUserMoments,
+                ),
+                if (_momentSummary?.preview.isNotEmpty == true)
+                  SizedBox(
+                    height: 74,
+                    child: ListView.separated(
+                      padding: const EdgeInsets.fromLTRB(16, 0, 16, 12),
+                      scrollDirection: Axis.horizontal,
+                      itemCount: _momentSummary!.preview.length.clamp(0, 2),
+                      separatorBuilder: (_, _) => const SizedBox(width: 8),
+                      itemBuilder: (context, index) {
+                        final moment = _momentSummary!.preview[index];
+                        return InkWell(
+                          onTap: _openUserMoments,
+                          child: Container(
+                            width: 150,
+                            padding: const EdgeInsets.all(9),
+                            decoration: BoxDecoration(
+                              color: _pageBackground,
+                              borderRadius: BorderRadius.circular(6),
+                            ),
+                            child: Text(
+                              moment.title,
+                              maxLines: 2,
+                              overflow: TextOverflow.ellipsis,
+                              style: const TextStyle(
+                                fontWeight: FontWeight.w600,
+                              ),
+                            ),
+                          ),
+                        );
+                      },
+                    ),
+                  ),
+                const Divider(height: 1),
+                SwitchListTile(
+                  secondary: const Icon(
+                    Icons.visibility_off_outlined,
+                    color: _orange,
+                  ),
+                  title: const Text('不看Ta动态'),
+                  subtitle: const Text('推荐和相关动态中都不再展示'),
+                  value: _momentPrivacy?.hideTheirMoments ?? false,
+                  onChanged: _momentPrivacy == null || _saving
+                      ? null
+                      : (value) => _updateMomentPrivacy(hideTheirs: value),
+                ),
+                const Divider(height: 1),
+                SwitchListTile(
+                  secondary: const Icon(
+                    Icons.person_off_outlined,
+                    color: _orange,
+                  ),
+                  title: const Text('不让Ta看我动态'),
+                  subtitle: const Text('对方在推荐和相关中都看不到我的动态'),
+                  value: _momentPrivacy?.hideMineFromThem ?? false,
+                  onChanged: _momentPrivacy == null || _saving
+                      ? null
+                      : (value) => _updateMomentPrivacy(hideMine: value),
+                ),
+              ],
+            ),
+          ),
           if (widget.canBlock) ...[
             const SizedBox(height: 12),
             Container(
@@ -312,6 +484,47 @@ class _ChatUserDetailPageState extends State<ChatUserDetailPage> {
       ),
     );
   }
+}
+
+class _ChatUserProfileSkeleton extends StatelessWidget {
+  const _ChatUserProfileSkeleton();
+
+  @override
+  Widget build(BuildContext context) => ListView(
+    padding: const EdgeInsets.all(16),
+    children: const [
+      DecoratedBox(
+        decoration: BoxDecoration(
+          color: Colors.white,
+          borderRadius: BorderRadius.all(Radius.circular(8)),
+        ),
+        child: Padding(
+          padding: EdgeInsets.all(20),
+          child: Column(
+            children: [
+              SkeletonBox(
+                width: 76,
+                height: 76,
+                borderRadius: BorderRadius.all(Radius.circular(38)),
+              ),
+              SizedBox(height: 14),
+              SkeletonBox(width: 132, height: 20),
+              SizedBox(height: 24),
+              SkeletonBox(width: double.infinity, height: 44),
+              SizedBox(height: 10),
+              SkeletonBox(width: double.infinity, height: 44),
+              SizedBox(height: 10),
+              SkeletonBox(width: double.infinity, height: 44),
+            ],
+          ),
+        ),
+      ),
+      SizedBox(height: 12),
+      SkeletonBox(width: double.infinity, height: 118),
+      SizedBox(height: 12),
+      SkeletonBox(width: double.infinity, height: 164),
+    ],
+  );
 }
 
 class _InfoRow extends StatelessWidget {

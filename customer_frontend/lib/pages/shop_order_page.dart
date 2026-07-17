@@ -11,6 +11,7 @@ import 'checkout_page.dart';
 import 'dish_detail_page.dart';
 import 'chat_detail_page.dart';
 import 'shop_share_page.dart';
+import 'moment_feed_page.dart';
 
 class ShopOrderPage extends StatefulWidget {
   const ShopOrderPage({
@@ -337,6 +338,19 @@ class _ShopOrderPageState extends State<ShopOrderPage> {
             surfaceTintColor: Colors.white,
             elevation: 0,
             actions: [
+              if (menu != null && AppScope.of(context).auth.isLoggedIn)
+                IconButton(
+                  tooltip: '发布店铺动态',
+                  icon: const Icon(Icons.edit_note_outlined),
+                  onPressed: () => Navigator.of(context).push(
+                    MaterialPageRoute(
+                      builder: (_) => MomentComposerPage(
+                        shopId: menu.shop.id,
+                        shopName: menu.shop.name,
+                      ),
+                    ),
+                  ),
+                ),
               if (menu != null && AppScope.of(context).auth.isLoggedIn)
                 IconButton(
                   tooltip: '分享店铺',

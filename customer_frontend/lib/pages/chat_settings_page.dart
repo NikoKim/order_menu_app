@@ -3,6 +3,7 @@ import 'package:flutter/material.dart';
 import '../main.dart';
 import '../services/api_client.dart';
 import '../widgets/app_notice.dart';
+import 'moment_privacy_page.dart';
 
 class ChatSettingsPage extends StatefulWidget {
   const ChatSettingsPage({super.key});
@@ -98,6 +99,23 @@ class _ChatSettingsPageState extends State<ChatSettingsPage> {
                 subtitle: const Text('控制私聊和家庭群成员资料中是否显示手机号。'),
                 value: user.showPhone,
                 onChanged: _saving ? null : (value) => _save(showPhone: value),
+              ),
+            ],
+          ),
+          const SizedBox(height: 20),
+          const _SectionTitle('动态隐私设置'),
+          _SettingsCard(
+            children: [
+              ListTile(
+                leading: const Icon(Icons.dynamic_feed_outlined),
+                title: const Text('动态页可见人群'),
+                subtitle: const Text('设置互聊好友、家庭成员、公开或私密'),
+                trailing: const Icon(Icons.chevron_right),
+                onTap: () => Navigator.of(context).push(
+                  MaterialPageRoute(
+                    builder: (_) => const MyMomentPrivacyPage(),
+                  ),
+                ),
               ),
             ],
           ),

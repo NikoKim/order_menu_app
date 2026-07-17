@@ -1,0 +1,1 @@
+package com.order.menu.module.moment.mapper; import com.baomidou.mybatisplus.core.mapper.BaseMapper; import com.order.menu.module.moment.entity.MomentReaction; public interface MomentReactionMapper extends BaseMapper<MomentReaction> {}

@@ -224,6 +224,16 @@ class ChatMessage {
     this.sharedShopName,
     this.sharedShopLogoUrl,
     this.sharedShopDescription,
+    this.sharedMomentId,
+    this.sharedMomentCommentId,
+    this.sharedMomentTitle,
+    this.sharedMomentContent,
+    this.sharedMomentPreview,
+    this.sharedCommentPreview,
+    this.sharedMomentAuthorName,
+    this.sharedMomentAuthorAvatar,
+    this.sharedMomentCoverUrl,
+    this.sharedCardIcon,
     this.essence = false,
     this.essencePinned = false,
     this.essenceLikeCount = 0,
@@ -288,6 +298,20 @@ class ChatMessage {
     sharedShopName: json['sharedShopName']?.toString(),
     sharedShopLogoUrl: json['sharedShopLogoUrl']?.toString(),
     sharedShopDescription: json['sharedShopDescription']?.toString(),
+    sharedMomentId: json['sharedMomentId'] == null
+        ? null
+        : _asInt(json['sharedMomentId']),
+    sharedMomentCommentId: json['sharedMomentCommentId'] == null
+        ? null
+        : _asInt(json['sharedMomentCommentId']),
+    sharedMomentTitle: json['sharedMomentTitle']?.toString(),
+    sharedMomentContent: json['sharedMomentContent']?.toString(),
+    sharedMomentPreview: json['sharedMomentPreview']?.toString(),
+    sharedCommentPreview: json['sharedCommentPreview']?.toString(),
+    sharedMomentAuthorName: json['sharedMomentAuthorName']?.toString(),
+    sharedMomentAuthorAvatar: json['sharedMomentAuthorAvatar']?.toString(),
+    sharedMomentCoverUrl: json['sharedMomentCoverUrl']?.toString(),
+    sharedCardIcon: json['sharedCardIcon']?.toString(),
     essence: json['essence'] == true || json['isEssence'] == true,
     essencePinned: json['essencePinned'] == true,
     essenceLikeCount: _asInt(json['essenceLikeCount']),
@@ -335,6 +359,16 @@ class ChatMessage {
   final String? sharedShopName;
   final String? sharedShopLogoUrl;
   final String? sharedShopDescription;
+  final int? sharedMomentId;
+  final int? sharedMomentCommentId;
+  final String? sharedMomentTitle;
+  final String? sharedMomentContent;
+  final String? sharedMomentPreview;
+  final String? sharedCommentPreview;
+  final String? sharedMomentAuthorName;
+  final String? sharedMomentAuthorAvatar;
+  final String? sharedMomentCoverUrl;
+  final String? sharedCardIcon;
   final bool essence;
   final bool essencePinned;
   final int essenceLikeCount;
@@ -344,6 +378,8 @@ class ChatMessage {
   bool get isOrderShare => type == 'ORDER_SHARE';
   bool get isImageShare => type == 'IMAGE_SHARE';
   bool get isShopShare => type == 'SHOP_SHARE';
+  bool get isMomentShare =>
+      type == 'MOMENT_SHARE' || type == 'MOMENT_COMMENT_SHARE';
   bool get isSystem => type == 'SYSTEM';
   bool get isRecalled => recalledAt != null && recalledAt!.isNotEmpty;
 }
@@ -506,6 +542,16 @@ class QuotedChatMessage {
     this.sharedShopName,
     this.sharedShopLogoUrl,
     this.sharedShopDescription,
+    this.sharedMomentId,
+    this.sharedMomentCommentId,
+    this.sharedMomentTitle,
+    this.sharedMomentContent,
+    this.sharedMomentPreview,
+    this.sharedCommentPreview,
+    this.sharedMomentAuthorName,
+    this.sharedMomentAuthorAvatar,
+    this.sharedMomentCoverUrl,
+    this.sharedCardIcon,
   });
 
   factory QuotedChatMessage.fromJson(Map<String, dynamic> json) =>
@@ -549,6 +595,20 @@ class QuotedChatMessage {
         sharedShopName: json['sharedShopName']?.toString(),
         sharedShopLogoUrl: json['sharedShopLogoUrl']?.toString(),
         sharedShopDescription: json['sharedShopDescription']?.toString(),
+        sharedMomentId: json['sharedMomentId'] == null
+            ? null
+            : _asInt(json['sharedMomentId']),
+        sharedMomentCommentId: json['sharedMomentCommentId'] == null
+            ? null
+            : _asInt(json['sharedMomentCommentId']),
+        sharedMomentTitle: json['sharedMomentTitle']?.toString(),
+        sharedMomentContent: json['sharedMomentContent']?.toString(),
+        sharedMomentPreview: json['sharedMomentPreview']?.toString(),
+        sharedCommentPreview: json['sharedCommentPreview']?.toString(),
+        sharedMomentAuthorName: json['sharedMomentAuthorName']?.toString(),
+        sharedMomentAuthorAvatar: json['sharedMomentAuthorAvatar']?.toString(),
+        sharedMomentCoverUrl: json['sharedMomentCoverUrl']?.toString(),
+        sharedCardIcon: json['sharedCardIcon']?.toString(),
       );
 
   final int id;
@@ -577,6 +637,16 @@ class QuotedChatMessage {
   final String? sharedShopName;
   final String? sharedShopLogoUrl;
   final String? sharedShopDescription;
+  final int? sharedMomentId;
+  final int? sharedMomentCommentId;
+  final String? sharedMomentTitle;
+  final String? sharedMomentContent;
+  final String? sharedMomentPreview;
+  final String? sharedCommentPreview;
+  final String? sharedMomentAuthorName;
+  final String? sharedMomentAuthorAvatar;
+  final String? sharedMomentCoverUrl;
+  final String? sharedCardIcon;
 
   ChatMessage toChatMessage() => ChatMessage(
     id: id,
@@ -608,6 +678,16 @@ class QuotedChatMessage {
     sharedShopName: sharedShopName,
     sharedShopLogoUrl: sharedShopLogoUrl,
     sharedShopDescription: sharedShopDescription,
+    sharedMomentId: sharedMomentId,
+    sharedMomentCommentId: sharedMomentCommentId,
+    sharedMomentTitle: sharedMomentTitle,
+    sharedMomentContent: sharedMomentContent,
+    sharedMomentPreview: sharedMomentPreview,
+    sharedCommentPreview: sharedCommentPreview,
+    sharedMomentAuthorName: sharedMomentAuthorName,
+    sharedMomentAuthorAvatar: sharedMomentAuthorAvatar,
+    sharedMomentCoverUrl: sharedMomentCoverUrl,
+    sharedCardIcon: sharedCardIcon,
   );
 }
 

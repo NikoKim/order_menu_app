@@ -61,6 +61,12 @@ public class UserService {
         if (request.showPhone() != null) {
             user.setShowPhone(request.showPhone());
         }
+        if (request.momentProfileVisibility() != null) {
+            if (!request.momentProfileVisibility().matches("PUBLIC|CHAT_FRIENDS|FAMILY|PRIVATE")) {
+                throw new BusinessException(ErrorCode.BAD_REQUEST, "不支持的动态页可见范围");
+            }
+            user.setMomentProfileVisibility(request.momentProfileVisibility());
+        }
         userMapper.updateById(user);
         return toResponse(userMapper.selectById(user.getId()));
     }
@@ -75,7 +81,7 @@ public class UserService {
                 user.getAllowPrivateChat(),
                 user.getAutoJoinFamilyChat(),
                 user.getShowJoinedFamilies(),
-                user.getShowPhone());
+                user.getShowPhone(), user.getMomentProfileVisibility());
     }
 
     private String emptyToNull(String value) {

@@ -21,6 +21,7 @@ public class User {
     private Boolean autoJoinFamilyChat = true;
     private Boolean showJoinedFamilies = true;
     private Boolean showPhone = true;
+    private String momentProfileVisibility = "PUBLIC";
     private LocalDateTime createdAt;
     private LocalDateTime updatedAt;
 }

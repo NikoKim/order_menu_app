@@ -13,8 +13,20 @@ class DevelopmentLogPage extends StatelessWidget {
         padding: const EdgeInsets.fromLTRB(16, 12, 16, 28),
         children: const [
           _VersionCard(
-            version: 'v1.3.1',
+            version: 'v2.1.1',
             title: '当前版本',
+            items: [
+              '重大更新！新增动态页',
+              '优化动态页相关功能',
+              '优化隐私相关功能',
+              '优化聊天相关功能',
+              '优化用户资料相关功能'
+            ],
+          ),
+          SizedBox(height: 12),
+          _VersionCard(
+            version: 'v1.3.1',
+            title: '前版本',
             items: [
               '新增聊天功能，包括商家家庭群聊和私聊',
               '新增隐私设置功能，用户可以设置是否私聊和是否自动加入家庭群聊'

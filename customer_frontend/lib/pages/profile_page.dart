@@ -10,6 +10,7 @@ import 'my_families_page.dart';
 import 'orders_page.dart';
 import 'chat_settings_page.dart';
 import 'message_center_page.dart';
+import 'moment_privacy_page.dart';
 
 class ProfilePage extends StatelessWidget {
   const ProfilePage({super.key, required this.api, this.notificationCount = 0});
@@ -59,6 +60,18 @@ class ProfilePage extends StatelessWidget {
               const SizedBox(height: 16),
               _MenuSection(
                 children: [
+                  if (loggedIn && services.auth.user != null) ...[
+                    _ProfileMenuTile(
+                      icon: Icons.dynamic_feed_outlined,
+                      title: '我的动态',
+                      subtitle: '浏览、编辑已发布动态和草稿',
+                      enabled: true,
+                      destination: MyMomentsPage(
+                        userId: services.auth.user!.id,
+                      ),
+                    ),
+                    const _SectionDivider(),
+                  ],
                   _ProfileMenuTile(
                     icon: Icons.notifications_active_outlined,
                     title: '消息通知',

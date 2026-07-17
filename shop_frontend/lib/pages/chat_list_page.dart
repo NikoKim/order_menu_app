@@ -8,7 +8,9 @@ import '../services/shop_api_service.dart';
 import '../services/websocket_service.dart';
 import '../services/latest_request.dart';
 import '../widgets/app_notice.dart';
+import '../widgets/skeleton_box.dart';
 import 'chat_detail_page.dart';
+import 'moment_pages.dart';
 
 class ChatListPage extends StatefulWidget {
   const ChatListPage({super.key});
@@ -31,12 +33,19 @@ class _ChatListPageState extends State<ChatListPage>
   final Set<int> _deletingIds = {};
   final Set<int> _forceVisibleIds = {};
   final _swipeController = ConversationSwipeController();
+  bool _showMoments = false;
+  int _relatedMomentUnread = 0;
+  double _topBarCollapseProgress = 0;
+
+  int get _chatUnread => (_cachedConversations ?? const <ChatConversation>[])
+      .fold(0, (total, conversation) => total + conversation.unreadCount);
 
   @override
   void initState() {
     super.initState();
     WidgetsBinding.instance.addObserver(this);
     _future = _requestConversations();
+    _loadMomentUnread();
     _chatSubscription = ShopWebSocketService.instance
         .streamForModule('CHAT')
         .listen((event) {
@@ -59,8 +68,26 @@ class _ChatListPageState extends State<ChatListPage>
         .where((connected) => connected)
         .listen((_) => _reload());
     _refreshTimer = Timer.periodic(const Duration(seconds: 3), (_) {
-      if (mounted) _reload();
+      if (mounted) {
+        _reload();
+        _loadMomentUnread();
+      }
     });
+  }
+
+  Future<void> _loadMomentUnread() async {
+    try {
+      final count = await shopApi.fetchRelatedMomentUnreadCount();
+      if (mounted) setState(() => _relatedMomentUnread = count);
+    } catch (_) {}
+  }
+
+  void _handleMomentHeaderCollapse(double progress) {
+    final normalized = progress.clamp(0.0, 1.0).toDouble();
+    if ((normalized - _topBarCollapseProgress).abs() < 0.002 || !mounted) {
+      return;
+    }
+    setState(() => _topBarCollapseProgress = normalized);
   }
 
   @override
@@ -226,176 +253,359 @@ class _ChatListPageState extends State<ChatListPage>
   @override
   Widget build(BuildContext context) => Scaffold(
     backgroundColor: const Color(0xFFF5F6F8),
-    appBar: AppBar(title: const Text('聊天')),
-    body: RefreshIndicator(
-      onRefresh: _reload,
-      child: FutureBuilder<List<ChatConversation>>(
-        future: _future,
-        builder: (context, snapshot) {
-          if (snapshot.connectionState != ConnectionState.done &&
-              _cachedConversations == null) {
-            return const Center(child: CircularProgressIndicator());
-          }
-          if (snapshot.hasError && _cachedConversations == null) {
-            return ListView(
-              children: [
-                const SizedBox(height: 180),
-                Center(
-                  child: TextButton(
-                    onPressed: _reload,
-                    child: const Text('聊天加载失败，点击重试'),
-                  ),
-                ),
-              ],
-            );
-          }
-          final conversations = sortChatConversations(
-            _cachedConversations ?? snapshot.data ?? const <ChatConversation>[],
-          );
-          if (conversations.isEmpty) {
-            return ListView(
-              children: const [
-                SizedBox(height: 180),
-                Center(child: Text('暂无聊天')),
-              ],
-            );
-          }
-          return ListView.separated(
-            padding: const EdgeInsets.all(12),
-            itemCount: conversations.length,
-            separatorBuilder: (_, _) => const SizedBox(height: 8),
-            itemBuilder: (context, index) {
-              final conversation = conversations[index];
-              final showPinnedHeader = index == 0 && conversation.pinned;
-              final showOthersHeader =
-                  !conversation.pinned &&
-                  (index == 0 || conversations[index - 1].pinned);
-              return Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  if (showPinnedHeader || showOthersHeader)
-                    Padding(
-                      padding: const EdgeInsets.fromLTRB(4, 4, 4, 8),
-                      child: Text(
-                        showPinnedHeader ? '置顶聊天' : '全部聊天',
-                        style: const TextStyle(
-                          color: Colors.grey,
-                          fontSize: 12,
-                          fontWeight: FontWeight.w600,
+    body: Column(
+      children: [
+        ColoredBox(
+          color: Colors.white,
+          child: SafeArea(
+            bottom: false,
+            child: ClipRect(
+              child: Align(
+                alignment: Alignment.topCenter,
+                heightFactor: 1 - _topBarCollapseProgress,
+                child: Opacity(
+                  opacity: 1 - _topBarCollapseProgress,
+                  child: Transform.translate(
+                    offset: Offset(0, -10 * _topBarCollapseProgress),
+                    child: SizedBox(
+                      height: kToolbarHeight,
+                      child: Padding(
+                        padding: const EdgeInsets.symmetric(horizontal: 12),
+                        child: Row(
+                          children: [
+                            _TopSectionButton(
+                              text: '聊天',
+                              selected: !_showMoments,
+                              count: _chatUnread,
+                              onTap: () => setState(() {
+                                _showMoments = false;
+                                _topBarCollapseProgress = 0;
+                              }),
+                            ),
+                            const SizedBox(width: 6),
+                            _TopSectionButton(
+                              text: '动态',
+                              selected: _showMoments,
+                              count: _relatedMomentUnread,
+                              onTap: () => setState(() {
+                                _showMoments = true;
+                                _topBarCollapseProgress = 0;
+                              }),
+                            ),
+                          ],
                         ),
                       ),
                     ),
-                  ConversationSwipeTile(
-                    key: ValueKey('conversation-${conversation.id}'),
-                    itemId: conversation.id,
-                    controller: _swipeController,
-                    pinned: conversation.pinned,
-                    canDelete: conversation.canDeleteFromList,
-                    onPin: () => _setPinned(conversation, !conversation.pinned),
-                    onDelete: () => _deleteConversation(conversation),
-                    child: Container(
-                      decoration: BoxDecoration(
-                        color: Colors.white,
-                        borderRadius: BorderRadius.circular(8),
-                      ),
-                      child: ListTile(
-                        contentPadding: const EdgeInsets.symmetric(
-                          horizontal: 16,
-                          vertical: 4,
-                        ),
-                        leading: Stack(
-                          clipBehavior: Clip.none,
-                          children: [
-                            _ConversationAvatar(conversation: conversation),
-                            if (conversation.shouldShowUnreadBadge)
-                              Positioned(
-                                right: -7,
-                                top: -7,
-                                child: _UnreadBadge(
-                                  count: conversation.unreadCount,
-                                  muted: conversation.muted,
-                                ),
-                              ),
-                          ],
-                        ),
-                        title: Row(
-                          children: [
-                            Flexible(
-                              child: Text(
-                                conversation.title,
-                                maxLines: 1,
-                                overflow: TextOverflow.ellipsis,
-                              ),
+                  ),
+                ),
+              ),
+            ),
+          ),
+        ),
+        Expanded(
+          child: IndexedStack(
+            index: _showMoments ? 0 : 1,
+            children: [
+              MomentsPane(
+                key: const ValueKey('shop-moment-pane'),
+                initialRelatedUnread: _relatedMomentUnread,
+                active: _showMoments,
+                onUnreadChanged: (count) {
+                  if (mounted) setState(() => _relatedMomentUnread = count);
+                },
+                onHeaderCollapseChanged: _handleMomentHeaderCollapse,
+                headerCollapseExtent: 60,
+              ),
+              RefreshIndicator(
+                onRefresh: _reload,
+                child: FutureBuilder<List<ChatConversation>>(
+                  future: _future,
+                  builder: (context, snapshot) {
+                    if (snapshot.connectionState != ConnectionState.done &&
+                        _cachedConversations == null) {
+                      return const _ChatListSkeleton();
+                    }
+                    if (snapshot.hasError && _cachedConversations == null) {
+                      return ListView(
+                        children: [
+                          const SizedBox(height: 180),
+                          Center(
+                            child: TextButton(
+                              onPressed: _reload,
+                              child: const Text('聊天加载失败，点击重试'),
                             ),
-                            if (conversation.pinned) ...[
-                              const SizedBox(width: 5),
-                              const Icon(
-                                Icons.push_pin,
-                                size: 14,
-                                color: Colors.grey,
-                              ),
-                            ],
-                            if (!conversation.isDirect) ...[
-                              const SizedBox(width: 6),
-                              Container(
-                                padding: const EdgeInsets.symmetric(
-                                  horizontal: 5,
-                                  vertical: 2,
-                                ),
-                                decoration: BoxDecoration(
-                                  color: const Color(0xFFFFE8CF),
-                                  borderRadius: BorderRadius.circular(4),
-                                ),
-                                child: const Text(
-                                  '群聊',
-                                  style: TextStyle(
-                                    fontSize: 10,
-                                    color: Color(0xFFB76512),
+                          ),
+                        ],
+                      );
+                    }
+                    final conversations = sortChatConversations(
+                      _cachedConversations ??
+                          snapshot.data ??
+                          const <ChatConversation>[],
+                    );
+                    if (conversations.isEmpty) {
+                      return ListView(
+                        children: const [
+                          SizedBox(height: 180),
+                          Center(child: Text('暂无聊天')),
+                        ],
+                      );
+                    }
+                    return ListView.separated(
+                      padding: const EdgeInsets.all(12),
+                      itemCount: conversations.length,
+                      separatorBuilder: (_, _) => const SizedBox(height: 8),
+                      itemBuilder: (context, index) {
+                        final conversation = conversations[index];
+                        final showPinnedHeader =
+                            index == 0 && conversation.pinned;
+                        final showOthersHeader =
+                            !conversation.pinned &&
+                            (index == 0 || conversations[index - 1].pinned);
+                        return Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            if (showPinnedHeader || showOthersHeader)
+                              Padding(
+                                padding: const EdgeInsets.fromLTRB(4, 4, 4, 8),
+                                child: Text(
+                                  showPinnedHeader ? '置顶聊天' : '全部聊天',
+                                  style: const TextStyle(
+                                    color: Colors.grey,
+                                    fontSize: 12,
+                                    fontWeight: FontWeight.w600,
                                   ),
                                 ),
                               ),
-                            ],
-                          ],
-                        ),
-                        subtitle: Text(
-                          conversation.isActive
-                              ? ((conversation.lastMessageContent ?? '').isEmpty
-                                    ? (conversation.isDirect ? '私聊' : '家庭群聊')
-                                    : conversation.lastMessageContent!)
-                              : '已解散，历史消息仍可查看',
-                          maxLines: 1,
-                          overflow: TextOverflow.ellipsis,
-                        ),
-                        trailing: SizedBox(
-                          width: 58,
-                          child: Column(
-                            mainAxisAlignment: MainAxisAlignment.center,
-                            crossAxisAlignment: CrossAxisAlignment.end,
-                            children: [
-                              _ConversationTime(
-                                value: conversation.lastMessageAt,
+                            ConversationSwipeTile(
+                              key: ValueKey('conversation-${conversation.id}'),
+                              itemId: conversation.id,
+                              controller: _swipeController,
+                              pinned: conversation.pinned,
+                              canDelete: conversation.canDeleteFromList,
+                              onPin: () => _setPinned(
+                                conversation,
+                                !conversation.pinned,
                               ),
-                            ],
-                          ),
-                        ),
-                        onTap: () async {
-                          _markReadLocally(conversation.id);
-                          await Navigator.of(context).push(
-                            MaterialPageRoute(
-                              builder: (_) =>
-                                  ChatDetailPage(conversation: conversation),
+                              onDelete: () => _deleteConversation(conversation),
+                              child: Container(
+                                decoration: BoxDecoration(
+                                  color: Colors.white,
+                                  borderRadius: BorderRadius.circular(8),
+                                ),
+                                child: ListTile(
+                                  contentPadding: const EdgeInsets.symmetric(
+                                    horizontal: 16,
+                                    vertical: 4,
+                                  ),
+                                  leading: Stack(
+                                    clipBehavior: Clip.none,
+                                    children: [
+                                      _ConversationAvatar(
+                                        conversation: conversation,
+                                      ),
+                                      if (conversation.shouldShowUnreadBadge)
+                                        Positioned(
+                                          right: -7,
+                                          top: -7,
+                                          child: _UnreadBadge(
+                                            count: conversation.unreadCount,
+                                            muted: conversation.muted,
+                                          ),
+                                        ),
+                                    ],
+                                  ),
+                                  title: Row(
+                                    children: [
+                                      Flexible(
+                                        child: Text(
+                                          conversation.title,
+                                          maxLines: 1,
+                                          overflow: TextOverflow.ellipsis,
+                                        ),
+                                      ),
+                                      if (conversation.pinned) ...[
+                                        const SizedBox(width: 5),
+                                        const Icon(
+                                          Icons.push_pin,
+                                          size: 14,
+                                          color: Colors.grey,
+                                        ),
+                                      ],
+                                      if (!conversation.isDirect) ...[
+                                        const SizedBox(width: 6),
+                                        Container(
+                                          padding: const EdgeInsets.symmetric(
+                                            horizontal: 5,
+                                            vertical: 2,
+                                          ),
+                                          decoration: BoxDecoration(
+                                            color: const Color(0xFFFFE8CF),
+                                            borderRadius: BorderRadius.circular(
+                                              4,
+                                            ),
+                                          ),
+                                          child: const Text(
+                                            '群聊',
+                                            style: TextStyle(
+                                              fontSize: 10,
+                                              color: Color(0xFFB76512),
+                                            ),
+                                          ),
+                                        ),
+                                      ],
+                                    ],
+                                  ),
+                                  subtitle: Text(
+                                    conversation.isActive
+                                        ? ((conversation.lastMessageContent ??
+                                                      '')
+                                                  .isEmpty
+                                              ? (conversation.isDirect
+                                                    ? '私聊'
+                                                    : '家庭群聊')
+                                              : conversation
+                                                    .lastMessageContent!)
+                                        : '已解散，历史消息仍可查看',
+                                    maxLines: 1,
+                                    overflow: TextOverflow.ellipsis,
+                                  ),
+                                  trailing: SizedBox(
+                                    width: 58,
+                                    child: Column(
+                                      mainAxisAlignment:
+                                          MainAxisAlignment.center,
+                                      crossAxisAlignment:
+                                          CrossAxisAlignment.end,
+                                      children: [
+                                        _ConversationTime(
+                                          value: conversation.lastMessageAt,
+                                        ),
+                                      ],
+                                    ),
+                                  ),
+                                  onTap: () async {
+                                    _markReadLocally(conversation.id);
+                                    await Navigator.of(context).push(
+                                      MaterialPageRoute(
+                                        builder: (_) => ChatDetailPage(
+                                          conversation: conversation,
+                                        ),
+                                      ),
+                                    );
+                                    await _reload();
+                                  },
+                                ),
+                              ),
                             ),
-                          );
-                          await _reload();
-                        },
-                      ),
-                    ),
-                  ),
+                          ],
+                        );
+                      },
+                    );
+                  },
+                ),
+              ),
+            ],
+          ),
+        ),
+      ],
+    ),
+  );
+}
+
+class _TopSectionButton extends StatelessWidget {
+  const _TopSectionButton({
+    required this.text,
+    required this.selected,
+    required this.count,
+    required this.onTap,
+  });
+  final String text;
+  final bool selected;
+  final int count;
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) => InkWell(
+    borderRadius: BorderRadius.circular(6),
+    onTap: onTap,
+    child: Stack(
+      clipBehavior: Clip.none,
+      children: [
+        Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 7, vertical: 5),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              AnimatedDefaultTextStyle(
+                duration: const Duration(milliseconds: 180),
+                curve: Curves.easeOutCubic,
+                style: TextStyle(
+                  fontSize: 20,
+                  height: 1.15,
+                  fontWeight: selected ? FontWeight.w800 : FontWeight.w500,
+                  color: selected
+                      ? const Color(0xFF202124)
+                      : const Color(0xFF8A8F98),
+                ),
+                child: Text(text),
+              ),
+              const SizedBox(height: 5),
+              AnimatedContainer(
+                duration: const Duration(milliseconds: 180),
+                curve: Curves.easeOutCubic,
+                width: selected ? 22 : 0,
+                height: 3,
+                decoration: BoxDecoration(
+                  color: const Color(0xFFF28C28),
+                  borderRadius: BorderRadius.circular(2),
+                ),
+              ),
+            ],
+          ),
+        ),
+        if (count > 0)
+          Positioned(right: -3, top: -2, child: _UnreadBadge(count: count)),
+      ],
+    ),
+  );
+}
+
+class _ChatListSkeleton extends StatelessWidget {
+  const _ChatListSkeleton();
+
+  @override
+  Widget build(BuildContext context) => ListView.separated(
+    padding: const EdgeInsets.all(12),
+    itemCount: 7,
+    separatorBuilder: (_, _) => const SizedBox(height: 8),
+    itemBuilder: (_, _) => const DecoratedBox(
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.all(Radius.circular(8)),
+      ),
+      child: Padding(
+        padding: EdgeInsets.all(14),
+        child: Row(
+          children: [
+            SkeletonBox(
+              width: 48,
+              height: 48,
+              borderRadius: BorderRadius.all(Radius.circular(24)),
+            ),
+            SizedBox(width: 12),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  SkeletonBox(width: 104, height: 14),
+                  SizedBox(height: 10),
+                  SkeletonBox(width: double.infinity, height: 12),
                 ],
-              );
-            },
-          );
-        },
+              ),
+            ),
+          ],
+        ),
       ),
     ),
   );

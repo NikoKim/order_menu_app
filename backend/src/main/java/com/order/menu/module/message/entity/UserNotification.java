@@ -16,6 +16,7 @@ public class UserNotification {
     private String title;
     private String content;
     private String payload;
+    private String dedupeKey;
     private LocalDateTime readAt;
     private LocalDateTime createdAt;
 }

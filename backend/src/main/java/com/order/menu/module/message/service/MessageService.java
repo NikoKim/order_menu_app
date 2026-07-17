@@ -34,6 +34,8 @@ import com.order.menu.module.order.mapper.OrderMapper;
 import com.order.menu.module.order.mapper.OrderItemMapper;
 import com.order.menu.module.user.entity.User;
 import com.order.menu.module.user.mapper.UserMapper;
+import com.order.menu.module.moment.entity.Moment;
+import com.order.menu.module.moment.entity.MomentComment;
 import com.order.menu.websocket.WsPushService;
 import java.time.LocalDateTime;
 import java.time.ZoneId;
@@ -129,6 +131,70 @@ public class MessageService {
             afterCommit(() -> mobilePushService.dispatch(userId, title, content, payload));
         }
         return toNotificationResponse(notification);
+    }
+
+    @Transactional
+    public MessageDtos.NotificationResponse upsertNotification(Long userId, String type, String title,
+                                                                 String content, String payload, String dedupeKey) {
+        if (!StringUtils.hasText(dedupeKey)) return createNotification(userId, type, title, content, payload);
+        UserNotification notification = userNotificationMapper.selectOne(new LambdaQueryWrapper<UserNotification>()
+                .eq(UserNotification::getUserId, userId).eq(UserNotification::getDedupeKey, dedupeKey));
+        boolean created = false;
+        if (notification == null) {
+            UserNotification candidate = new UserNotification();
+            candidate.setUserId(userId);
+            candidate.setDedupeKey(dedupeKey);
+            candidate.setReadAt(null);
+            applyNotificationContent(candidate, type, title, content, payload);
+            try {
+                userNotificationMapper.insert(candidate);
+                notification = candidate;
+                created = true;
+            } catch (DuplicateKeyException duplicateKeyException) {
+                notification = userNotificationMapper.selectByUserAndDedupeKeyForUpdate(userId, dedupeKey);
+                if (notification == null) throw duplicateKeyException;
+                applyNotificationContent(notification, type, title, content, payload);
+                userNotificationMapper.updateById(notification);
+            }
+        } else {
+            applyNotificationContent(notification, type, title, content, payload);
+            userNotificationMapper.updateById(notification);
+        }
+        if (created) {
+            Map<String, Object> pushData = new java.util.HashMap<>();
+            if (notification.getId() != null) pushData.put("notificationId", notification.getId());
+            pushData.put("unreadCount", unreadCount(userId));
+            wsPushService.pushToUser(userId, "NOTIFICATION", "CREATED", pushData);
+            if (mobilePushService != null) {
+                UserNotification pushed = notification;
+                afterCommit(() -> mobilePushService.dispatch(userId, title, content, pushed.getPayload()));
+            }
+        }
+        return toNotificationResponse(notification);
+    }
+
+    private void applyNotificationContent(UserNotification notification, String type, String title,
+                                          String content, String payload) {
+        notification.setType(type);
+        notification.setTitle(title);
+        notification.setContent(content);
+        notification.setPayload(payload);
+        notification.setCreatedAt(LocalDateTime.now());
+    }
+
+    @Transactional
+    public void updateExistingNotificationByDedupe(Long userId, String type, String title,
+                                                    String content, String payload, String dedupeKey) {
+        if (!StringUtils.hasText(dedupeKey)) return;
+        UserNotification notification = userNotificationMapper.selectOne(new LambdaQueryWrapper<UserNotification>()
+                .eq(UserNotification::getUserId, userId).eq(UserNotification::getDedupeKey, dedupeKey));
+        if (notification == null) return;
+        notification.setType(type);
+        notification.setTitle(title);
+        notification.setContent(content);
+        notification.setPayload(payload);
+        notification.setCreatedAt(LocalDateTime.now());
+        userNotificationMapper.updateById(notification);
     }
 
     @Transactional
@@ -568,6 +634,39 @@ public class MessageService {
         message.setSharedShopLogoUrl(shop.getCoverImageUrl());
         message.setSharedShopDescription(shop.getDescription());
         applyQuote(message, request.quotedMessageId(), conversation.getId());
+        conversation = prepareCreatedMessage(conversation, userId, failed);
+        message.setCreatedAt(LocalDateTime.now());
+        chatMessageMapper.insert(message);
+        finishCreatedMessage(conversation, message, userId, failed);
+        return toMessageResponse(message);
+    }
+
+    @Transactional
+    public MessageDtos.ChatMessageResponse shareMoment(Long userId, Long conversationId, Moment moment,
+                                                        MomentComment comment, String authorName, String coverUrl) {
+        if (conversationId == null || moment == null) {
+            throw new BusinessException(ErrorCode.BAD_REQUEST, "请选择会话和动态");
+        }
+        Conversation conversation = requireConversationMember(userId, conversationId);
+        requireActiveConversation(conversation);
+        boolean failed = directDeliveryFailed(conversation, userId);
+        ChatMessage message = new ChatMessage();
+        message.setConversationId(conversation.getId());
+        message.setSenderUserId(userId);
+        message.setType(comment == null ? "MOMENT_SHARE" : "MOMENT_COMMENT_SHARE");
+        message.setDeliveryStatus(failed ? FAILED_BLOCKED : DELIVERED);
+        message.setDeliveryFailureReason(failed ? BLOCKED_MESSAGE : null);
+        message.setSharedMomentId(moment.getId());
+        message.setSharedMomentCommentId(comment == null ? null : comment.getId());
+        message.setSharedMomentTitle(moment.getTitle());
+        message.setSharedMomentContent(moment.getContent());
+        message.setSharedMomentPreview(message.getSharedMomentContent());
+        message.setSharedCommentPreview(comment == null ? null : comment.getContent());
+        message.setSharedMomentAuthorName(authorName);
+        User momentAuthor = userMapper.selectById(moment.getAuthorUserId());
+        message.setSharedMomentAuthorAvatar(momentAuthor == null ? null : momentAuthor.getAvatarUrl());
+        message.setSharedMomentCoverUrl(coverUrl);
+        message.setSharedCardIcon(comment == null ? "MOMENT" : "COMMENT");
         conversation = prepareCreatedMessage(conversation, userId, failed);
         message.setCreatedAt(LocalDateTime.now());
         chatMessageMapper.insert(message);
@@ -1316,6 +1415,8 @@ public class MessageService {
                 (StringUtils.hasText(quoted.getOrderNo()) ? quoted.getOrderNo() : "分享");
         if ("IMAGE_SHARE".equals(quoted.getType())) return "[图片]";
         if ("SHOP_SHARE".equals(quoted.getType())) return "[店铺] " + quoted.getSharedShopName();
+        if ("MOMENT_SHARE".equals(quoted.getType())) return "[动态] " + quoted.getSharedMomentTitle();
+        if ("MOMENT_COMMENT_SHARE".equals(quoted.getType())) return "[动态评论] " + quoted.getSharedMomentTitle();
         return quoted.getContent();
     }
 
@@ -1382,7 +1483,10 @@ public class MessageService {
                 message.getOrderTotalAmount(), message.getOrderRemark(),
                 imageUrlIfActive(message), message.getImageExpiresAt(), imageExpired(message),
                 message.getSharedShopId(), message.getSharedShopName(), message.getSharedShopLogoUrl(),
-                message.getSharedShopDescription());
+                message.getSharedShopDescription(), message.getSharedMomentId(), message.getSharedMomentCommentId(),
+                message.getSharedMomentTitle(), message.getSharedMomentContent(), message.getSharedMomentPreview(),
+                message.getSharedCommentPreview(), message.getSharedMomentAuthorName(),
+                message.getSharedMomentAuthorAvatar(), message.getSharedMomentCoverUrl(), message.getSharedCardIcon());
     }
 
     private String displayName(Long userId) {
@@ -1629,12 +1733,7 @@ public class MessageService {
                         || (message.getId() != null && message.getId() > viewer.getLastReadMessageId()))
                 .count();
         String lastContent = latest == null ? null : (latest.getRecalledAt() != null
-                ? "撤回了一条消息" : ("DISH_SHARE".equals(latest.getType())
-                ? "[菜品] " + latest.getDishName() : ("ORDER_SHARE".equals(latest.getType())
-                ? "[订单] " + (StringUtils.hasText(latest.getOrderNo()) ? latest.getOrderNo() : "订单分享")
-                : ("IMAGE_SHARE".equals(latest.getType()) ? "[图片]"
-                : ("SHOP_SHARE".equals(latest.getType()) ? "[店铺] " + latest.getSharedShopName()
-                : latest.getContent())))));
+                ? "撤回了一条消息" : messagePreview(latest));
         boolean muted = viewer != null && Boolean.TRUE.equals(viewer.getMuted());
         boolean pinned = viewer != null && viewer.getPinnedAt() != null;
         boolean hidden = viewer != null && viewer.getHiddenAt() != null;
@@ -1709,7 +1808,10 @@ public class MessageService {
                 message.getDeliveryFailureReason(),
                 imageUrlIfActive(message), message.getImageExpiresAt(), imageExpired(message),
                 message.getSharedShopId(), message.getSharedShopName(), message.getSharedShopLogoUrl(),
-                message.getSharedShopDescription(), essence != null,
+                message.getSharedShopDescription(), message.getSharedMomentId(), message.getSharedMomentCommentId(),
+                message.getSharedMomentTitle(), message.getSharedMomentContent(),
+                message.getSharedMomentPreview(), message.getSharedCommentPreview(), message.getSharedMomentAuthorName(),
+                message.getSharedMomentAuthorAvatar(), message.getSharedMomentCoverUrl(), message.getSharedCardIcon(), essence != null,
                 essence != null && essence.getPinnedAt() != null, essenceLikes,
                 message.getRecalledAt(), message.getCreatedAt());
     }
@@ -1774,11 +1876,21 @@ public class MessageService {
     }
 
     private String notificationPreview(ChatMessage message) {
+        return messagePreview(message);
+    }
+
+    private String messagePreview(ChatMessage message) {
+        if (!StringUtils.hasText(message.getType())) {
+            return StringUtils.hasText(message.getContent()) ? message.getContent() : "您有一条新消息";
+        }
         return switch (message.getType()) {
             case "IMAGE_SHARE" -> "[图片]";
             case "DISH_SHARE" -> "[菜品] " + message.getDishName();
-            case "ORDER_SHARE" -> "[订单]";
+            case "ORDER_SHARE" -> "[订单] "
+                    + (StringUtils.hasText(message.getOrderNo()) ? message.getOrderNo() : "订单分享");
             case "SHOP_SHARE" -> "[店铺] " + message.getSharedShopName();
+            case "MOMENT_SHARE" -> "[动态] " + message.getSharedMomentTitle();
+            case "MOMENT_COMMENT_SHARE" -> "[动态评论] " + message.getSharedMomentTitle();
             default -> StringUtils.hasText(message.getContent()) ? message.getContent() : "您有一条新消息";
         };
     }

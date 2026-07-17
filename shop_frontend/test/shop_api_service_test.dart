@@ -193,4 +193,50 @@ void main() {
 
     await service.unregisterPushDevice('token/with space');
   });
+
+  test('topic search requests a real ten-item page', () async {
+    final service = ShopApiService(
+      baseUrl: 'http://example.test/api',
+      token: 'token-1',
+      client: MockClient((request) async {
+        expect(request.method, 'GET');
+        expect(request.url.path, '/api/moments/topics');
+        expect(request.url.queryParameters, {
+          'page': '2',
+          'pageSize': '10',
+          'query': '新品',
+        });
+        return http.Response(
+          jsonEncode({
+            'code': 0,
+            'data': {
+              'records': List.generate(
+                10,
+                (index) => {
+                  'id': index + 1,
+                  'name': '话题$index',
+                  'userCount': index + 2,
+                  'momentCount': index + 3,
+                },
+              ),
+              'page': 2,
+              'pageSize': 10,
+              'total': 25,
+              'hasMore': true,
+            },
+          }),
+          200,
+          headers: {'content-type': 'application/json'},
+        );
+      }),
+    );
+
+    final result = await service.fetchMomentTopics(keyword: '新品', page: 1);
+
+    expect(result.items, hasLength(10));
+    expect(result.total, 25);
+    expect(result.hasMore, isTrue);
+    expect(result.items.first.userCount, 2);
+    expect(result.items.first.momentCount, 3);
+  });
 }

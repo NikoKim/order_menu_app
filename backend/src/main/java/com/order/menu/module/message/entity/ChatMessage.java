@@ -41,6 +41,16 @@ public class ChatMessage {
     private String sharedShopName;
     private String sharedShopLogoUrl;
     private String sharedShopDescription;
+    private Long sharedMomentId;
+    private Long sharedMomentCommentId;
+    private String sharedMomentTitle;
+    private String sharedMomentContent;
+    private String sharedMomentPreview;
+    private String sharedCommentPreview;
+    private String sharedMomentAuthorName;
+    private String sharedMomentAuthorAvatar;
+    private String sharedMomentCoverUrl;
+    private String sharedCardIcon;
     private Long quotedMessageId;
     private String quotedType;
     private String quotedContent;

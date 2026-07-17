@@ -13,14 +13,17 @@ import '../services/shop_api_service.dart';
 import '../services/websocket_service.dart';
 import '../services/latest_request.dart';
 import '../widgets/app_notice.dart';
+import '../widgets/moment_image_viewer.dart';
+import '../widgets/skeleton_box.dart';
 import 'family_group_management_page.dart';
 import 'chat_user_detail_page.dart';
 import 'chat_essence_page.dart';
+import 'moment_pages.dart';
 
 int chatVisualIndexFromChronologicalIndex(
-    int chronologicalIndex,
-    int messageCount,
-    ) {
+  int chronologicalIndex,
+  int messageCount,
+) {
   assert(messageCount > 0);
   assert(chronologicalIndex >= 0 && chronologicalIndex < messageCount);
   return messageCount - 1 - chronologicalIndex;
@@ -28,31 +31,133 @@ int chatVisualIndexFromChronologicalIndex(
 
 bool chatImageUsesBubble(ChatMessage message) =>
     message.content.trim().isNotEmpty ||
-        message.quotedMessageId != null ||
-        message.imageExpired ||
-        (message.imageUrl ?? '').isEmpty;
+    message.quotedMessageId != null ||
+    message.imageExpired ||
+    (message.imageUrl ?? '').isEmpty;
 
 bool chatVisualIndexIsVisible(
-    int visualIndex,
-    Iterable<ItemPosition> positions,
-    ) => positions.any(
-      (position) =>
-  position.index == visualIndex &&
+  int visualIndex,
+  Iterable<ItemPosition> positions,
+) => positions.any(
+  (position) =>
+      position.index == visualIndex &&
       position.itemTrailingEdge > 0 &&
       position.itemLeadingEdge < 1,
 );
 
 const chatEmojiChoices = <String>[
-  '😀','😁','😂','🤣','😃','😄','😅','😆','😊','🙂','🙃','😉',
-  '😍','🥰','😘','😋','😎','🤩','🥳','🤗','🤭','🤔','🫡','🤐',
-  '😴','😪','😢','😭','😤','😡','😱','😇','👍','👎','👌','✌️',
-  '🤞','🤟','🤝','👏','🙌','🙏','💪','👊','👋','🫶','❤️','🧡',
-  '💛','💚','💙','💜','🤍','💯','✨','🔥','⭐','🌟','💡','🎉',
-  '🎊','🎁','🎂','🌹','💐','🌈','☀️','🌙','☁️','❄️','⚡','☔',
-  '🍚','🍜','🥟','🍲','🍔','🍟','🍕','🥗','🍣','🍱','🍰','🍦',
-  '🍭','☕','🥤','🧋','🍎','🍓','🍉','🍇','🥭','🍊','🍌','🥝',
-  '✅','❌','❓','❗','⚠️','📍','📌','💬','📷','🎵','🏠','🏪',
-  '🚗','🚀','⏰','💰',
+  '😀',
+  '😁',
+  '😂',
+  '🤣',
+  '😃',
+  '😄',
+  '😅',
+  '😆',
+  '😊',
+  '🙂',
+  '🙃',
+  '😉',
+  '😍',
+  '🥰',
+  '😘',
+  '😋',
+  '😎',
+  '🤩',
+  '🥳',
+  '🤗',
+  '🤭',
+  '🤔',
+  '🫡',
+  '🤐',
+  '😴',
+  '😪',
+  '😢',
+  '😭',
+  '😤',
+  '😡',
+  '😱',
+  '😇',
+  '👍',
+  '👎',
+  '👌',
+  '✌️',
+  '🤞',
+  '🤟',
+  '🤝',
+  '👏',
+  '🙌',
+  '🙏',
+  '💪',
+  '👊',
+  '👋',
+  '🫶',
+  '❤️',
+  '🧡',
+  '💛',
+  '💚',
+  '💙',
+  '💜',
+  '🤍',
+  '💯',
+  '✨',
+  '🔥',
+  '⭐',
+  '🌟',
+  '💡',
+  '🎉',
+  '🎊',
+  '🎁',
+  '🎂',
+  '🌹',
+  '💐',
+  '🌈',
+  '☀️',
+  '🌙',
+  '☁️',
+  '❄️',
+  '⚡',
+  '☔',
+  '🍚',
+  '🍜',
+  '🥟',
+  '🍲',
+  '🍔',
+  '🍟',
+  '🍕',
+  '🥗',
+  '🍣',
+  '🍱',
+  '🍰',
+  '🍦',
+  '🍭',
+  '☕',
+  '🥤',
+  '🧋',
+  '🍎',
+  '🍓',
+  '🍉',
+  '🍇',
+  '🥭',
+  '🍊',
+  '🍌',
+  '🥝',
+  '✅',
+  '❌',
+  '❓',
+  '❗',
+  '⚠️',
+  '📍',
+  '📌',
+  '💬',
+  '📷',
+  '🎵',
+  '🏠',
+  '🏪',
+  '🚗',
+  '🚀',
+  '⏰',
+  '💰',
 ];
 
 class ChatScrollCoordinator {
@@ -67,7 +172,7 @@ class ChatScrollCoordinator {
     final shouldScroll = !_hasObservedLatest
         ? messageId != null
         : messageId != null &&
-        (_latestMessageId == null || messageId > _latestMessageId!);
+              (_latestMessageId == null || messageId > _latestMessageId!);
     _hasObservedLatest = true;
     _latestMessageId = messageId;
     return shouldScroll;
@@ -166,22 +271,22 @@ class _ChatDetailPageState extends State<ChatDetailPage>
     _subscription = ShopWebSocketService.instance
         .streamForModule('CHAT')
         .listen((event) {
-      final id = int.tryParse(
-        '${event.data['conversationId'] ?? event.data['id'] ?? ''}',
-      );
-      if ({
-        'MESSAGE_CREATED',
-        'MESSAGE_UPDATED',
-        'MESSAGE_DELETED',
-      }.contains(event.action) &&
-          id == widget.conversation.id) {
-        _reload();
-      }
-      if (event.action.startsWith('ESSENCE_') &&
-          id == widget.conversation.id) {
-        _loadLatestEssence();
-      }
-    });
+          final id = int.tryParse(
+            '${event.data['conversationId'] ?? event.data['id'] ?? ''}',
+          );
+          if ({
+                'MESSAGE_CREATED',
+                'MESSAGE_UPDATED',
+                'MESSAGE_DELETED',
+              }.contains(event.action) &&
+              id == widget.conversation.id) {
+            _reload();
+          }
+          if (event.action.startsWith('ESSENCE_') &&
+              id == widget.conversation.id) {
+            _loadLatestEssence();
+          }
+        });
     _connectionSubscription = ShopWebSocketService.instance.connectionStream
         .where((connected) => connected)
         .listen((_) => _reload());
@@ -206,9 +311,9 @@ class _ChatDetailPageState extends State<ChatDetailPage>
     final groupFuture = widget.conversation.isDirect
         ? Future<FamilyGroup?>.value(null)
         : shopApi
-        .fetchFamilyGroup(widget.conversation.id)
-        .then<FamilyGroup?>((value) => value)
-        .catchError((_) => null);
+              .fetchFamilyGroup(widget.conversation.id)
+              .then<FamilyGroup?>((value) => value)
+              .catchError((_) => null);
     try {
       final data = _ChatDetailData(
         messages: await messagesFuture,
@@ -250,16 +355,16 @@ class _ChatDetailPageState extends State<ChatDetailPage>
     try {
       final sent = _pendingImagePath == null
           ? await shopApi.sendChatMessage(
-        widget.conversation.id,
-        content,
-        quotedMessageId: _quotedMessage?.id,
-      )
+              widget.conversation.id,
+              content,
+              quotedMessageId: _quotedMessage?.id,
+            )
           : await shopApi.sendChatImage(
-        widget.conversation.id,
-        _pendingImagePath!,
-        content: content,
-        quotedMessageId: _quotedMessage?.id,
-      );
+              widget.conversation.id,
+              _pendingImagePath!,
+              content: content,
+              quotedMessageId: _quotedMessage?.id,
+            );
       _input.clear();
       _quotedMessage = null;
       _pendingImagePath = null;
@@ -267,7 +372,7 @@ class _ChatDetailPageState extends State<ChatDetailPage>
       if (cached != null && mounted) {
         _messageRequests.begin();
         final messages =
-        cached.messages.messages.any((message) => message.id == sent.id)
+            cached.messages.messages.any((message) => message.id == sent.id)
             ? cached.messages.messages
             : [...cached.messages.messages, sent];
         final updated = _ChatDetailData(
@@ -375,11 +480,11 @@ class _ChatDetailPageState extends State<ChatDetailPage>
   }
 
   Future<void> _messageActions(
-      ChatMessage message,
-      bool mine,
-      Offset position, {
-        required bool canManageEssence,
-      }) async {
+    ChatMessage message,
+    bool mine,
+    Offset position, {
+    required bool canManageEssence,
+  }) async {
     final action = await _showActionOverlay(
       position,
       mine: mine,
@@ -412,12 +517,12 @@ class _ChatDetailPageState extends State<ChatDetailPage>
   }
 
   Future<String?> _showActionOverlay(
-      Offset position, {
-        required bool mine,
-        required bool recalled,
-        required bool canManageEssence,
-        required bool isEssence,
-      }) {
+    Offset position, {
+    required bool mine,
+    required bool recalled,
+    required bool canManageEssence,
+    required bool isEssence,
+  }) {
     final completer = Completer<String?>();
     final overlay = Overlay.of(context, rootOverlay: true);
     _actionOverlay?.remove();
@@ -512,27 +617,27 @@ class _ChatDetailPageState extends State<ChatDetailPage>
       if (userId == null) return;
       Navigator.of(context)
           .push(
-        MaterialPageRoute(
-          builder: (_) => ChatUserDetailPage(
-            userId: userId,
-            nickname: widget.conversation.directUserNickname ?? '用户',
-            avatarUrl: widget.conversation.directUserAvatarUrl,
-            conversationId: widget.conversation.id,
-            initialMuted: widget.conversation.muted,
-          ),
-        ),
-      )
+            MaterialPageRoute(
+              builder: (_) => ChatUserDetailPage(
+                userId: userId,
+                nickname: widget.conversation.directUserNickname ?? '用户',
+                avatarUrl: widget.conversation.directUserAvatarUrl,
+                conversationId: widget.conversation.id,
+                initialMuted: widget.conversation.muted,
+              ),
+            ),
+          )
           .then((_) => _loadBlockState());
       return;
     }
     Navigator.of(context)
         .push(
-      MaterialPageRoute(
-        builder: (_) => FamilyGroupManagementPage(
-          conversationId: widget.conversation.id,
-        ),
-      ),
-    )
+          MaterialPageRoute(
+            builder: (_) => FamilyGroupManagementPage(
+              conversationId: widget.conversation.id,
+            ),
+          ),
+        )
         .then((_) => _reload());
   }
 
@@ -549,6 +654,13 @@ class _ChatDetailPageState extends State<ChatDetailPage>
     _input.dispose();
     _inputFocus.dispose();
     super.dispose();
+  }
+
+  void _dismissComposerInput() {
+    FocusManager.instance.primaryFocus?.unfocus();
+    if (_showEmoji && mounted) {
+      setState(() => _showEmoji = false);
+    }
   }
 
   void _scheduleScrollToBottom({required bool animate}) {
@@ -579,7 +691,10 @@ class _ChatDetailPageState extends State<ChatDetailPage>
     backgroundColor: Colors.white,
     resizeToAvoidBottomInset: true,
     appBar: AppBar(
-      title: Text(widget.conversation.title, style: const TextStyle(fontWeight: FontWeight.w700)),
+      title: Text(
+        widget.conversation.title,
+        style: const TextStyle(fontWeight: FontWeight.w700),
+      ),
       backgroundColor: Colors.white,
       foregroundColor: const Color(0xFF242424),
       elevation: 0,
@@ -618,7 +733,7 @@ class _ChatDetailPageState extends State<ChatDetailPage>
       builder: (context, snapshot) {
         if (snapshot.connectionState != ConnectionState.done &&
             _cachedData == null)
-          return const Center(child: CircularProgressIndicator());
+          return const _ChatDetailSkeleton();
         if (snapshot.hasError && _cachedData == null) {
           return Center(
             child: TextButton(
@@ -680,7 +795,10 @@ class _ChatDetailPageState extends State<ChatDetailPage>
                 actions: [],
               ),
             Expanded(
-              child: _MessageList(
+              child: Listener(
+                behavior: HitTestBehavior.translucent,
+                onPointerDown: (_) => _dismissComposerInput(),
+                child: _MessageList(
                 messages: data.messages.messages,
                 currentUser: data.currentUser,
                 conversation: conversation,
@@ -693,18 +811,19 @@ class _ChatDetailPageState extends State<ChatDetailPage>
                   mine,
                   position,
                   canManageEssence:
-                  !conversation.isDirect &&
+                      !conversation.isDirect &&
                       (data.group?.members.any(
                             (member) =>
-                        member.userId == data.currentUser.id &&
-                            member.role == 'OWNER',
-                      ) ==
+                                member.userId == data.currentUser.id &&
+                                member.role == 'OWNER',
+                          ) ==
                           true),
                 ),
                 onQuoteTap: _jumpToQuote,
                 onReEdit: (message) =>
                     setState(() => _input.text = message.content),
                 highlightedMessageId: _highlightedMessageId,
+              ),
               ),
             ),
             if (_quotedMessage != null)
@@ -740,15 +859,17 @@ class _ChatDetailPageState extends State<ChatDetailPage>
                                 ),
                               )
                             else if (_quotedMessage!.isImage)
-                                _ImageShareCard(message: _quotedMessage!)
-                              else if (_quotedMessage!.isShopShare)
-                                  _ShopShareCard(message: _quotedMessage!)
-                                else
-                                  Text(
-                                    _quotedMessage!.content,
-                                    maxLines: 2,
-                                    overflow: TextOverflow.ellipsis,
-                                  ),
+                              _ImageShareCard(message: _quotedMessage!)
+                            else if (_quotedMessage!.isShopShare)
+                              _ShopShareCard(message: _quotedMessage!)
+                            else if (_quotedMessage!.isMomentShare)
+                              _MomentShareCard(message: _quotedMessage!)
+                            else
+                              Text(
+                                _quotedMessage!.content,
+                                maxLines: 2,
+                                overflow: TextOverflow.ellipsis,
+                              ),
                           ],
                         ),
                       ),
@@ -823,7 +944,7 @@ class _ChatDetailPageState extends State<ChatDetailPage>
                             controller: _input,
                             focusNode: _inputFocus,
                             enabled:
-                            conversation.isActive &&
+                                conversation.isActive &&
                                 _blockState?.blockedByMe != true,
                             maxLines: 4,
                             minLines: 1,
@@ -889,6 +1010,71 @@ class _ChatDetailPageState extends State<ChatDetailPage>
   );
 }
 
+class _ChatDetailSkeleton extends StatelessWidget {
+  const _ChatDetailSkeleton();
+
+  @override
+  Widget build(BuildContext context) => Column(
+    children: [
+      Expanded(
+        child: ListView(
+          reverse: true,
+          padding: const EdgeInsets.fromLTRB(16, 18, 16, 12),
+          children: const [
+            Align(
+              alignment: Alignment.centerRight,
+              child: SkeletonBox(width: 156, height: 46),
+            ),
+            SizedBox(height: 14),
+            Align(
+              alignment: Alignment.centerLeft,
+              child: SkeletonBox(width: 218, height: 64),
+            ),
+            SizedBox(height: 14),
+            Align(
+              alignment: Alignment.centerRight,
+              child: SkeletonBox(width: 192, height: 48),
+            ),
+            SizedBox(height: 14),
+            Align(
+              alignment: Alignment.centerLeft,
+              child: SkeletonBox(width: 132, height: 42),
+            ),
+          ],
+        ),
+      ),
+      const ColoredBox(
+        color: Colors.white,
+        child: SafeArea(
+          top: false,
+          child: Padding(
+            padding: EdgeInsets.all(10),
+            child: Row(
+              children: [
+                SkeletonBox(
+                  width: 36,
+                  height: 36,
+                  borderRadius: BorderRadius.all(Radius.circular(18)),
+                ),
+                SizedBox(width: 8),
+                Expanded(
+                  child: SkeletonBox(width: double.infinity, height: 42),
+                ),
+                SizedBox(width: 8),
+                SkeletonBox(
+                  width: 36,
+                  height: 36,
+                  borderRadius: BorderRadius.all(Radius.circular(18)),
+                ),
+              ],
+            ),
+          ),
+        ),
+      ),
+    ],
+  );
+}
+
 class _ChatDetailData {
   const _ChatDetailData({
     required this.messages,
@@ -934,79 +1120,86 @@ class _MessageList extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     if (messages.isEmpty) return const Center(child: Text('开始聊天吧'));
-    return ScrollablePositionedList.builder(
-      itemScrollController: controller,
-      itemPositionsListener: positionsListener,
-      reverse: true,
-      padding: const EdgeInsets.fromLTRB(12, 16, 12, 8),
-      itemCount: messages.length,
-      itemBuilder: (context, index) {
-        final messageIndex = chatVisualIndexFromChronologicalIndex(
-          index,
-          messages.length,
-        );
-        final message = messages[messageIndex];
-        final previous = messageIndex == 0 ? null : messages[messageIndex - 1];
-        final sentAt = message.sentAt;
-        final previousAt = previous?.sentAt;
-        final isMine = message.senderUserId == currentUser.id;
-        final sender = _senderFor(message, isMine);
-        if (message.isSystem || message.isRecalled) {
-          return Column(
-            children: [
-              if (sentAt != null && shouldShowChatTimestamp(sentAt, previousAt))
-                _Timestamp(value: sentAt),
-              Padding(
-                padding: const EdgeInsets.only(bottom: 12),
-                child: GestureDetector(
-                  onLongPressStart: message.isRecalled
-                      ? (details) =>
-                      onLongPress(message, isMine, details.globalPosition)
-                      : null,
-                  child: InkWell(
-                    onTap: isMine && !message.isSystem && message.type == 'TEXT'
+    return Align(
+      alignment: Alignment.topCenter,
+      child: SizedBox(
+        width: double.infinity,
+        child: ScrollablePositionedList.builder(
+            itemScrollController: controller,
+            itemPositionsListener: positionsListener,
+            reverse: true,
+            shrinkWrap: true,
+            padding: const EdgeInsets.fromLTRB(12, 16, 12, 8),
+            itemCount: messages.length,
+            itemBuilder: (context, index) {
+              final messageIndex = chatVisualIndexFromChronologicalIndex(
+                index,
+                messages.length,
+              );
+              final message = messages[messageIndex];
+              final previous = messageIndex == 0 ? null : messages[messageIndex - 1];
+              final sentAt = message.sentAt;
+              final previousAt = previous?.sentAt;
+              final isMine = message.senderUserId == currentUser.id;
+              final sender = _senderFor(message, isMine);
+              if (message.isSystem || message.isRecalled) {
+                return Column(
+                  children: [
+                    if (sentAt != null && shouldShowChatTimestamp(sentAt, previousAt))
+                      _Timestamp(value: sentAt),
+                    Padding(
+                      padding: const EdgeInsets.only(bottom: 12),
+                      child: GestureDetector(
+                        onLongPressStart: message.isRecalled
+                            ? (details) =>
+                                  onLongPress(message, isMine, details.globalPosition)
+                            : null,
+                        child: InkWell(
+                          onTap: isMine && !message.isSystem && message.type == 'TEXT'
+                              ? () => onReEdit(message)
+                              : null,
+                          child: Text(
+                            message.isRecalled
+                                ? (isMine
+                                      ? '撤回一条消息${message.type == 'TEXT' ? '，重新编辑' : ''}'
+                                      : '${message.senderNickname ?? '对方'}撤回一条消息')
+                                : message.content,
+                            textAlign: TextAlign.center,
+                            style: const TextStyle(fontSize: 12, color: Colors.grey),
+                          ),
+                        ),
+                      ),
+                    ),
+                  ],
+                );
+              }
+              return Column(
+                children: [
+                  if (sentAt != null && shouldShowChatTimestamp(sentAt, previousAt))
+                    _Timestamp(value: sentAt),
+                  _MessageBubble(
+                    message: message,
+                    isMine: isMine,
+                    senderName: conversation.isDirect ? null : sender.name,
+                    avatarUrl: sender.avatarUrl,
+                    onLongPress: (position) => onLongPress(message, isMine, position),
+                    onQuoteTap: message.quotedMessageId == null
+                        ? null
+                        : () => onQuoteTap(message.quotedMessageId!),
+                    onReEdit:
+                        isMine &&
+                            message.isRecalled &&
+                            !message.isDishShare &&
+                            !message.isOrderShare
                         ? () => onReEdit(message)
                         : null,
-                    child: Text(
-                      message.isRecalled
-                          ? (isMine
-                          ? '撤回一条消息${message.type == 'TEXT' ? '，重新编辑' : ''}'
-                          : '${message.senderNickname ?? '对方'}撤回一条消息')
-                          : message.content,
-                      textAlign: TextAlign.center,
-                      style: const TextStyle(fontSize: 12, color: Colors.grey),
-                    ),
+                    highlighted: highlightedMessageId == message.id,
                   ),
-                ),
-              ),
-            ],
-          );
-        }
-        return Column(
-          children: [
-            if (sentAt != null && shouldShowChatTimestamp(sentAt, previousAt))
-              _Timestamp(value: sentAt),
-            _MessageBubble(
-              message: message,
-              isMine: isMine,
-              senderName: conversation.isDirect ? null : sender.name,
-              avatarUrl: sender.avatarUrl,
-              onLongPress: (position) => onLongPress(message, isMine, position),
-              onQuoteTap: message.quotedMessageId == null
-                  ? null
-                  : () => onQuoteTap(message.quotedMessageId!),
-              onReEdit:
-              isMine &&
-                  message.isRecalled &&
-                  !message.isDishShare &&
-                  !message.isOrderShare
-                  ? () => onReEdit(message)
-                  : null,
-              highlighted: highlightedMessageId == message.id,
-            ),
-          ],
-        );
-      },
+                ],
+              );
+            },
+        ),
+      ),
     );
   }
 
@@ -1199,9 +1392,10 @@ class ShopChatMessageContent extends StatelessWidget {
   Widget build(BuildContext context) {
     final card =
         message.isDishShare ||
-            message.isOrderShare ||
-            message.isImage ||
-            message.isShopShare;
+        message.isOrderShare ||
+        message.isImage ||
+        message.isShopShare ||
+        message.isMomentShare;
     final Widget content = message.isDishShare
         ? _DishShareCard(message: message)
         : message.isOrderShare
@@ -1210,12 +1404,14 @@ class ShopChatMessageContent extends StatelessWidget {
         ? _ImageShareCard(message: message, isMine: isMine)
         : message.isShopShare
         ? _ShopShareCard(message: message)
+        : message.isMomentShare
+        ? _MomentShareCard(message: message)
         : Text(
-      message.content,
-      style: TextStyle(
-        color: isMine ? Colors.white : const Color(0xFF242424),
-      ),
-    );
+            message.content,
+            style: TextStyle(
+              color: isMine ? Colors.white : const Color(0xFF242424),
+            ),
+          );
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
@@ -1266,9 +1462,7 @@ class _MessageBubble extends StatelessWidget {
       foregroundImage: hasAvatar
           ? NetworkImage(ApiConfig.resolveImageUrl(avatarUrl!))
           : null,
-      onForegroundImageError: hasAvatar
-          ? (_, _) {}
-          : null,
+      onForegroundImageError: hasAvatar ? (_, _) {} : null,
       child: const Icon(Icons.person_outline, size: 19),
     );
     final bubble = _PressableBubble(
@@ -1278,17 +1472,20 @@ class _MessageBubble extends StatelessWidget {
         constraints: const BoxConstraints(maxWidth: 280),
         child: Container(
           padding:
-          message.isDishShare ||
-              message.isOrderShare ||
-              message.isImage ||
-              message.isShopShare
+              message.isDishShare ||
+                  message.isOrderShare ||
+                  message.isImage ||
+                  message.isShopShare ||
+                  message.isMomentShare
               ? EdgeInsets.zero
               : const EdgeInsets.symmetric(horizontal: 12, vertical: 9),
           decoration: BoxDecoration(
-            color: (message.isImage && !chatImageUsesBubble(message)) ||
-                message.isDishShare ||
-                message.isOrderShare ||
-                message.isShopShare
+            color:
+                (message.isImage && !chatImageUsesBubble(message)) ||
+                    message.isDishShare ||
+                    message.isOrderShare ||
+                    message.isShopShare ||
+                    message.isMomentShare
                 ? Colors.transparent
                 : (isMine ? const Color(0xFFF28C28) : const Color(0xFFF4F4F4)),
             borderRadius: BorderRadius.circular(8),
@@ -1432,115 +1629,115 @@ class _DishShareCard extends StatelessWidget {
       borderRadius: BorderRadius.circular(12),
       clipBehavior: Clip.antiAlias,
       child: InkWell(
-          onTap: () {},
-          child: Container(
-            width: 250,
-            padding: const EdgeInsets.all(10),
-            decoration: BoxDecoration(
-              border: Border.all(color: const Color(0xFFF0E7DE)),
-              borderRadius: BorderRadius.circular(12),
-            ),
-            child: Row(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Container(
-                  width: 64,
-                  height: 64,
-                  clipBehavior: Clip.antiAlias,
-                  decoration: BoxDecoration(
-                    color: const Color(0xFFF7F7F7),
-                    borderRadius: BorderRadius.circular(8),
-                  ),
-                  child: message.dishImageUrl?.isNotEmpty == true
-                      ? Image.network(
-                    ApiConfig.resolveImageUrl(message.dishImageUrl!),
-                    fit: BoxFit.cover,
-                    errorBuilder: (_, __, ___) => const Icon(
-                      Icons.restaurant_menu,
-                      color: Color(0xFFD0D0D0),
-                    ),
-                  )
-                      : const Icon(
-                    Icons.restaurant_menu,
-                    color: Color(0xFFD0D0D0),
-                  ),
+        onTap: () {},
+        child: Container(
+          width: 250,
+          padding: const EdgeInsets.all(10),
+          decoration: BoxDecoration(
+            border: Border.all(color: const Color(0xFFF0E7DE)),
+            borderRadius: BorderRadius.circular(12),
+          ),
+          child: Row(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Container(
+                width: 64,
+                height: 64,
+                clipBehavior: Clip.antiAlias,
+                decoration: BoxDecoration(
+                  color: const Color(0xFFF7F7F7),
+                  borderRadius: BorderRadius.circular(8),
                 ),
-                const SizedBox(width: 10),
-                Expanded(
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    mainAxisSize: MainAxisSize.min,
-                    children: [
-                      Text(
-                        message.dishName?.isNotEmpty == true
-                            ? message.dishName!
-                            : '分享菜品',
-                        maxLines: 1,
-                        overflow: TextOverflow.ellipsis,
-                        style: const TextStyle(
-                          fontSize: 14,
-                          fontWeight: FontWeight.w700,
-                          color: Color(0xFF242424),
+                child: message.dishImageUrl?.isNotEmpty == true
+                    ? Image.network(
+                        ApiConfig.resolveImageUrl(message.dishImageUrl!),
+                        fit: BoxFit.cover,
+                        errorBuilder: (_, __, ___) => const Icon(
+                          Icons.restaurant_menu,
+                          color: Color(0xFFD0D0D0),
                         ),
+                      )
+                    : const Icon(
+                        Icons.restaurant_menu,
+                        color: Color(0xFFD0D0D0),
                       ),
-                      const SizedBox(height: 4),
-                      Row(
-                        children: [
-                          const Icon(
-                            Icons.storefront_outlined,
-                            size: 13,
-                            color: Color(0xFFF28C28),
-                          ),
-                          const SizedBox(width: 2),
-                          Expanded(
-                            child: Text(
-                              message.shopName?.isNotEmpty == true
-                                  ? message.shopName!
-                                  : '商家',
-                              maxLines: 1,
-                              overflow: TextOverflow.ellipsis,
-                              style: const TextStyle(
-                                fontSize: 11,
-                                color: Color(0xFF777777),
-                              ),
-                            ),
-                          ),
-                        ],
+              ),
+              const SizedBox(width: 10),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Text(
+                      message.dishName?.isNotEmpty == true
+                          ? message.dishName!
+                          : '分享菜品',
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: const TextStyle(
+                        fontSize: 14,
+                        fontWeight: FontWeight.w700,
+                        color: Color(0xFF242424),
                       ),
-                      const SizedBox(height: 10),
-                      Row(
-                        crossAxisAlignment: CrossAxisAlignment.end,
-                        children: [
-                          Text(
-                            message.dishPrice == null
-                                ? ''
-                                : '¥${message.dishPrice!.toStringAsFixed(2)}',
+                    ),
+                    const SizedBox(height: 4),
+                    Row(
+                      children: [
+                        const Icon(
+                          Icons.storefront_outlined,
+                          size: 13,
+                          color: Color(0xFFF28C28),
+                        ),
+                        const SizedBox(width: 2),
+                        Expanded(
+                          child: Text(
+                            message.shopName?.isNotEmpty == true
+                                ? message.shopName!
+                                : '商家',
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
                             style: const TextStyle(
-                              color: Color(0xFFE65A3A),
-                              fontSize: 14,
-                              fontWeight: FontWeight.bold,
-                              height: 1.0,
+                              fontSize: 11,
+                              color: Color(0xFF777777),
                             ),
                           ),
-                          const Spacer(),
-                          Text(
-                            message.dishSalesCount == null
-                                ? ''
-                                : '已售${message.dishSalesCount}',
-                            style: const TextStyle(
-                              fontSize: 10,
-                              color: Color(0xFF999999),
-                            ),
+                        ),
+                      ],
+                    ),
+                    const SizedBox(height: 10),
+                    Row(
+                      crossAxisAlignment: CrossAxisAlignment.end,
+                      children: [
+                        Text(
+                          message.dishPrice == null
+                              ? ''
+                              : '¥${message.dishPrice!.toStringAsFixed(2)}',
+                          style: const TextStyle(
+                            color: Color(0xFFE65A3A),
+                            fontSize: 14,
+                            fontWeight: FontWeight.bold,
+                            height: 1.0,
                           ),
-                        ],
-                      ),
-                    ],
-                  ),
+                        ),
+                        const Spacer(),
+                        Text(
+                          message.dishSalesCount == null
+                              ? ''
+                              : '已售${message.dishSalesCount}',
+                          style: const TextStyle(
+                            fontSize: 10,
+                            color: Color(0xFF999999),
+                          ),
+                        ),
+                      ],
+                    ),
+                  ],
                 ),
-              ],
-            ),
+              ),
+            ],
           ),
         ),
+      ),
     );
   }
 }
@@ -1600,6 +1797,12 @@ class _ImageShareCard extends StatelessWidget {
                 width: 240,
                 height: 220,
                 fit: BoxFit.cover,
+                loadingBuilder: (_, child, progress) => progress == null
+                    ? child
+                    : const SoftImageLoadingPlaceholder(
+                        width: 240,
+                        height: 220,
+                      ),
                 errorBuilder: (_, _, _) => const SizedBox(
                   width: 220,
                   height: 140,
@@ -1614,31 +1817,14 @@ class _ImageShareCard extends StatelessWidget {
 }
 
 void _openShopChatImage(BuildContext context, String imageUrl) {
-  Navigator.of(context).push(
-    MaterialPageRoute(
-      builder: (_) => Scaffold(
-        backgroundColor: Colors.black,
-        appBar: AppBar(
-          backgroundColor: Colors.black,
-          foregroundColor: Colors.white,
-          title: const Text('查看图片'),
-        ),
-        body: InteractiveViewer(
-          minScale: .5,
-          maxScale: 5,
-          boundaryMargin: const EdgeInsets.all(80),
-          child: Center(
-            child: Image.network(
-              ApiConfig.resolveImageUrl(imageUrl),
-              headers: shopApi.token?.isNotEmpty == true
-                  ? {'Authorization': 'Bearer ${shopApi.token}'}
-                  : null,
-              fit: BoxFit.contain,
-            ),
-          ),
-        ),
-      ),
-    ),
+  openMomentImageViewer(
+    context,
+    images: [imageUrl],
+    initialIndex: 0,
+    resolveUrl: ApiConfig.resolveImageUrl,
+    headers: shopApi.token?.isNotEmpty == true
+        ? {'Authorization': 'Bearer ${shopApi.token}'}
+        : null,
   );
 }
 
@@ -1653,90 +1839,271 @@ class _ShopShareCard extends StatelessWidget {
       borderRadius: BorderRadius.circular(12),
       clipBehavior: Clip.antiAlias,
       child: InkWell(
-          onTap: () {},
-          child: Container(
-            width: 250,
-            padding: const EdgeInsets.all(10),
-            decoration: BoxDecoration(
-              border: Border.all(color: const Color(0xFFF0E7DE)),
-              borderRadius: BorderRadius.circular(12),
-            ),
-            child: Row(
-              crossAxisAlignment: CrossAxisAlignment.center,
-              children: [
-                Container(
-                  width: 48,
-                  height: 48,
-                  clipBehavior: Clip.antiAlias,
-                  decoration: BoxDecoration(
-                    color: const Color(0xFFFFF4E8),
-                    borderRadius: BorderRadius.circular(8),
-                  ),
-                  child: message.sharedShopLogoUrl?.isNotEmpty == true
-                      ? Image.network(
-                    ApiConfig.resolveImageUrl(message.sharedShopLogoUrl!),
-                    fit: BoxFit.cover,
-                    errorBuilder: (_, __, ___) => const Icon(
-                      Icons.storefront_outlined,
-                      color: Color(0xFFF28C28),
-                      size: 24,
-                    ),
-                  )
-                      : const Icon(
-                    Icons.storefront_outlined,
-                    color: Color(0xFFF28C28),
-                    size: 24,
-                  ),
+        onTap: () {},
+        child: Container(
+          width: 250,
+          padding: const EdgeInsets.all(10),
+          decoration: BoxDecoration(
+            border: Border.all(color: const Color(0xFFF0E7DE)),
+            borderRadius: BorderRadius.circular(12),
+          ),
+          child: Row(
+            crossAxisAlignment: CrossAxisAlignment.center,
+            children: [
+              Container(
+                width: 48,
+                height: 48,
+                clipBehavior: Clip.antiAlias,
+                decoration: BoxDecoration(
+                  color: const Color(0xFFFFF4E8),
+                  borderRadius: BorderRadius.circular(8),
                 ),
-                const SizedBox(width: 10),
-                Expanded(
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    mainAxisSize: MainAxisSize.min,
-                    children: [
-                      const Text(
-                        '分享店铺',
-                        style: TextStyle(
-                          fontSize: 10,
+                child: message.sharedShopLogoUrl?.isNotEmpty == true
+                    ? Image.network(
+                        ApiConfig.resolveImageUrl(message.sharedShopLogoUrl!),
+                        fit: BoxFit.cover,
+                        errorBuilder: (_, __, ___) => const Icon(
+                          Icons.storefront_outlined,
                           color: Color(0xFFF28C28),
-                          fontWeight: FontWeight.bold,
+                          size: 24,
                         ),
+                      )
+                    : const Icon(
+                        Icons.storefront_outlined,
+                        color: Color(0xFFF28C28),
+                        size: 24,
                       ),
+              ),
+              const SizedBox(width: 10),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    const Text(
+                      '分享店铺',
+                      style: TextStyle(
+                        fontSize: 10,
+                        color: Color(0xFFF28C28),
+                        fontWeight: FontWeight.bold,
+                      ),
+                    ),
+                    const SizedBox(height: 2),
+                    Text(
+                      message.sharedShopName ?? '店铺',
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: const TextStyle(
+                        fontSize: 14,
+                        fontWeight: FontWeight.w700,
+                        color: Color(0xFF242424),
+                      ),
+                    ),
+                    if (message.sharedShopDescription?.isNotEmpty == true) ...[
                       const SizedBox(height: 2),
                       Text(
-                        message.sharedShopName ?? '店铺',
+                        message.sharedShopDescription!,
                         maxLines: 1,
                         overflow: TextOverflow.ellipsis,
                         style: const TextStyle(
-                          fontSize: 14,
-                          fontWeight: FontWeight.w700,
-                          color: Color(0xFF242424),
+                          fontSize: 11,
+                          color: Color(0xFF999999),
                         ),
                       ),
-                      if (message.sharedShopDescription?.isNotEmpty == true) ...[
-                        const SizedBox(height: 2),
-                        Text(
-                          message.sharedShopDescription!,
-                          maxLines: 1,
-                          overflow: TextOverflow.ellipsis,
-                          style: const TextStyle(
-                            fontSize: 11,
-                            color: Color(0xFF999999),
-                          ),
-                        ),
-                      ],
                     ],
-                  ),
+                  ],
                 ),
-                const Icon(
-                  Icons.chevron_right,
-                  color: Color(0xFFD0D0D0),
-                  size: 18,
-                ),
-              ],
-            ),
+              ),
+              const Icon(
+                Icons.chevron_right,
+                color: Color(0xFFD0D0D0),
+                size: 18,
+              ),
+            ],
           ),
         ),
+      ),
+    );
+  }
+}
+
+class _MomentShareCard extends StatelessWidget {
+  const _MomentShareCard({required this.message});
+  final ChatMessage message;
+
+  @override
+  Widget build(BuildContext context) {
+    final commentShare =
+        message.sharedMomentCommentId != null ||
+        message.type == 'MOMENT_COMMENT_SHARE' ||
+        message.sharedCardIcon == 'COMMENT';
+    final momentPreview =
+        message.sharedMomentPreview ??
+        message.sharedMomentContent ??
+        message.content;
+    final avatar = message.sharedMomentAuthorAvatar;
+    return Material(
+      color: Colors.white,
+      borderRadius: BorderRadius.circular(8),
+      clipBehavior: Clip.antiAlias,
+      child: InkWell(
+        onTap: message.sharedMomentId == null
+            ? null
+            : () => Navigator.of(context).push(
+                MaterialPageRoute(
+                  builder: (_) => MomentDetailPage(
+                    momentId: message.sharedMomentId!,
+                    highlightCommentId: message.sharedMomentCommentId,
+                  ),
+                ),
+              ),
+        child: Container(
+          width: 292,
+          padding: const EdgeInsets.all(12),
+          decoration: BoxDecoration(
+            border: Border.all(color: const Color(0xFFEAEAEA)),
+            borderRadius: BorderRadius.circular(8),
+          ),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Row(
+                children: [
+                  Icon(
+                    commentShare
+                        ? Icons.format_quote_rounded
+                        : Icons.dynamic_feed_outlined,
+                    size: 17,
+                    color: const Color(0xFFF28C28),
+                  ),
+                  const SizedBox(width: 6),
+                  Text(
+                    commentShare ? '评论引用' : '动态分享',
+                    style: const TextStyle(
+                      color: Color(0xFFF28C28),
+                      fontSize: 12,
+                      fontWeight: FontWeight.w700,
+                    ),
+                  ),
+                ],
+              ),
+              const SizedBox(height: 9),
+              Row(
+                children: [
+                  CircleAvatar(
+                    radius: 13,
+                    backgroundColor: const Color(0xFFFFF1E2),
+                    foregroundImage: avatar?.isNotEmpty == true
+                        ? NetworkImage(ApiConfig.resolveImageUrl(avatar!))
+                        : null,
+                    child: avatar?.isNotEmpty == true
+                        ? null
+                        : const Icon(
+                            Icons.person_outline,
+                            size: 15,
+                            color: Color(0xFFF28C28),
+                          ),
+                  ),
+                  const SizedBox(width: 7),
+                  Expanded(
+                    child: Text(
+                      message.sharedMomentAuthorName ?? '用户',
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: const TextStyle(fontSize: 12),
+                    ),
+                  ),
+                ],
+              ),
+              const SizedBox(height: 8),
+              Row(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(
+                          message.sharedMomentTitle ?? '动态',
+                          maxLines: 2,
+                          overflow: TextOverflow.ellipsis,
+                          style: const TextStyle(fontWeight: FontWeight.w700),
+                        ),
+                        if (momentPreview.trim().isNotEmpty) ...[
+                          const SizedBox(height: 5),
+                          Text(
+                            momentPreview,
+                            maxLines: 3,
+                            overflow: TextOverflow.ellipsis,
+                            style: const TextStyle(
+                              fontSize: 12,
+                              color: Color(0xFF666666),
+                            ),
+                          ),
+                        ],
+                      ],
+                    ),
+                  ),
+                  if (message.sharedMomentCoverUrl?.isNotEmpty == true) ...[
+                    const SizedBox(width: 10),
+                    ClipRRect(
+                      borderRadius: BorderRadius.circular(6),
+                      child: Image.network(
+                        ApiConfig.resolveImageUrl(
+                          message.sharedMomentCoverUrl!,
+                        ),
+                        width: 64,
+                        height: 64,
+                        fit: BoxFit.cover,
+                        errorBuilder: (_, _, _) => const SizedBox.square(
+                          dimension: 64,
+                          child: ColoredBox(color: Color(0xFFF3F3F3)),
+                        ),
+                      ),
+                    ),
+                  ],
+                ],
+              ),
+              if (commentShare) ...[
+                const SizedBox(height: 9),
+                Container(
+                  width: double.infinity,
+                  padding: const EdgeInsets.all(8),
+                  decoration: BoxDecoration(
+                    color: const Color(0xFFF6F6F6),
+                    borderRadius: BorderRadius.circular(6),
+                    border: const Border(
+                      left: BorderSide(color: Color(0xFFF28C28), width: 3),
+                    ),
+                  ),
+                  child: Text(
+                    message.sharedCommentPreview?.isNotEmpty == true
+                        ? message.sharedCommentPreview!
+                        : '点击查看动态中的评论',
+                    maxLines: 3,
+                    overflow: TextOverflow.ellipsis,
+                    style: const TextStyle(fontSize: 12),
+                  ),
+                ),
+              ],
+              const SizedBox(height: 7),
+              Row(
+                children: [
+                  const Spacer(),
+                  Text(
+                    commentShare ? '查看并定位评论' : '查看动态',
+                    style: const TextStyle(
+                      fontSize: 11,
+                      color: Color(0xFF999999),
+                    ),
+                  ),
+                  const Icon(Icons.chevron_right, size: 15, color: Colors.grey),
+                ],
+              ),
+            ],
+          ),
+        ),
+      ),
     );
   }
 }
@@ -1772,6 +2139,8 @@ class _QuotedMessagePreview extends StatelessWidget {
       content = _ImageShareCard(message: quoted!, interactive: false);
     } else if (quoted?.isShopShare == true) {
       content = _ShopShareCard(message: quoted!);
+    } else if (quoted?.isMomentShare == true) {
+      content = _MomentShareCard(message: quoted!);
     } else {
       content = Text(
         quoted?.content ?? message.quotedContent ?? '消息',

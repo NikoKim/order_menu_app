@@ -5,6 +5,7 @@ import 'dart:io';
 import 'package:http/http.dart' as http;
 
 import '../models/shop_api_models.dart';
+import '../models/moment_models.dart';
 import 'api_config.dart';
 import 'auth_session.dart';
 
@@ -103,6 +104,7 @@ class ShopApiService {
         'allowPrivateChat': allowPrivateChat,
         'showPhone': showPhone ?? current.showPhone,
         'showJoinedFamilies': showJoinedFamilies ?? current.showJoinedFamilies,
+        'momentProfileVisibility': current.momentProfileVisibility,
       },
     );
     return CurrentUser.fromJson(data);
@@ -690,11 +692,12 @@ class ShopApiService {
     String path,
     String filePath, {
     Map<String, String>? fields,
+    String fileField = 'file',
   }) async {
     final request = http.MultipartRequest('POST', _uri(path));
     request.headers.addAll(await _headers(jsonContent: false));
     request.fields.addAll(fields ?? const {});
-    request.files.add(await http.MultipartFile.fromPath('file', filePath));
+    request.files.add(await http.MultipartFile.fromPath(fileField, filePath));
     final streamed = await _client.send(request);
     final response = await http.Response.fromStream(streamed);
     final data = _decode(response);
@@ -817,6 +820,250 @@ class ShopApiService {
       queryParameters: query,
     );
   }
+
+  Future<MomentPage<MomentItem>> fetchMoments({
+    String feed = 'recommended',
+    int page = 0,
+    int size = 10,
+    String? query,
+    int? topicId,
+    int? userId,
+    bool consumeExposure = true,
+  }) async {
+    final data = await _request<Object?>(
+      'GET',
+      '/moments',
+      query: {
+        'feed': feed.toUpperCase(),
+        'page': '${page + 1}',
+        'pageSize': '$size',
+        if (query?.trim().isNotEmpty == true) 'keyword': query!.trim(),
+        if (topicId != null) 'topicId': '$topicId',
+        if (userId != null) 'authorId': '$userId',
+        'consumeExposure': '$consumeExposure',
+      },
+    );
+    return MomentPage.fromJson(data, MomentItem.fromJson);
+  }
+
+  Future<MomentItem> fetchMoment(int momentId) async {
+    final data = await _request<Map<String, dynamic>>(
+      'GET',
+      '/moments/$momentId',
+    );
+    return MomentItem.fromJson(data);
+  }
+
+  Future<MomentItem> saveMoment({
+    int? momentId,
+    required String title,
+    required String content,
+    required String visibility,
+    List<String> topics = const [],
+    List<String> imageUrls = const [],
+    int? dishId,
+    bool draft = false,
+  }) async {
+    final data = await _request<Map<String, dynamic>>(
+      momentId == null ? 'POST' : 'PUT',
+      momentId == null ? '/moments' : '/moments/$momentId',
+      body: {
+        'title': title.trim(),
+        'content': content.trim(),
+        'visibility': visibility,
+        'topics': topics.take(5).toList(),
+        'imageUrls': imageUrls,
+        'dishId': dishId,
+        'status': draft ? 'DRAFT' : 'PUBLISHED',
+      },
+    );
+    return MomentItem.fromJson(data);
+  }
+
+  Future<void> deleteMoment(int momentId) =>
+      _request<void>('DELETE', '/moments/$momentId');
+
+  Future<String> uploadMomentImage(String filePath, {bool comment = false}) =>
+      _upload(
+        comment ? '/moments/comment-images' : '/moments/images',
+        filePath,
+        fileField: 'image',
+      );
+
+  Future<bool> toggleMomentLike(int momentId, bool liked) async {
+    await _request<void>(liked ? 'POST' : 'DELETE', '/moments/$momentId/likes');
+    return liked;
+  }
+
+  Future<void> toggleMomentReaction(
+    int momentId,
+    String emoji,
+    bool selected,
+  ) => _request<void>(
+    'PUT',
+    '/moments/$momentId/reactions',
+    body: {'emoji': emoji, 'active': selected},
+  );
+
+  Future<MomentPage<MomentComment>> fetchMomentComments(
+    int momentId, {
+    int page = 0,
+    int size = 10,
+  }) async {
+    final data = await _request<Object?>(
+      'GET',
+      '/moments/$momentId/comments',
+      query: {'page': '${page + 1}', 'pageSize': '$size'},
+    );
+    return MomentPage.fromJson(data, MomentComment.fromJson);
+  }
+
+  Future<MomentPage<MomentComment>> fetchCommentReplies(
+    int commentId, {
+    int page = 0,
+    int size = 10,
+  }) async {
+    final data = await _request<Object?>(
+      'GET',
+      '/moments/comments/$commentId/replies',
+      query: {'page': '${page + 1}', 'pageSize': '$size'},
+    );
+    return MomentPage.fromJson(data, MomentComment.fromJson);
+  }
+
+  Future<MomentComment> addMomentComment(
+    int momentId,
+    String content, {
+    int? parentId,
+    int? replyToCommentId,
+    String? imageUrl,
+  }) async {
+    final data = await _request<Map<String, dynamic>>(
+      'POST',
+      '/moments/$momentId/comments',
+      body: {
+        'content': content.trim(),
+        'parentCommentId': parentId,
+        'replyToCommentId': replyToCommentId,
+        'imageUrls': imageUrl == null ? const <String>[] : [imageUrl],
+      },
+    );
+    return MomentComment.fromJson(data);
+  }
+
+  Future<void> deleteMomentComment(int commentId) =>
+      _request<void>('DELETE', '/moments/comments/$commentId');
+
+  Future<void> toggleCommentLike(int commentId, bool liked) => _request<void>(
+    'PUT',
+    '/moments/comments/$commentId/like',
+    body: {'active': liked},
+  );
+
+  Future<MomentPage<MomentTopic>> fetchMomentTopics({
+    String keyword = '',
+    int page = 0,
+    int size = 10,
+  }) async {
+    final data = await _request<Object?>(
+      'GET',
+      '/moments/topics',
+      query: {
+        'page': '${page + 1}',
+        'pageSize': '$size',
+        if (keyword.trim().isNotEmpty) 'query': keyword.trim(),
+      },
+    );
+    return MomentPage.fromJson(data, MomentTopic.fromJson);
+  }
+
+  Future<MomentTopic> createMomentTopic(String name) async {
+    final data = await _request<Map<String, dynamic>>(
+      'POST',
+      '/moments/topics',
+      body: {'name': name.trim()},
+    );
+    return MomentTopic.fromJson(data);
+  }
+
+  Future<MomentPrivacy> fetchMomentPrivacy(int userId) async {
+    final data = await _request<Map<String, dynamic>>(
+      'GET',
+      '/moments/users/$userId/privacy',
+    );
+    return MomentPrivacy.fromJson(data);
+  }
+
+  Future<MomentProfileSummary> fetchMomentProfileSummary(int userId) async {
+    final data = await _request<Map<String, dynamic>>(
+      'GET',
+      '/moments/users/$userId/summary',
+    );
+    return MomentProfileSummary.fromJson(data);
+  }
+
+  Future<MomentPrivacy> updateMomentPrivacy(
+    int userId, {
+    required bool hideTheirMoments,
+    required bool hideMineFromThem,
+  }) async {
+    final data = await _request<Map<String, dynamic>>(
+      'PUT',
+      '/moments/users/$userId/privacy',
+      body: {
+        'hideTargetMoments': hideTheirMoments,
+        'hideMyMoments': hideMineFromThem,
+      },
+    );
+    return MomentPrivacy.fromJson(data);
+  }
+
+  Future<String> fetchMomentProfileVisibility() async {
+    final data = await _request<Map<String, dynamic>>(
+      'GET',
+      '/moments/privacy/profile',
+    );
+    return data['visibility']?.toString() ?? 'PUBLIC';
+  }
+
+  Future<void> updateMomentProfileVisibility(String visibility) =>
+      _request<void>(
+        'PUT',
+        '/moments/privacy/profile',
+        body: {'visibility': visibility},
+      );
+
+  Future<List<MomentItem>> fetchMomentDrafts() async {
+    final data = await _request<Object?>('GET', '/moments/drafts');
+    return MomentPage.fromJson(data, MomentItem.fromJson).items;
+  }
+
+  Future<void> shareMomentToChat({
+    required int conversationId,
+    required int momentId,
+    int? commentId,
+  }) => _request<void>(
+    'POST',
+    '/moments/$momentId/share',
+    body: {'conversationId': conversationId, 'commentId': commentId},
+  );
+
+  Future<int> fetchRelatedMomentUnreadCount() async {
+    final data = await _request<Map<String, dynamic>>(
+      'GET',
+      '/moments/unread-count',
+    );
+    final value = data['relatedUnreadCount'];
+    return value is num ? value.toInt() : int.tryParse('$value') ?? 0;
+  }
+
+  Future<void> markMomentRead(int momentId) => markMomentsRead([momentId]);
+
+  Future<void> markMomentsRead(Iterable<int> momentIds) => _request<void>(
+    'PUT',
+    '/moments/read',
+    body: {'momentIds': momentIds.toSet().toList()},
+  );
 }
 
 final shopApi = ShopApiService();

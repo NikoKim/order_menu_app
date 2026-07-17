@@ -15,6 +15,7 @@ class _ChatSettingsPageState extends State<ChatSettingsPage> {
   bool _showPhone = true;
   bool _showJoinedFamilies = true;
   bool _saving = false;
+  String? _momentProfileVisibility;
 
   @override
   void initState() {
@@ -33,6 +34,31 @@ class _ChatSettingsPageState extends State<ChatSettingsPage> {
         .catchError((_) {
           if (mounted) AppNotice.show(context, '聊天设置加载失败');
         });
+    shopApi
+        .fetchMomentProfileVisibility()
+        .then((value) {
+          if (mounted) setState(() => _momentProfileVisibility = value);
+        })
+        .catchError((_) {});
+  }
+
+  Future<void> _updateMomentVisibility(String value) async {
+    final previous = _momentProfileVisibility;
+    setState(() {
+      _momentProfileVisibility = value;
+      _saving = true;
+    });
+    try {
+      await shopApi.updateMomentProfileVisibility(value);
+      if (mounted) AppNotice.show(context, '动态页可见人群已保存');
+    } on ApiException catch (error) {
+      if (mounted) {
+        setState(() => _momentProfileVisibility = previous);
+        AppNotice.show(context, error.message);
+      }
+    } finally {
+      if (mounted) setState(() => _saving = false);
+    }
   }
 
   Future<void> _update({
@@ -98,6 +124,38 @@ class _ChatSettingsPageState extends State<ChatSettingsPage> {
                   onChanged: _saving
                       ? null
                       : (value) => _update(allowPrivateChat: value),
+                ),
+              ),
+              const SizedBox(height: 12),
+              Container(
+                padding: const EdgeInsets.all(16),
+                decoration: BoxDecoration(
+                  color: Colors.white,
+                  borderRadius: BorderRadius.circular(8),
+                ),
+                child: DropdownButtonFormField<String>(
+                  initialValue: _momentProfileVisibility,
+                  decoration: const InputDecoration(
+                    prefixIcon: Icon(
+                      Icons.dynamic_feed_outlined,
+                      color: Color(0xFFF28C28),
+                    ),
+                    labelText: '动态页可见人群',
+                  ),
+                  items: const [
+                    DropdownMenuItem(
+                      value: 'CHAT_FRIENDS',
+                      child: Text('仅互聊好友可见'),
+                    ),
+                    DropdownMenuItem(value: 'FAMILY', child: Text('仅家庭成员可见')),
+                    DropdownMenuItem(value: 'PUBLIC', child: Text('公开')),
+                    DropdownMenuItem(value: 'PRIVATE', child: Text('私密')),
+                  ],
+                  onChanged: _saving
+                      ? null
+                      : (value) {
+                          if (value != null) _updateMomentVisibility(value);
+                        },
                 ),
               ),
               const SizedBox(height: 12),

@@ -40,6 +40,8 @@ import com.order.menu.module.order.mapper.OrderMapper;
 import com.order.menu.module.order.mapper.OrderItemMapper;
 import com.order.menu.module.user.entity.User;
 import com.order.menu.module.user.mapper.UserMapper;
+import com.order.menu.module.moment.entity.Moment;
+import com.order.menu.module.moment.entity.MomentComment;
 import com.order.menu.websocket.WsPushService;
 import java.util.List;
 import java.math.BigDecimal;
@@ -126,6 +128,30 @@ class MessageServiceTest {
 
         assertEquals("SHOP_SHARE", response.type());
         assertEquals(11L, response.sharedShopId());
+    }
+
+    @Test
+    void momentCommentSharePersistsCompleteUntruncatedSnapshots() {
+        Conversation direct = directConversation(55L, 1L); direct.setDirectKey("1:2");
+        when(conversationMapper.selectById(55L)).thenReturn(direct);
+        when(conversationMemberMapper.selectList(any())).thenReturn(
+                List.of(activeMember(55L, 1L), activeMember(55L, 2L)));
+        when(chatBlockMapper.selectCount(any())).thenReturn(0L);
+        when(chatMessageMapper.selectList(any())).thenReturn(List.of());
+        when(userMapper.selectById(1L)).thenReturn(user(1L, true));
+        when(userMapper.selectById(2L)).thenReturn(user(2L, true));
+        when(chatMessageMapper.insert(any(ChatMessage.class))).thenAnswer(invocation -> {
+            invocation.<ChatMessage>getArgument(0).setId(99L); return 1;
+        });
+        String fullMoment="M".repeat(1800), fullComment="C".repeat(1600);
+        Moment moment=new Moment();moment.setId(20L);moment.setAuthorUserId(1L);moment.setTitle("complete");moment.setContent(fullMoment);
+        MomentComment comment=new MomentComment();comment.setId(30L);comment.setMomentId(20L);comment.setContent(fullComment);
+
+        MessageDtos.ChatMessageResponse response=service().shareMoment(1L,55L,moment,comment,"author","/cover.jpg");
+
+        assertEquals(fullMoment,response.sharedMomentContent());
+        assertEquals(fullMoment,response.sharedMomentPreview());
+        assertEquals(fullComment,response.sharedCommentPreview());
     }
 
     @Test

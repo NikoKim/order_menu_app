@@ -9,8 +9,8 @@ spring:
   servlet:
     multipart:
       enabled: true
-      max-file-size: 20MB
-      max-request-size: 22MB
+      max-file-size: 30MB
+      max-request-size: 32MB
 
 mybatis-plus:
   type-aliases-package: com.order.menu.module.*.entity
@@ -36,6 +36,11 @@ app:
     max-original-bytes: 20971520
     compress-threshold-bytes: 5242880
     max-pixels: 12000000
+  moment-media:
+    max-original-bytes: 31457280
+    max-moment-bytes: 10485760
+    max-comment-bytes: 5242880
+    max-pixels: 16000000
   push:
     gateway-url: ${ORDER_MENU_PUSH_GATEWAY_URL:}
     gateway-token: ${ORDER_MENU_PUSH_GATEWAY_TOKEN:}

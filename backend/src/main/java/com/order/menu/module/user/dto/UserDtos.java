@@ -13,11 +13,17 @@ public final class UserDtos {
             Boolean allowPrivateChat,
             Boolean autoJoinFamilyChat,
             Boolean showJoinedFamilies,
-            Boolean showPhone
+            Boolean showPhone,
+            String momentProfileVisibility
     ) {
         public UpdateMeRequest(String nickname, String phone, String avatarUrl,
                                Boolean allowPrivateChat, Boolean autoJoinFamilyChat) {
-            this(nickname, phone, avatarUrl, allowPrivateChat, autoJoinFamilyChat, null, null);
+            this(nickname, phone, avatarUrl, allowPrivateChat, autoJoinFamilyChat, null, null, null);
+        }
+        public UpdateMeRequest(String nickname, String phone, String avatarUrl, Boolean allowPrivateChat,
+                               Boolean autoJoinFamilyChat, Boolean showJoinedFamilies, Boolean showPhone) {
+            this(nickname, phone, avatarUrl, allowPrivateChat, autoJoinFamilyChat,
+                    showJoinedFamilies, showPhone, null);
         }
     }
 
@@ -30,7 +36,8 @@ public final class UserDtos {
             Boolean allowPrivateChat,
             Boolean autoJoinFamilyChat,
             Boolean showJoinedFamilies,
-            Boolean showPhone
+            Boolean showPhone,
+            String momentProfileVisibility
     ) {
     }
 }

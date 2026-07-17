@@ -69,6 +69,35 @@ class _OrderMenuCustomerAppState extends State<OrderMenuCustomerApp> {
             foregroundColor: Color(0xFF242424),
             surfaceTintColor: Colors.white,
           ),
+          dialogTheme: DialogThemeData(
+            backgroundColor: Colors.white,
+            surfaceTintColor: Colors.white,
+            elevation: 12,
+            shadowColor: const Color(0x33000000),
+            shape: RoundedRectangleBorder(
+              borderRadius: BorderRadius.circular(8),
+            ),
+          ),
+          bottomSheetTheme: const BottomSheetThemeData(
+            backgroundColor: Colors.white,
+            modalBackgroundColor: Colors.white,
+            surfaceTintColor: Colors.white,
+            elevation: 12,
+            modalElevation: 12,
+            shadowColor: Color(0x33000000),
+            shape: RoundedRectangleBorder(
+              borderRadius: BorderRadius.vertical(top: Radius.circular(8)),
+            ),
+          ),
+          popupMenuTheme: PopupMenuThemeData(
+            color: Colors.white,
+            surfaceTintColor: Colors.white,
+            elevation: 10,
+            shadowColor: const Color(0x33000000),
+            shape: RoundedRectangleBorder(
+              borderRadius: BorderRadius.circular(8),
+            ),
+          ),
           cardTheme: CardThemeData(
             elevation: 0,
             color: Colors.white,

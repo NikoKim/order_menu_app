@@ -6,6 +6,7 @@ import '../models.dart';
 import '../services/api_client.dart';
 import '../widgets/app_footer.dart';
 import '../widgets/app_notice.dart';
+import 'moment_feed_page.dart';
 
 class DishDetailPage extends StatefulWidget {
   const DishDetailPage({
@@ -169,6 +170,26 @@ class _DishDetailPageState extends State<DishDetailPage> {
       appBar: AppBar(
         title: const Text('菜品详情'),
         actions: [
+          IconButton(
+            tooltip: '发布菜品动态',
+            onPressed: () {
+              if (!AppScope.of(context).auth.isLoggedIn) {
+                AppNotice.show(context, '登录后才能发布动态');
+                return;
+              }
+              Navigator.of(context).push(
+                MaterialPageRoute(
+                  builder: (_) => MomentComposerPage(
+                    shopId: widget.shop.id,
+                    dishId: widget.dish.id,
+                    shopName: widget.shop.name,
+                    dishName: widget.dish.name,
+                  ),
+                ),
+              );
+            },
+            icon: const Icon(Icons.edit_note_outlined),
+          ),
           IconButton(
             tooltip: '分享',
             onPressed: _shareDish,
