@@ -13,7 +13,7 @@ class MomentDtosTest {
   @Test
   void momentCommentTimestampsCarryTheServerOffset() throws Exception {
     MomentDtos.CommentResponse response = new MomentDtos.CommentResponse(
-        1L, 2L, null, "内容", List.of(), null, null, null, false,
+        1L, 2L, null, "内容", List.of(), null, null, null, false, false,
         0L, false, 0L, List.of(), LocalDateTime.of(2026, 7, 16, 12, 34, 56));
 
     String json = new ObjectMapper()

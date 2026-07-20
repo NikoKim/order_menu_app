@@ -21,6 +21,10 @@ public final class UserContext {
         return user;
     }
 
+    public static LoginUser getOrNull() {
+        return HOLDER.get();
+    }
+
     public static void clear() {
         HOLDER.remove();
     }

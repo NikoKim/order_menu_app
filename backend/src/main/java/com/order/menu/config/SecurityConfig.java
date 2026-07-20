@@ -8,6 +8,7 @@ import lombok.RequiredArgsConstructor;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 import org.springframework.http.MediaType;
+import org.springframework.http.HttpMethod;
 import org.springframework.security.config.annotation.web.builders.HttpSecurity;
 import org.springframework.security.config.annotation.web.configuration.EnableWebSecurity;
 import org.springframework.security.config.http.SessionCreationPolicy;
@@ -43,6 +44,24 @@ public class SecurityConfig {
                                 "/swagger-ui/**",
                                 "/v3/api-docs/**",
                                 "/ws/**"
+                        ).permitAll()
+                        .requestMatchers(HttpMethod.GET,
+                                "/api/moments/drafts",
+                                "/api/moments/unread-count",
+                                "/api/moments/privacy",
+                                "/api/moments/privacy/**",
+                                "/api/moments/users/*/privacy"
+                        ).authenticated()
+                        .requestMatchers(HttpMethod.GET,
+                                "/api/moments",
+                                "/api/moments/*",
+                                "/api/moments/*/share-card",
+                                "/api/moments/*/availability",
+                                "/api/moments/*/comments",
+                                "/api/moments/*/comments/*/replies",
+                                "/api/moments/comments/*/replies",
+                                "/api/moments/topics",
+                                "/api/moments/topics/**"
                         ).permitAll()
                         .requestMatchers("/api/admin/**").hasRole("ADMIN")
                         .requestMatchers("/api/shop/**").hasRole("SHOP")

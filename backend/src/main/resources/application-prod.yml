@@ -20,9 +20,9 @@ app:
     expire-seconds: 604800
   upload:
     base-path: ${ORDER_MENU_UPLOAD_BASE_PATH:/www/server/SpringBoot/order_menu_image}
-    public-base-url: https://order-menu-backend.zsj-unknown.top
+    public-base-url: ${ORDER_MENU_PUBLIC_BASE_URL:https://order-menu-backend.zsj-unknown.top}
   chat-media:
-    public-base-url: https://order-menu-backend.zsj-unknown.top
+    public-base-url: ${ORDER_MENU_PUBLIC_BASE_URL:https://order-menu-backend.zsj-unknown.top}
   cors:
     allowed-origins:
-      - https://order-menu-backend.zsj-unknown.top
+      - ${ORDER_MENU_FRONTEND_ORIGIN:https://moment.zsj-unknown.top}

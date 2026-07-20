@@ -1,0 +1,3106 @@
+{
+  "branch": "feature/20260715_动态模块",
+  "generated": "2026-07-17",
+  "baseUrl": "https://order-menu-backend.zsj-unknown.top",
+  "endpointCount": 136,
+  "endpoints": [
+    {
+      "group": "认证",
+      "method": "POST",
+      "path": "/api/auth/customer/register",
+      "title": "顾客注册",
+      "auth": "公开",
+      "request": "CustomerRegisterRequest",
+      "response": "RegisterResponse",
+      "notes": "",
+      "params": [],
+      "body": "CustomerRegisterRequest",
+      "content_type": "application/json"
+    },
+    {
+      "group": "认证",
+      "method": "POST",
+      "path": "/api/auth/login",
+      "title": "登录",
+      "auth": "公开",
+      "request": "LoginRequest",
+      "response": "LoginResponse",
+      "notes": "role 必须与账号角色一致；成功后保存 data.token。",
+      "params": [],
+      "body": "LoginRequest",
+      "content_type": "application/json"
+    },
+    {
+      "group": "用户",
+      "method": "GET",
+      "path": "/api/users/me",
+      "title": "获取当前用户",
+      "auth": "已登录",
+      "request": "—",
+      "response": "CurrentUserResponse",
+      "notes": "",
+      "params": [],
+      "body": null,
+      "content_type": "application/json"
+    },
+    {
+      "group": "用户",
+      "method": "PUT",
+      "path": "/api/users/me",
+      "title": "修改当前用户",
+      "auth": "已登录",
+      "request": "UpdateMeRequest",
+      "response": "CurrentUserResponse",
+      "notes": "",
+      "params": [],
+      "body": "UpdateMeRequest",
+      "content_type": "application/json"
+    },
+    {
+      "group": "管理员",
+      "method": "GET",
+      "path": "/api/admin/users",
+      "title": "账号分页列表",
+      "auth": "ADMIN",
+      "request": "Query: role,page,pageSize,keyword",
+      "response": "PageResponse<UserAccountResponse>",
+      "notes": "",
+      "params": [
+        [
+          "role",
+          "query",
+          "string",
+          false,
+          null,
+          "CUSTOMER / SHOP / ADMIN"
+        ],
+        [
+          "page",
+          "query",
+          "integer",
+          false,
+          1,
+          "页码"
+        ],
+        [
+          "pageSize",
+          "query",
+          "integer",
+          false,
+          20,
+          "每页数量"
+        ],
+        [
+          "keyword",
+          "query",
+          "string",
+          false,
+          null,
+          "昵称或电话关键词"
+        ]
+      ],
+      "body": null,
+      "content_type": "application/json"
+    },
+    {
+      "group": "管理员",
+      "method": "POST",
+      "path": "/api/admin/users",
+      "title": "创建顾客或商家账号",
+      "auth": "ADMIN",
+      "request": "CreateUserRequest",
+      "response": "UserAccountResponse",
+      "notes": "",
+      "params": [],
+      "body": "CreateUserRequest",
+      "content_type": "application/json"
+    },
+    {
+      "group": "管理员",
+      "method": "PUT",
+      "path": "/api/admin/users/{userId}/status",
+      "title": "启用/禁用账号",
+      "auth": "ADMIN",
+      "request": "StatusRequest",
+      "response": "UserAccountResponse",
+      "notes": "",
+      "params": [
+        [
+          "userId",
+          "path",
+          "integer",
+          true,
+          null,
+          "用户 ID"
+        ]
+      ],
+      "body": "StatusRequest",
+      "content_type": "application/json"
+    },
+    {
+      "group": "店铺（公开）",
+      "method": "GET",
+      "path": "/api/shops",
+      "title": "店铺分页列表",
+      "auth": "公开",
+      "request": "Query: page,pageSize,keyword,familyCode",
+      "response": "PageResponse<ShopResponse>",
+      "notes": "",
+      "params": [
+        [
+          "page",
+          "query",
+          "integer",
+          false,
+          1,
+          "页码"
+        ],
+        [
+          "pageSize",
+          "query",
+          "integer",
+          false,
+          10,
+          "每页数量"
+        ],
+        [
+          "keyword",
+          "query",
+          "string",
+          false,
+          null,
+          "店铺关键词"
+        ],
+        [
+          "familyCode",
+          "query",
+          "string",
+          false,
+          null,
+          "家庭号"
+        ]
+      ],
+      "body": null,
+      "content_type": "application/json"
+    },
+    {
+      "group": "店铺（公开）",
+      "method": "GET",
+      "path": "/api/shops/{shopId}",
+      "title": "店铺详情",
+      "auth": "公开",
+      "request": "—",
+      "response": "ShopResponse",
+      "notes": "",
+      "params": [
+        [
+          "shopId",
+          "path",
+          "integer",
+          true,
+          null,
+          "店铺 ID"
+        ]
+      ],
+      "body": null,
+      "content_type": "application/json"
+    },
+    {
+      "group": "店铺（公开）",
+      "method": "GET",
+      "path": "/api/shops/{shopId}/menu",
+      "title": "店铺菜单",
+      "auth": "公开",
+      "request": "—",
+      "response": "MenuResponse",
+      "notes": "",
+      "params": [
+        [
+          "shopId",
+          "path",
+          "integer",
+          true,
+          null,
+          "店铺 ID"
+        ]
+      ],
+      "body": null,
+      "content_type": "application/json"
+    },
+    {
+      "group": "店铺（商家）",
+      "method": "GET",
+      "path": "/api/shop/me",
+      "title": "获取我的店铺",
+      "auth": "SHOP",
+      "request": "—",
+      "response": "ShopResponse",
+      "notes": "",
+      "params": [],
+      "body": null,
+      "content_type": "application/json"
+    },
+    {
+      "group": "店铺（商家）",
+      "method": "PUT",
+      "path": "/api/shop/me",
+      "title": "修改我的店铺",
+      "auth": "SHOP",
+      "request": "ShopUpdateRequest",
+      "response": "ShopResponse",
+      "notes": "",
+      "params": [],
+      "body": "ShopUpdateRequest",
+      "content_type": "application/json"
+    },
+    {
+      "group": "店铺（商家）",
+      "method": "GET",
+      "path": "/api/shop/notifications",
+      "title": "商家待处理角标统计",
+      "auth": "SHOP",
+      "request": "—",
+      "response": "ShopNotificationResponse",
+      "notes": "",
+      "params": [],
+      "body": null,
+      "content_type": "application/json"
+    },
+    {
+      "group": "分类与菜品（商家）",
+      "method": "GET",
+      "path": "/api/shop/categories",
+      "title": "分类列表",
+      "auth": "SHOP",
+      "request": "—",
+      "response": "List<CategoryResponse>",
+      "notes": "",
+      "params": [],
+      "body": null,
+      "content_type": "application/json"
+    },
+    {
+      "group": "分类与菜品（商家）",
+      "method": "POST",
+      "path": "/api/shop/categories",
+      "title": "新增分类",
+      "auth": "SHOP",
+      "request": "CategoryRequest",
+      "response": "CategoryResponse",
+      "notes": "",
+      "params": [],
+      "body": "CategoryRequest",
+      "content_type": "application/json"
+    },
+    {
+      "group": "分类与菜品（商家）",
+      "method": "PUT",
+      "path": "/api/shop/categories/{categoryId}",
+      "title": "修改分类",
+      "auth": "SHOP",
+      "request": "CategoryRequest",
+      "response": "CategoryResponse",
+      "notes": "",
+      "params": [
+        [
+          "categoryId",
+          "path",
+          "integer",
+          true,
+          null,
+          "分类 ID"
+        ]
+      ],
+      "body": "CategoryRequest",
+      "content_type": "application/json"
+    },
+    {
+      "group": "分类与菜品（商家）",
+      "method": "DELETE",
+      "path": "/api/shop/categories/{categoryId}",
+      "title": "删除分类",
+      "auth": "SHOP",
+      "request": "—",
+      "response": "null",
+      "notes": "",
+      "params": [
+        [
+          "categoryId",
+          "path",
+          "integer",
+          true,
+          null,
+          "分类 ID"
+        ]
+      ],
+      "body": null,
+      "content_type": "application/json"
+    },
+    {
+      "group": "分类与菜品（商家）",
+      "method": "GET",
+      "path": "/api/shop/dishes",
+      "title": "商家菜品分页列表",
+      "auth": "SHOP",
+      "request": "Query: page,pageSize,categoryId,keyword,status",
+      "response": "PageResponse<DishResponse>",
+      "notes": "",
+      "params": [
+        [
+          "page",
+          "query",
+          "integer",
+          false,
+          1,
+          "页码"
+        ],
+        [
+          "pageSize",
+          "query",
+          "integer",
+          false,
+          10,
+          "每页数量"
+        ],
+        [
+          "categoryId",
+          "query",
+          "integer",
+          false,
+          null,
+          "分类 ID"
+        ],
+        [
+          "keyword",
+          "query",
+          "string",
+          false,
+          null,
+          "菜品关键词"
+        ],
+        [
+          "status",
+          "query",
+          "string",
+          false,
+          null,
+          "ON_SALE / OFF_SALE"
+        ]
+      ],
+      "body": null,
+      "content_type": "application/json"
+    },
+    {
+      "group": "分类与菜品（商家）",
+      "method": "POST",
+      "path": "/api/shop/dishes",
+      "title": "新增菜品",
+      "auth": "SHOP",
+      "request": "DishRequest",
+      "response": "DishResponse",
+      "notes": "",
+      "params": [],
+      "body": "DishRequest",
+      "content_type": "application/json"
+    },
+    {
+      "group": "分类与菜品（商家）",
+      "method": "PUT",
+      "path": "/api/shop/dishes/{dishId}",
+      "title": "修改菜品",
+      "auth": "SHOP",
+      "request": "DishRequest",
+      "response": "DishResponse",
+      "notes": "",
+      "params": [
+        [
+          "dishId",
+          "path",
+          "integer",
+          true,
+          null,
+          "菜品 ID"
+        ]
+      ],
+      "body": "DishRequest",
+      "content_type": "application/json"
+    },
+    {
+      "group": "分类与菜品（商家）",
+      "method": "PUT",
+      "path": "/api/shop/dishes/{dishId}/status",
+      "title": "修改菜品状态",
+      "auth": "SHOP",
+      "request": "DishStatusRequest",
+      "response": "DishResponse",
+      "notes": "",
+      "params": [
+        [
+          "dishId",
+          "path",
+          "integer",
+          true,
+          null,
+          "菜品 ID"
+        ]
+      ],
+      "body": "DishStatusRequest",
+      "content_type": "application/json"
+    },
+    {
+      "group": "分类与菜品（商家）",
+      "method": "DELETE",
+      "path": "/api/shop/dishes/{dishId}",
+      "title": "删除菜品",
+      "auth": "SHOP",
+      "request": "—",
+      "response": "null",
+      "notes": "",
+      "params": [
+        [
+          "dishId",
+          "path",
+          "integer",
+          true,
+          null,
+          "菜品 ID"
+        ]
+      ],
+      "body": null,
+      "content_type": "application/json"
+    },
+    {
+      "group": "分类与菜品（商家）",
+      "method": "PUT",
+      "path": "/api/shop/dishes/showcase",
+      "title": "设置店铺展示菜品",
+      "auth": "SHOP",
+      "request": "JSON 数组 List<Long>",
+      "response": "null",
+      "notes": "请求体直接是菜品 ID 数组，例如 [1,2,3]。",
+      "params": [],
+      "body": "LongIdArray",
+      "content_type": "application/json"
+    },
+    {
+      "group": "菜品（公开）",
+      "method": "GET",
+      "path": "/api/dishes/{dishId}",
+      "title": "菜品详情",
+      "auth": "公开",
+      "request": "—",
+      "response": "DishResponse",
+      "notes": "",
+      "params": [
+        [
+          "dishId",
+          "path",
+          "integer",
+          true,
+          null,
+          "菜品 ID"
+        ]
+      ],
+      "body": null,
+      "content_type": "application/json"
+    },
+    {
+      "group": "文件上传",
+      "method": "POST",
+      "path": "/api/upload/avatar",
+      "title": "上传用户头像",
+      "auth": "已登录",
+      "request": "multipart: file",
+      "response": "UploadResponse",
+      "notes": "",
+      "params": [],
+      "body": "UploadFile",
+      "content_type": "multipart/form-data"
+    },
+    {
+      "group": "文件上传",
+      "method": "POST",
+      "path": "/api/upload/shop",
+      "title": "上传店铺图片",
+      "auth": "SHOP",
+      "request": "multipart: file",
+      "response": "UploadResponse",
+      "notes": "",
+      "params": [],
+      "body": "UploadFile",
+      "content_type": "multipart/form-data"
+    },
+    {
+      "group": "文件上传",
+      "method": "POST",
+      "path": "/api/upload/menu",
+      "title": "上传菜品图片",
+      "auth": "SHOP",
+      "request": "multipart: shopId,file",
+      "response": "UploadResponse",
+      "notes": "",
+      "params": [
+        [
+          "shopId",
+          "query",
+          "integer",
+          true,
+          null,
+          "店铺 ID"
+        ]
+      ],
+      "body": "UploadMenuFile",
+      "content_type": "multipart/form-data"
+    },
+    {
+      "group": "文件上传",
+      "method": "POST",
+      "path": "/api/upload/family",
+      "title": "上传家庭图片",
+      "auth": "SHOP",
+      "request": "multipart: file",
+      "response": "UploadResponse",
+      "notes": "",
+      "params": [],
+      "body": "UploadFile",
+      "content_type": "multipart/form-data"
+    },
+    {
+      "group": "订单（顾客）",
+      "method": "POST",
+      "path": "/api/orders",
+      "title": "提交订单",
+      "auth": "CUSTOMER",
+      "request": "CreateOrderRequest",
+      "response": "OrderSubmitResponse",
+      "notes": "",
+      "params": [],
+      "body": "CreateOrderRequest",
+      "content_type": "application/json"
+    },
+    {
+      "group": "订单（顾客）",
+      "method": "GET",
+      "path": "/api/orders/my",
+      "title": "我的订单分页列表",
+      "auth": "CUSTOMER",
+      "request": "Query: page,pageSize,status",
+      "response": "PageResponse<OrderSummaryResponse>",
+      "notes": "",
+      "params": [
+        [
+          "page",
+          "query",
+          "integer",
+          false,
+          1,
+          "页码"
+        ],
+        [
+          "pageSize",
+          "query",
+          "integer",
+          false,
+          10,
+          "每页数量"
+        ],
+        [
+          "status",
+          "query",
+          "string",
+          false,
+          null,
+          "订单状态"
+        ]
+      ],
+      "body": null,
+      "content_type": "application/json"
+    },
+    {
+      "group": "订单（顾客）",
+      "method": "GET",
+      "path": "/api/orders/{orderId}",
+      "title": "顾客订单详情",
+      "auth": "CUSTOMER",
+      "request": "—",
+      "response": "OrderDetailResponse",
+      "notes": "",
+      "params": [
+        [
+          "orderId",
+          "path",
+          "integer",
+          true,
+          null,
+          "订单 ID"
+        ]
+      ],
+      "body": null,
+      "content_type": "application/json"
+    },
+    {
+      "group": "订单（顾客）",
+      "method": "PUT",
+      "path": "/api/orders/{orderId}/cancel",
+      "title": "取消订单",
+      "auth": "CUSTOMER",
+      "request": "—",
+      "response": "null",
+      "notes": "",
+      "params": [
+        [
+          "orderId",
+          "path",
+          "integer",
+          true,
+          null,
+          "订单 ID"
+        ]
+      ],
+      "body": null,
+      "content_type": "application/json"
+    },
+    {
+      "group": "订单（商家）",
+      "method": "GET",
+      "path": "/api/shop/orders",
+      "title": "商家订单分页列表",
+      "auth": "SHOP",
+      "request": "Query: page,pageSize,status,date",
+      "response": "PageResponse<OrderSummaryResponse>",
+      "notes": "",
+      "params": [
+        [
+          "page",
+          "query",
+          "integer",
+          false,
+          1,
+          "页码"
+        ],
+        [
+          "pageSize",
+          "query",
+          "integer",
+          false,
+          10,
+          "每页数量"
+        ],
+        [
+          "status",
+          "query",
+          "string",
+          false,
+          null,
+          "订单状态"
+        ],
+        [
+          "date",
+          "query",
+          "string(date)",
+          false,
+          null,
+          "YYYY-MM-DD"
+        ]
+      ],
+      "body": null,
+      "content_type": "application/json"
+    },
+    {
+      "group": "订单（商家）",
+      "method": "GET",
+      "path": "/api/shop/orders/{orderId}",
+      "title": "商家订单详情",
+      "auth": "SHOP",
+      "request": "—",
+      "response": "OrderDetailResponse",
+      "notes": "",
+      "params": [
+        [
+          "orderId",
+          "path",
+          "integer",
+          true,
+          null,
+          "订单 ID"
+        ]
+      ],
+      "body": null,
+      "content_type": "application/json"
+    },
+    {
+      "group": "订单（商家）",
+      "method": "PUT",
+      "path": "/api/shop/orders/{orderId}/accept",
+      "title": "接单",
+      "auth": "SHOP",
+      "request": "—",
+      "response": "null",
+      "notes": "",
+      "params": [
+        [
+          "orderId",
+          "path",
+          "integer",
+          true,
+          null,
+          "订单 ID"
+        ]
+      ],
+      "body": null,
+      "content_type": "application/json"
+    },
+    {
+      "group": "订单（商家）",
+      "method": "PUT",
+      "path": "/api/shop/orders/{orderId}/reject",
+      "title": "拒单",
+      "auth": "SHOP",
+      "request": "—",
+      "response": "null",
+      "notes": "",
+      "params": [
+        [
+          "orderId",
+          "path",
+          "integer",
+          true,
+          null,
+          "订单 ID"
+        ]
+      ],
+      "body": null,
+      "content_type": "application/json"
+    },
+    {
+      "group": "订单（商家）",
+      "method": "PUT",
+      "path": "/api/shop/orders/{orderId}/complete",
+      "title": "完成订单",
+      "auth": "SHOP",
+      "request": "—",
+      "response": "null",
+      "notes": "",
+      "params": [
+        [
+          "orderId",
+          "path",
+          "integer",
+          true,
+          null,
+          "订单 ID"
+        ]
+      ],
+      "body": null,
+      "content_type": "application/json"
+    },
+    {
+      "group": "留言反馈（顾客）",
+      "method": "POST",
+      "path": "/api/feedback",
+      "title": "提交留言",
+      "auth": "CUSTOMER",
+      "request": "FeedbackRequest",
+      "response": "FeedbackResponse",
+      "notes": "",
+      "params": [],
+      "body": "FeedbackRequest",
+      "content_type": "application/json"
+    },
+    {
+      "group": "留言反馈（顾客）",
+      "method": "GET",
+      "path": "/api/feedback/my",
+      "title": "我的留言分页列表",
+      "auth": "CUSTOMER",
+      "request": "Query: page,pageSize",
+      "response": "PageResponse<FeedbackResponse>",
+      "notes": "",
+      "params": [
+        [
+          "page",
+          "query",
+          "integer",
+          false,
+          1,
+          "页码"
+        ],
+        [
+          "pageSize",
+          "query",
+          "integer",
+          false,
+          10,
+          "每页数量"
+        ]
+      ],
+      "body": null,
+      "content_type": "application/json"
+    },
+    {
+      "group": "留言反馈（商家）",
+      "method": "GET",
+      "path": "/api/shop/feedback",
+      "title": "店铺留言分页列表",
+      "auth": "SHOP",
+      "request": "Query: page,pageSize,status",
+      "response": "PageResponse<FeedbackResponse>",
+      "notes": "",
+      "params": [
+        [
+          "page",
+          "query",
+          "integer",
+          false,
+          1,
+          "页码"
+        ],
+        [
+          "pageSize",
+          "query",
+          "integer",
+          false,
+          10,
+          "每页数量"
+        ],
+        [
+          "status",
+          "query",
+          "string",
+          false,
+          null,
+          "PENDING / REPLIED / CLOSED"
+        ]
+      ],
+      "body": null,
+      "content_type": "application/json"
+    },
+    {
+      "group": "留言反馈（商家）",
+      "method": "PUT",
+      "path": "/api/shop/feedback/{feedbackId}/reply",
+      "title": "回复留言",
+      "auth": "SHOP",
+      "request": "ReplyRequest",
+      "response": "FeedbackResponse",
+      "notes": "",
+      "params": [
+        [
+          "feedbackId",
+          "path",
+          "integer",
+          true,
+          null,
+          "留言 ID"
+        ]
+      ],
+      "body": "ReplyRequest",
+      "content_type": "application/json"
+    },
+    {
+      "group": "家庭（顾客）",
+      "method": "GET",
+      "path": "/api/families/my",
+      "title": "我的家庭",
+      "auth": "CUSTOMER",
+      "request": "—",
+      "response": "MyFamiliesResponse",
+      "notes": "",
+      "params": [],
+      "body": null,
+      "content_type": "application/json"
+    },
+    {
+      "group": "家庭（顾客）",
+      "method": "POST",
+      "path": "/api/families/join",
+      "title": "通过家庭号加入",
+      "auth": "CUSTOMER",
+      "request": "JoinFamilyRequest",
+      "response": "FamilyResponse",
+      "notes": "",
+      "params": [],
+      "body": "JoinFamilyRequest",
+      "content_type": "application/json"
+    },
+    {
+      "group": "家庭（顾客）",
+      "method": "DELETE",
+      "path": "/api/families/{shopId}",
+      "title": "退出家庭",
+      "auth": "CUSTOMER",
+      "request": "—",
+      "response": "null",
+      "notes": "",
+      "params": [
+        [
+          "shopId",
+          "path",
+          "integer",
+          true,
+          null,
+          "店铺 ID"
+        ]
+      ],
+      "body": null,
+      "content_type": "application/json"
+    },
+    {
+      "group": "家庭（商家）",
+      "method": "GET",
+      "path": "/api/shop/family/members",
+      "title": "家庭成员列表",
+      "auth": "SHOP",
+      "request": "Query: status",
+      "response": "List<FamilyMemberResponse>",
+      "notes": "",
+      "params": [
+        [
+          "status",
+          "query",
+          "string",
+          false,
+          null,
+          "PENDING / APPROVED"
+        ]
+      ],
+      "body": null,
+      "content_type": "application/json"
+    },
+    {
+      "group": "家庭（商家）",
+      "method": "PUT",
+      "path": "/api/shop/family/members/{memberId}/approve",
+      "title": "通过家庭成员申请",
+      "auth": "SHOP",
+      "request": "—",
+      "response": "FamilyMemberResponse",
+      "notes": "",
+      "params": [
+        [
+          "memberId",
+          "path",
+          "integer",
+          true,
+          null,
+          "成员记录 ID"
+        ]
+      ],
+      "body": null,
+      "content_type": "application/json"
+    },
+    {
+      "group": "家庭（商家）",
+      "method": "DELETE",
+      "path": "/api/shop/family/members/{memberId}",
+      "title": "拒绝/移除家庭成员",
+      "auth": "SHOP",
+      "request": "—",
+      "response": "null",
+      "notes": "",
+      "params": [
+        [
+          "memberId",
+          "path",
+          "integer",
+          true,
+          null,
+          "成员记录 ID"
+        ]
+      ],
+      "body": null,
+      "content_type": "application/json"
+    },
+    {
+      "group": "消息与通知",
+      "method": "POST",
+      "path": "/api/messages/push-devices",
+      "title": "注册移动推送设备",
+      "auth": "已登录",
+      "request": "PushDeviceRequest",
+      "response": "null",
+      "notes": "",
+      "params": [],
+      "body": "PushDeviceRequest",
+      "content_type": "application/json"
+    },
+    {
+      "group": "消息与通知",
+      "method": "DELETE",
+      "path": "/api/messages/push-devices/{token}",
+      "title": "注销移动推送设备",
+      "auth": "已登录",
+      "request": "—",
+      "response": "null",
+      "notes": "",
+      "params": [
+        [
+          "token",
+          "path",
+          "string",
+          true,
+          null,
+          "推送 token"
+        ]
+      ],
+      "body": null,
+      "content_type": "application/json"
+    },
+    {
+      "group": "消息与通知",
+      "method": "POST",
+      "path": "/api/messages/direct/users/{userId}",
+      "title": "创建/获取与用户的私聊",
+      "auth": "已登录",
+      "request": "—",
+      "response": "ConversationResponse",
+      "notes": "",
+      "params": [
+        [
+          "userId",
+          "path",
+          "integer",
+          true,
+          null,
+          "目标用户 ID"
+        ]
+      ],
+      "body": null,
+      "content_type": "application/json"
+    },
+    {
+      "group": "消息与通知",
+      "method": "POST",
+      "path": "/api/messages/direct/shops/{shopId}",
+      "title": "创建/获取与商家的私聊",
+      "auth": "已登录",
+      "request": "—",
+      "response": "ConversationResponse",
+      "notes": "",
+      "params": [
+        [
+          "shopId",
+          "path",
+          "integer",
+          true,
+          null,
+          "店铺 ID"
+        ]
+      ],
+      "body": null,
+      "content_type": "application/json"
+    },
+    {
+      "group": "消息与通知",
+      "method": "GET",
+      "path": "/api/messages/users",
+      "title": "搜索可聊天顾客",
+      "auth": "已登录",
+      "request": "Query: nickname",
+      "response": "List<CustomerSearchResponse>",
+      "notes": "",
+      "params": [
+        [
+          "nickname",
+          "query",
+          "string",
+          false,
+          null,
+          "昵称关键词"
+        ]
+      ],
+      "body": null,
+      "content_type": "application/json"
+    },
+    {
+      "group": "消息与通知",
+      "method": "GET",
+      "path": "/api/messages/conversations",
+      "title": "会话列表",
+      "auth": "已登录",
+      "request": "—",
+      "response": "List<ConversationResponse>",
+      "notes": "",
+      "params": [],
+      "body": null,
+      "content_type": "application/json"
+    },
+    {
+      "group": "消息与通知",
+      "method": "GET",
+      "path": "/api/messages/conversations/{conversationId}/preferences",
+      "title": "获取会话偏好",
+      "auth": "已登录",
+      "request": "—",
+      "response": "ConversationPreferenceResponse",
+      "notes": "",
+      "params": [
+        [
+          "conversationId",
+          "path",
+          "integer",
+          true,
+          null,
+          "会话 ID"
+        ]
+      ],
+      "body": null,
+      "content_type": "application/json"
+    },
+    {
+      "group": "消息与通知",
+      "method": "PUT",
+      "path": "/api/messages/conversations/{conversationId}/preferences",
+      "title": "修改会话偏好",
+      "auth": "已登录",
+      "request": "ConversationPreferenceRequest",
+      "response": "ConversationPreferenceResponse",
+      "notes": "",
+      "params": [
+        [
+          "conversationId",
+          "path",
+          "integer",
+          true,
+          null,
+          "会话 ID"
+        ]
+      ],
+      "body": "ConversationPreferenceRequest",
+      "content_type": "application/json"
+    },
+    {
+      "group": "消息与通知",
+      "method": "PUT",
+      "path": "/api/messages/conversations/{conversationId}/mute",
+      "title": "设置会话免打扰",
+      "auth": "已登录",
+      "request": "SetMuteRequest",
+      "response": "ConversationPreferenceResponse",
+      "notes": "",
+      "params": [
+        [
+          "conversationId",
+          "path",
+          "integer",
+          true,
+          null,
+          "会话 ID"
+        ]
+      ],
+      "body": "SetMuteRequest",
+      "content_type": "application/json"
+    },
+    {
+      "group": "消息与通知",
+      "method": "DELETE",
+      "path": "/api/messages/conversations/{conversationId}",
+      "title": "隐藏会话",
+      "auth": "已登录",
+      "request": "Query: guarded,expectedMessageVersion",
+      "response": "ConversationHideResponse",
+      "notes": "",
+      "params": [
+        [
+          "conversationId",
+          "path",
+          "integer",
+          true,
+          null,
+          "会话 ID"
+        ],
+        [
+          "guarded",
+          "query",
+          "boolean",
+          false,
+          false,
+          "是否做版本保护"
+        ],
+        [
+          "expectedMessageVersion",
+          "query",
+          "integer",
+          false,
+          null,
+          "期望消息版本"
+        ]
+      ],
+      "body": null,
+      "content_type": "application/json"
+    },
+    {
+      "group": "消息与通知",
+      "method": "GET",
+      "path": "/api/messages/users/{userId}/profile",
+      "title": "聊天用户资料",
+      "auth": "已登录",
+      "request": "Query: conversationId",
+      "response": "ChatUserProfileResponse",
+      "notes": "",
+      "params": [
+        [
+          "userId",
+          "path",
+          "integer",
+          true,
+          null,
+          "用户 ID"
+        ],
+        [
+          "conversationId",
+          "query",
+          "integer",
+          true,
+          null,
+          "会话 ID"
+        ]
+      ],
+      "body": null,
+      "content_type": "application/json"
+    },
+    {
+      "group": "消息与通知",
+      "method": "GET",
+      "path": "/api/messages/notifications",
+      "title": "通知列表",
+      "auth": "已登录",
+      "request": "—",
+      "response": "NotificationListResponse",
+      "notes": "",
+      "params": [],
+      "body": null,
+      "content_type": "application/json"
+    },
+    {
+      "group": "消息与通知",
+      "method": "GET",
+      "path": "/api/messages/notifications/unread-count",
+      "title": "未读通知数",
+      "auth": "已登录",
+      "request": "—",
+      "response": "integer",
+      "notes": "",
+      "params": [],
+      "body": null,
+      "content_type": "application/json"
+    },
+    {
+      "group": "消息与通知",
+      "method": "PUT",
+      "path": "/api/messages/notifications/{notificationId}/read",
+      "title": "标记单条通知已读",
+      "auth": "已登录",
+      "request": "—",
+      "response": "null",
+      "notes": "",
+      "params": [
+        [
+          "notificationId",
+          "path",
+          "integer",
+          true,
+          null,
+          "通知 ID"
+        ]
+      ],
+      "body": null,
+      "content_type": "application/json"
+    },
+    {
+      "group": "消息与通知",
+      "method": "PUT",
+      "path": "/api/messages/notifications/read-all",
+      "title": "全部通知已读",
+      "auth": "已登录",
+      "request": "—",
+      "response": "null",
+      "notes": "",
+      "params": [],
+      "body": null,
+      "content_type": "application/json"
+    },
+    {
+      "group": "消息与通知",
+      "method": "GET",
+      "path": "/api/messages/conversations/{conversationId}/messages",
+      "title": "会话消息详情",
+      "auth": "已登录",
+      "request": "—",
+      "response": "ConversationMessagesResponse",
+      "notes": "",
+      "params": [
+        [
+          "conversationId",
+          "path",
+          "integer",
+          true,
+          null,
+          "会话 ID"
+        ]
+      ],
+      "body": null,
+      "content_type": "application/json"
+    },
+    {
+      "group": "消息与通知",
+      "method": "GET",
+      "path": "/api/messages/blocks/users/{userId}",
+      "title": "获取拉黑状态",
+      "auth": "已登录",
+      "request": "—",
+      "response": "ChatBlockResponse",
+      "notes": "",
+      "params": [
+        [
+          "userId",
+          "path",
+          "integer",
+          true,
+          null,
+          "目标用户 ID"
+        ]
+      ],
+      "body": null,
+      "content_type": "application/json"
+    },
+    {
+      "group": "消息与通知",
+      "method": "POST",
+      "path": "/api/messages/blocks/users/{userId}",
+      "title": "拉黑用户",
+      "auth": "已登录",
+      "request": "—",
+      "response": "null",
+      "notes": "",
+      "params": [
+        [
+          "userId",
+          "path",
+          "integer",
+          true,
+          null,
+          "目标用户 ID"
+        ]
+      ],
+      "body": null,
+      "content_type": "application/json"
+    },
+    {
+      "group": "消息与通知",
+      "method": "DELETE",
+      "path": "/api/messages/blocks/users/{userId}",
+      "title": "取消拉黑",
+      "auth": "已登录",
+      "request": "—",
+      "response": "null",
+      "notes": "",
+      "params": [
+        [
+          "userId",
+          "path",
+          "integer",
+          true,
+          null,
+          "目标用户 ID"
+        ]
+      ],
+      "body": null,
+      "content_type": "application/json"
+    },
+    {
+      "group": "消息与通知",
+      "method": "POST",
+      "path": "/api/messages/conversations/{conversationId}/messages",
+      "title": "发送文本消息",
+      "auth": "已登录",
+      "request": "SendMessageRequest",
+      "response": "ChatMessageResponse",
+      "notes": "",
+      "params": [
+        [
+          "conversationId",
+          "path",
+          "integer",
+          true,
+          null,
+          "会话 ID"
+        ]
+      ],
+      "body": "SendMessageRequest",
+      "content_type": "application/json"
+    },
+    {
+      "group": "消息与通知",
+      "method": "POST",
+      "path": "/api/messages/conversations/{conversationId}/images",
+      "title": "发送图片消息",
+      "auth": "已登录",
+      "request": "multipart: image,content?,quotedMessageId?",
+      "response": "ChatMessageResponse",
+      "notes": "",
+      "params": [
+        [
+          "conversationId",
+          "path",
+          "integer",
+          true,
+          null,
+          "会话 ID"
+        ]
+      ],
+      "body": "ChatImageUpload",
+      "content_type": "multipart/form-data"
+    },
+    {
+      "group": "消息与通知",
+      "method": "GET",
+      "path": "/api/messages/conversations/{conversationId}/images/{filename}",
+      "title": "读取聊天图片二进制",
+      "auth": "已登录",
+      "request": "—",
+      "response": "binary image",
+      "notes": "",
+      "params": [
+        [
+          "conversationId",
+          "path",
+          "integer",
+          true,
+          null,
+          "会话 ID"
+        ],
+        [
+          "filename",
+          "path",
+          "string",
+          true,
+          null,
+          "文件名"
+        ]
+      ],
+      "body": null,
+      "content_type": "binary"
+    },
+    {
+      "group": "消息与通知",
+      "method": "POST",
+      "path": "/api/messages/conversations/{conversationId}/messages/{messageId}/recall",
+      "title": "撤回消息",
+      "auth": "已登录",
+      "request": "—",
+      "response": "ChatMessageResponse",
+      "notes": "",
+      "params": [
+        [
+          "conversationId",
+          "path",
+          "integer",
+          true,
+          null,
+          "会话 ID"
+        ],
+        [
+          "messageId",
+          "path",
+          "integer",
+          true,
+          null,
+          "消息 ID"
+        ]
+      ],
+      "body": null,
+      "content_type": "application/json"
+    },
+    {
+      "group": "消息与通知",
+      "method": "DELETE",
+      "path": "/api/messages/conversations/{conversationId}/messages/{messageId}",
+      "title": "删除自己的消息视图",
+      "auth": "已登录",
+      "request": "—",
+      "response": "null",
+      "notes": "",
+      "params": [
+        [
+          "conversationId",
+          "path",
+          "integer",
+          true,
+          null,
+          "会话 ID"
+        ],
+        [
+          "messageId",
+          "path",
+          "integer",
+          true,
+          null,
+          "消息 ID"
+        ]
+      ],
+      "body": null,
+      "content_type": "application/json"
+    },
+    {
+      "group": "家庭群聊",
+      "method": "POST",
+      "path": "/api/messages/family-groups",
+      "title": "创建家庭群聊",
+      "auth": "已登录（业务上商家）",
+      "request": "—",
+      "response": "FamilyGroupResponse",
+      "notes": "",
+      "params": [],
+      "body": null,
+      "content_type": "application/json"
+    },
+    {
+      "group": "家庭群聊",
+      "method": "GET",
+      "path": "/api/messages/family-groups/{conversationId}",
+      "title": "家庭群聊详情",
+      "auth": "已登录",
+      "request": "—",
+      "response": "FamilyGroupResponse",
+      "notes": "",
+      "params": [
+        [
+          "conversationId",
+          "path",
+          "integer",
+          true,
+          null,
+          "会话 ID"
+        ]
+      ],
+      "body": null,
+      "content_type": "application/json"
+    },
+    {
+      "group": "家庭群聊",
+      "method": "GET",
+      "path": "/api/messages/family-groups/by-shop/{shopId}",
+      "title": "按店铺获取家庭群聊",
+      "auth": "已登录",
+      "request": "—",
+      "response": "FamilyGroupResponse",
+      "notes": "",
+      "params": [
+        [
+          "shopId",
+          "path",
+          "integer",
+          true,
+          null,
+          "店铺 ID"
+        ]
+      ],
+      "body": null,
+      "content_type": "application/json"
+    },
+    {
+      "group": "家庭群聊",
+      "method": "PUT",
+      "path": "/api/messages/family-groups/{conversationId}",
+      "title": "修改家庭群聊资料",
+      "auth": "群主",
+      "request": "FamilyGroupProfileRequest",
+      "response": "FamilyGroupResponse",
+      "notes": "",
+      "params": [
+        [
+          "conversationId",
+          "path",
+          "integer",
+          true,
+          null,
+          "会话 ID"
+        ]
+      ],
+      "body": "FamilyGroupProfileRequest",
+      "content_type": "application/json"
+    },
+    {
+      "group": "家庭群聊",
+      "method": "POST",
+      "path": "/api/messages/family-groups/{conversationId}/dissolve",
+      "title": "解散家庭群聊",
+      "auth": "群主",
+      "request": "—",
+      "response": "null",
+      "notes": "",
+      "params": [
+        [
+          "conversationId",
+          "path",
+          "integer",
+          true,
+          null,
+          "会话 ID"
+        ]
+      ],
+      "body": null,
+      "content_type": "application/json"
+    },
+    {
+      "group": "家庭群聊",
+      "method": "POST",
+      "path": "/api/messages/family-groups/{conversationId}/restore",
+      "title": "恢复家庭群聊",
+      "auth": "群主",
+      "request": "—",
+      "response": "FamilyGroupResponse",
+      "notes": "",
+      "params": [
+        [
+          "conversationId",
+          "path",
+          "integer",
+          true,
+          null,
+          "会话 ID"
+        ]
+      ],
+      "body": null,
+      "content_type": "application/json"
+    },
+    {
+      "group": "家庭群聊",
+      "method": "POST",
+      "path": "/api/messages/family-groups/{conversationId}/join",
+      "title": "重新加入/申请加入群聊",
+      "auth": "家庭成员",
+      "request": "—",
+      "response": "null",
+      "notes": "",
+      "params": [
+        [
+          "conversationId",
+          "path",
+          "integer",
+          true,
+          null,
+          "会话 ID"
+        ]
+      ],
+      "body": null,
+      "content_type": "application/json"
+    },
+    {
+      "group": "家庭群聊",
+      "method": "POST",
+      "path": "/api/messages/family-groups/{conversationId}/approve-membership",
+      "title": "用户接受群聊邀请",
+      "auth": "家庭成员",
+      "request": "—",
+      "response": "null",
+      "notes": "",
+      "params": [
+        [
+          "conversationId",
+          "path",
+          "integer",
+          true,
+          null,
+          "会话 ID"
+        ]
+      ],
+      "body": null,
+      "content_type": "application/json"
+    },
+    {
+      "group": "家庭群聊",
+      "method": "POST",
+      "path": "/api/messages/family-groups/{conversationId}/decline-membership",
+      "title": "用户拒绝群聊邀请",
+      "auth": "家庭成员",
+      "request": "—",
+      "response": "null",
+      "notes": "",
+      "params": [
+        [
+          "conversationId",
+          "path",
+          "integer",
+          true,
+          null,
+          "会话 ID"
+        ]
+      ],
+      "body": null,
+      "content_type": "application/json"
+    },
+    {
+      "group": "家庭群聊",
+      "method": "POST",
+      "path": "/api/messages/family-groups/{conversationId}/members/{userId}/approve",
+      "title": "群主通过成员申请",
+      "auth": "群主",
+      "request": "—",
+      "response": "null",
+      "notes": "",
+      "params": [
+        [
+          "conversationId",
+          "path",
+          "integer",
+          true,
+          null,
+          "会话 ID"
+        ],
+        [
+          "userId",
+          "path",
+          "integer",
+          true,
+          null,
+          "用户 ID"
+        ]
+      ],
+      "body": null,
+      "content_type": "application/json"
+    },
+    {
+      "group": "家庭群聊",
+      "method": "POST",
+      "path": "/api/messages/family-groups/{conversationId}/members/{userId}/reject",
+      "title": "群主拒绝成员申请",
+      "auth": "群主",
+      "request": "—",
+      "response": "null",
+      "notes": "",
+      "params": [
+        [
+          "conversationId",
+          "path",
+          "integer",
+          true,
+          null,
+          "会话 ID"
+        ],
+        [
+          "userId",
+          "path",
+          "integer",
+          true,
+          null,
+          "用户 ID"
+        ]
+      ],
+      "body": null,
+      "content_type": "application/json"
+    },
+    {
+      "group": "家庭群聊",
+      "method": "POST",
+      "path": "/api/messages/family-groups/{conversationId}/leave",
+      "title": "退出家庭群聊",
+      "auth": "群成员",
+      "request": "—",
+      "response": "null",
+      "notes": "",
+      "params": [
+        [
+          "conversationId",
+          "path",
+          "integer",
+          true,
+          null,
+          "会话 ID"
+        ]
+      ],
+      "body": null,
+      "content_type": "application/json"
+    },
+    {
+      "group": "家庭群聊",
+      "method": "POST",
+      "path": "/api/messages/family-groups/{conversationId}/members/{userId}/remove",
+      "title": "群主移除群成员",
+      "auth": "群主",
+      "request": "—",
+      "response": "null",
+      "notes": "",
+      "params": [
+        [
+          "conversationId",
+          "path",
+          "integer",
+          true,
+          null,
+          "会话 ID"
+        ],
+        [
+          "userId",
+          "path",
+          "integer",
+          true,
+          null,
+          "用户 ID"
+        ]
+      ],
+      "body": null,
+      "content_type": "application/json"
+    },
+    {
+      "group": "家庭群聊",
+      "method": "PUT",
+      "path": "/api/messages/family-groups/{conversationId}/mute",
+      "title": "设置家庭群聊免打扰",
+      "auth": "群成员",
+      "request": "SetMuteRequest",
+      "response": "null",
+      "notes": "",
+      "params": [
+        [
+          "conversationId",
+          "path",
+          "integer",
+          true,
+          null,
+          "会话 ID"
+        ]
+      ],
+      "body": "SetMuteRequest",
+      "content_type": "application/json"
+    },
+    {
+      "group": "消息分享",
+      "method": "POST",
+      "path": "/api/messages/dish-shares",
+      "title": "分享菜品到聊天",
+      "auth": "已登录",
+      "request": "ShareDishRequest",
+      "response": "ChatMessageResponse",
+      "notes": "",
+      "params": [],
+      "body": "ShareDishRequest",
+      "content_type": "application/json"
+    },
+    {
+      "group": "消息分享",
+      "method": "POST",
+      "path": "/api/messages/order-shares",
+      "title": "分享订单到聊天",
+      "auth": "已登录",
+      "request": "ShareOrderRequest",
+      "response": "ChatMessageResponse",
+      "notes": "",
+      "params": [],
+      "body": "ShareOrderRequest",
+      "content_type": "application/json"
+    },
+    {
+      "group": "消息分享",
+      "method": "POST",
+      "path": "/api/messages/shop-shares",
+      "title": "分享店铺到聊天",
+      "auth": "已登录",
+      "request": "ShareShopRequest",
+      "response": "ChatMessageResponse",
+      "notes": "",
+      "params": [],
+      "body": "ShareShopRequest",
+      "content_type": "application/json"
+    },
+    {
+      "group": "消息分享",
+      "method": "POST",
+      "path": "/api/messages/moment-shares",
+      "title": "分享动态或评论到聊天",
+      "auth": "已登录",
+      "request": "MomentShareAliasRequest",
+      "response": "ChatMessageResponse",
+      "notes": "",
+      "params": [],
+      "body": "MomentShareAliasRequest",
+      "content_type": "application/json"
+    },
+    {
+      "group": "群精华",
+      "method": "POST",
+      "path": "/api/messages/family-groups/{conversationId}/essences/{messageId}",
+      "title": "设为精华",
+      "auth": "群主",
+      "request": "—",
+      "response": "EssenceItemResponse",
+      "notes": "",
+      "params": [
+        [
+          "conversationId",
+          "path",
+          "integer",
+          true,
+          null,
+          "会话 ID"
+        ],
+        [
+          "messageId",
+          "path",
+          "integer",
+          true,
+          null,
+          "消息 ID"
+        ]
+      ],
+      "body": null,
+      "content_type": "application/json"
+    },
+    {
+      "group": "群精华",
+      "method": "DELETE",
+      "path": "/api/messages/family-groups/{conversationId}/essences/{messageId}",
+      "title": "取消精华",
+      "auth": "群主",
+      "request": "—",
+      "response": "null",
+      "notes": "",
+      "params": [
+        [
+          "conversationId",
+          "path",
+          "integer",
+          true,
+          null,
+          "会话 ID"
+        ],
+        [
+          "messageId",
+          "path",
+          "integer",
+          true,
+          null,
+          "消息 ID"
+        ]
+      ],
+      "body": null,
+      "content_type": "application/json"
+    },
+    {
+      "group": "群精华",
+      "method": "GET",
+      "path": "/api/messages/family-groups/{conversationId}/essences",
+      "title": "精华列表",
+      "auth": "群成员",
+      "request": "—",
+      "response": "EssenceListResponse",
+      "notes": "",
+      "params": [
+        [
+          "conversationId",
+          "path",
+          "integer",
+          true,
+          null,
+          "会话 ID"
+        ]
+      ],
+      "body": null,
+      "content_type": "application/json"
+    },
+    {
+      "group": "群精华",
+      "method": "GET",
+      "path": "/api/messages/family-groups/{conversationId}/essences/latest-unread",
+      "title": "最新未读精华",
+      "auth": "群成员",
+      "request": "—",
+      "response": "ChatMessageResponse|null",
+      "notes": "",
+      "params": [
+        [
+          "conversationId",
+          "path",
+          "integer",
+          true,
+          null,
+          "会话 ID"
+        ]
+      ],
+      "body": null,
+      "content_type": "application/json"
+    },
+    {
+      "group": "群精华",
+      "method": "PUT",
+      "path": "/api/messages/family-groups/{conversationId}/essences/{messageId}/pin",
+      "title": "置顶/取消置顶精华",
+      "auth": "群主",
+      "request": "EssenceToggleRequest",
+      "response": "EssenceItemResponse",
+      "notes": "",
+      "params": [
+        [
+          "conversationId",
+          "path",
+          "integer",
+          true,
+          null,
+          "会话 ID"
+        ],
+        [
+          "messageId",
+          "path",
+          "integer",
+          true,
+          null,
+          "消息 ID"
+        ]
+      ],
+      "body": "EssenceToggleRequest",
+      "content_type": "application/json"
+    },
+    {
+      "group": "群精华",
+      "method": "PUT",
+      "path": "/api/messages/family-groups/{conversationId}/essences/{messageId}/like",
+      "title": "点赞/取消点赞精华",
+      "auth": "群成员",
+      "request": "LikeToggleRequest",
+      "response": "EssenceItemResponse",
+      "notes": "",
+      "params": [
+        [
+          "conversationId",
+          "path",
+          "integer",
+          true,
+          null,
+          "会话 ID"
+        ],
+        [
+          "messageId",
+          "path",
+          "integer",
+          true,
+          null,
+          "消息 ID"
+        ]
+      ],
+      "body": "LikeToggleRequest",
+      "content_type": "application/json"
+    },
+    {
+      "group": "群精华",
+      "method": "PUT",
+      "path": "/api/messages/family-groups/{conversationId}/essences/read",
+      "title": "标记精华已读",
+      "auth": "群成员",
+      "request": "EssenceReadRequest（可空）",
+      "response": "null",
+      "notes": "",
+      "params": [
+        [
+          "conversationId",
+          "path",
+          "integer",
+          true,
+          null,
+          "会话 ID"
+        ]
+      ],
+      "body": "EssenceReadRequest",
+      "content_type": "application/json"
+    },
+    {
+      "group": "动态",
+      "method": "GET",
+      "path": "/api/moments",
+      "title": "动态列表/搜索/用户/话题统一入口",
+      "auth": "已登录",
+      "request": "Query: feed,page,pageSize|size,consumeExposure,keyword,authorId,topicId",
+      "response": "MomentPageResponse",
+      "notes": "优先级：keyword > authorId > topicId > feed。",
+      "params": [
+        [
+          "feed",
+          "query",
+          "string",
+          false,
+          "RECOMMENDED",
+          "RECOMMENDED / RELATED / USER 等，由服务端识别"
+        ],
+        [
+          "page",
+          "query",
+          "integer",
+          false,
+          1,
+          "页码，小于 1 会归一为 1"
+        ],
+        [
+          "pageSize",
+          "query",
+          "integer",
+          false,
+          null,
+          "每页数量，优先于 size"
+        ],
+        [
+          "size",
+          "query",
+          "integer",
+          false,
+          null,
+          "兼容参数"
+        ],
+        [
+          "consumeExposure",
+          "query",
+          "boolean",
+          false,
+          true,
+          "是否消耗曝光/未读状态"
+        ],
+        [
+          "keyword",
+          "query",
+          "string",
+          false,
+          null,
+          "存在时进入搜索逻辑"
+        ],
+        [
+          "authorId",
+          "query",
+          "integer",
+          false,
+          null,
+          "存在时进入用户动态逻辑"
+        ],
+        [
+          "topicId",
+          "query",
+          "integer",
+          false,
+          null,
+          "存在时进入话题动态逻辑"
+        ]
+      ],
+      "body": null,
+      "content_type": "application/json"
+    },
+    {
+      "group": "动态",
+      "method": "GET",
+      "path": "/api/moments/{id}",
+      "title": "动态详情",
+      "auth": "已登录",
+      "request": "—",
+      "response": "MomentResponse",
+      "notes": "",
+      "params": [
+        [
+          "id",
+          "path",
+          "integer",
+          true,
+          null,
+          "动态 ID"
+        ]
+      ],
+      "body": null,
+      "content_type": "application/json"
+    },
+    {
+      "group": "动态",
+      "method": "GET",
+      "path": "/api/moments/{id}/availability",
+      "title": "动态可用性检查",
+      "auth": "已登录",
+      "request": "—",
+      "response": "AvailabilityResponse",
+      "notes": "",
+      "params": [
+        [
+          "id",
+          "path",
+          "integer",
+          true,
+          null,
+          "动态 ID"
+        ]
+      ],
+      "body": null,
+      "content_type": "application/json"
+    },
+    {
+      "group": "动态",
+      "method": "POST",
+      "path": "/api/moments",
+      "title": "发布动态/保存草稿",
+      "auth": "已登录",
+      "request": "UpsertMomentRequest",
+      "response": "MomentResponse",
+      "notes": "",
+      "params": [],
+      "body": "UpsertMomentRequest",
+      "content_type": "application/json"
+    },
+    {
+      "group": "动态",
+      "method": "PUT",
+      "path": "/api/moments/{id}",
+      "title": "编辑动态/草稿",
+      "auth": "作者",
+      "request": "UpsertMomentRequest",
+      "response": "MomentResponse",
+      "notes": "",
+      "params": [
+        [
+          "id",
+          "path",
+          "integer",
+          true,
+          null,
+          "动态 ID"
+        ]
+      ],
+      "body": "UpsertMomentRequest",
+      "content_type": "application/json"
+    },
+    {
+      "group": "动态",
+      "method": "DELETE",
+      "path": "/api/moments/{id}",
+      "title": "删除动态",
+      "auth": "作者",
+      "request": "—",
+      "response": "null",
+      "notes": "",
+      "params": [
+        [
+          "id",
+          "path",
+          "integer",
+          true,
+          null,
+          "动态 ID"
+        ]
+      ],
+      "body": null,
+      "content_type": "application/json"
+    },
+    {
+      "group": "动态",
+      "method": "GET",
+      "path": "/api/moments/drafts",
+      "title": "我的草稿分页列表",
+      "auth": "已登录",
+      "request": "Query: page,pageSize",
+      "response": "MomentPageResponse",
+      "notes": "",
+      "params": [
+        [
+          "page",
+          "query",
+          "integer",
+          false,
+          1,
+          "页码"
+        ],
+        [
+          "pageSize",
+          "query",
+          "integer",
+          false,
+          10,
+          "每页数量"
+        ]
+      ],
+      "body": null,
+      "content_type": "application/json"
+    },
+    {
+      "group": "动态互动",
+      "method": "PUT",
+      "path": "/api/moments/{id}/like",
+      "title": "设置点赞状态",
+      "auth": "已登录",
+      "request": "ToggleRequest（可空；空表示点赞）",
+      "response": "MomentResponse",
+      "notes": "",
+      "params": [
+        [
+          "id",
+          "path",
+          "integer",
+          true,
+          null,
+          "动态 ID"
+        ]
+      ],
+      "body": "ToggleRequest",
+      "content_type": "application/json"
+    },
+    {
+      "group": "动态互动",
+      "method": "POST",
+      "path": "/api/moments/{id}/likes",
+      "title": "点赞（REST 别名）",
+      "auth": "已登录",
+      "request": "—",
+      "response": "MomentResponse",
+      "notes": "",
+      "params": [
+        [
+          "id",
+          "path",
+          "integer",
+          true,
+          null,
+          "动态 ID"
+        ]
+      ],
+      "body": null,
+      "content_type": "application/json"
+    },
+    {
+      "group": "动态互动",
+      "method": "DELETE",
+      "path": "/api/moments/{id}/likes",
+      "title": "取消点赞（REST 别名）",
+      "auth": "已登录",
+      "request": "—",
+      "response": "MomentResponse",
+      "notes": "",
+      "params": [
+        [
+          "id",
+          "path",
+          "integer",
+          true,
+          null,
+          "动态 ID"
+        ]
+      ],
+      "body": null,
+      "content_type": "application/json"
+    },
+    {
+      "group": "动态互动",
+      "method": "PUT",
+      "path": "/api/moments/{id}/reactions",
+      "title": "设置表情回应状态",
+      "auth": "已登录",
+      "request": "ReactionRequest",
+      "response": "MomentResponse",
+      "notes": "",
+      "params": [
+        [
+          "id",
+          "path",
+          "integer",
+          true,
+          null,
+          "动态 ID"
+        ]
+      ],
+      "body": "ReactionRequest",
+      "content_type": "application/json"
+    },
+    {
+      "group": "动态互动",
+      "method": "POST",
+      "path": "/api/moments/{id}/reactions",
+      "title": "添加表情回应",
+      "auth": "已登录",
+      "request": "ReactionRequest",
+      "response": "MomentResponse",
+      "notes": "",
+      "params": [
+        [
+          "id",
+          "path",
+          "integer",
+          true,
+          null,
+          "动态 ID"
+        ]
+      ],
+      "body": "ReactionRequest",
+      "content_type": "application/json"
+    },
+    {
+      "group": "动态互动",
+      "method": "DELETE",
+      "path": "/api/moments/{id}/reactions",
+      "title": "删除表情回应",
+      "auth": "已登录",
+      "request": "Query: emoji",
+      "response": "MomentResponse",
+      "notes": "",
+      "params": [
+        [
+          "id",
+          "path",
+          "integer",
+          true,
+          null,
+          "动态 ID"
+        ],
+        [
+          "emoji",
+          "query",
+          "string",
+          true,
+          null,
+          "表情字符串"
+        ]
+      ],
+      "body": null,
+      "content_type": "application/json"
+    },
+    {
+      "group": "动态评论",
+      "method": "GET",
+      "path": "/api/moments/{id}/comments",
+      "title": "评论分页列表",
+      "auth": "已登录",
+      "request": "Query: page,pageSize",
+      "response": "MomentCommentPageResponse",
+      "notes": "",
+      "params": [
+        [
+          "id",
+          "path",
+          "integer",
+          true,
+          null,
+          "动态 ID"
+        ],
+        [
+          "page",
+          "query",
+          "integer",
+          false,
+          1,
+          "页码"
+        ],
+        [
+          "pageSize",
+          "query",
+          "integer",
+          false,
+          10,
+          "每页数量"
+        ]
+      ],
+      "body": null,
+      "content_type": "application/json"
+    },
+    {
+      "group": "动态评论",
+      "method": "POST",
+      "path": "/api/moments/{id}/comments",
+      "title": "发表评论/回复",
+      "auth": "已登录",
+      "request": "MomentCommentRequest",
+      "response": "CommentResponse",
+      "notes": "",
+      "params": [
+        [
+          "id",
+          "path",
+          "integer",
+          true,
+          null,
+          "动态 ID"
+        ]
+      ],
+      "body": "MomentCommentRequest",
+      "content_type": "application/json"
+    },
+    {
+      "group": "动态评论",
+      "method": "GET",
+      "path": "/api/moments/{momentId}/comments/{commentId}/replies",
+      "title": "评论回复分页列表",
+      "auth": "已登录",
+      "request": "Query: page,pageSize",
+      "response": "MomentCommentPageResponse",
+      "notes": "",
+      "params": [
+        [
+          "momentId",
+          "path",
+          "integer",
+          true,
+          null,
+          "动态 ID（服务方法未使用，仅用于路由）"
+        ],
+        [
+          "commentId",
+          "path",
+          "integer",
+          true,
+          null,
+          "根评论 ID"
+        ],
+        [
+          "page",
+          "query",
+          "integer",
+          false,
+          1,
+          "页码"
+        ],
+        [
+          "pageSize",
+          "query",
+          "integer",
+          false,
+          10,
+          "每页数量"
+        ]
+      ],
+      "body": null,
+      "content_type": "application/json"
+    },
+    {
+      "group": "动态评论",
+      "method": "GET",
+      "path": "/api/moments/comments/{commentId}/replies",
+      "title": "评论回复分页列表（短路径别名）",
+      "auth": "已登录",
+      "request": "Query: page,pageSize",
+      "response": "MomentCommentPageResponse",
+      "notes": "",
+      "params": [
+        [
+          "commentId",
+          "path",
+          "integer",
+          true,
+          null,
+          "根评论 ID"
+        ],
+        [
+          "page",
+          "query",
+          "integer",
+          false,
+          1,
+          "页码"
+        ],
+        [
+          "pageSize",
+          "query",
+          "integer",
+          false,
+          10,
+          "每页数量"
+        ]
+      ],
+      "body": null,
+      "content_type": "application/json"
+    },
+    {
+      "group": "动态评论",
+      "method": "DELETE",
+      "path": "/api/moments/{momentId}/comments/{commentId}",
+      "title": "删除评论",
+      "auth": "评论作者",
+      "request": "—",
+      "response": "null",
+      "notes": "",
+      "params": [
+        [
+          "momentId",
+          "path",
+          "integer",
+          true,
+          null,
+          "动态 ID（服务方法未使用）"
+        ],
+        [
+          "commentId",
+          "path",
+          "integer",
+          true,
+          null,
+          "评论 ID"
+        ]
+      ],
+      "body": null,
+      "content_type": "application/json"
+    },
+    {
+      "group": "动态评论",
+      "method": "DELETE",
+      "path": "/api/moments/comments/{commentId}",
+      "title": "删除评论（短路径别名）",
+      "auth": "评论作者",
+      "request": "—",
+      "response": "null",
+      "notes": "",
+      "params": [
+        [
+          "commentId",
+          "path",
+          "integer",
+          true,
+          null,
+          "评论 ID"
+        ]
+      ],
+      "body": null,
+      "content_type": "application/json"
+    },
+    {
+      "group": "动态评论",
+      "method": "PUT",
+      "path": "/api/moments/{momentId}/comments/{commentId}/like",
+      "title": "设置评论点赞",
+      "auth": "已登录",
+      "request": "ToggleRequest（可空）",
+      "response": "CommentResponse",
+      "notes": "",
+      "params": [
+        [
+          "momentId",
+          "path",
+          "integer",
+          true,
+          null,
+          "动态 ID（服务方法未使用）"
+        ],
+        [
+          "commentId",
+          "path",
+          "integer",
+          true,
+          null,
+          "评论 ID"
+        ]
+      ],
+      "body": "ToggleRequest",
+      "content_type": "application/json"
+    },
+    {
+      "group": "动态评论",
+      "method": "PUT",
+      "path": "/api/moments/comments/{commentId}/like",
+      "title": "设置评论点赞（短路径别名）",
+      "auth": "已登录",
+      "request": "ToggleRequest（可空）",
+      "response": "CommentResponse",
+      "notes": "",
+      "params": [
+        [
+          "commentId",
+          "path",
+          "integer",
+          true,
+          null,
+          "评论 ID"
+        ]
+      ],
+      "body": "ToggleRequest",
+      "content_type": "application/json"
+    },
+    {
+      "group": "动态话题",
+      "method": "GET",
+      "path": "/api/moments/topics/suggestions",
+      "title": "话题建议",
+      "auth": "已登录",
+      "request": "Query: query",
+      "response": "List<TopicResponse>",
+      "notes": "",
+      "params": [
+        [
+          "query",
+          "query",
+          "string",
+          false,
+          null,
+          "搜索词"
+        ]
+      ],
+      "body": null,
+      "content_type": "application/json"
+    },
+    {
+      "group": "动态话题",
+      "method": "GET",
+      "path": "/api/moments/topics",
+      "title": "话题分页列表",
+      "auth": "已登录",
+      "request": "Query: query,page,pageSize",
+      "response": "MomentTopicPageResponse",
+      "notes": "",
+      "params": [
+        [
+          "query",
+          "query",
+          "string",
+          false,
+          null,
+          "搜索词"
+        ],
+        [
+          "page",
+          "query",
+          "integer",
+          false,
+          1,
+          "页码"
+        ],
+        [
+          "pageSize",
+          "query",
+          "integer",
+          false,
+          10,
+          "每页数量"
+        ]
+      ],
+      "body": null,
+      "content_type": "application/json"
+    },
+    {
+      "group": "动态话题",
+      "method": "POST",
+      "path": "/api/moments/topics",
+      "title": "创建/获取话题",
+      "auth": "已登录",
+      "request": "TopicCreateRequest",
+      "response": "TopicResponse",
+      "notes": "",
+      "params": [],
+      "body": "TopicCreateRequest",
+      "content_type": "application/json"
+    },
+    {
+      "group": "动态话题",
+      "method": "GET",
+      "path": "/api/moments/topics/{id}",
+      "title": "话题下动态分页列表",
+      "auth": "已登录",
+      "request": "Query: page,pageSize",
+      "response": "MomentPageResponse",
+      "notes": "",
+      "params": [
+        [
+          "id",
+          "path",
+          "integer",
+          true,
+          null,
+          "话题 ID"
+        ],
+        [
+          "page",
+          "query",
+          "integer",
+          false,
+          1,
+          "页码"
+        ],
+        [
+          "pageSize",
+          "query",
+          "integer",
+          false,
+          10,
+          "每页数量"
+        ]
+      ],
+      "body": null,
+      "content_type": "application/json"
+    },
+    {
+      "group": "动态用户主页与隐私",
+      "method": "GET",
+      "path": "/api/moments/users/{id}",
+      "title": "用户动态分页列表",
+      "auth": "已登录",
+      "request": "Query: page,pageSize",
+      "response": "MomentPageResponse",
+      "notes": "",
+      "params": [
+        [
+          "id",
+          "path",
+          "integer",
+          true,
+          null,
+          "用户 ID"
+        ],
+        [
+          "page",
+          "query",
+          "integer",
+          false,
+          1,
+          "页码"
+        ],
+        [
+          "pageSize",
+          "query",
+          "integer",
+          false,
+          10,
+          "每页数量"
+        ]
+      ],
+      "body": null,
+      "content_type": "application/json"
+    },
+    {
+      "group": "动态用户主页与隐私",
+      "method": "GET",
+      "path": "/api/moments/users/{id}/summary",
+      "title": "用户动态主页摘要",
+      "auth": "已登录",
+      "request": "—",
+      "response": "ProfileSummary",
+      "notes": "",
+      "params": [
+        [
+          "id",
+          "path",
+          "integer",
+          true,
+          null,
+          "用户 ID"
+        ]
+      ],
+      "body": null,
+      "content_type": "application/json"
+    },
+    {
+      "group": "动态用户主页与隐私",
+      "method": "GET",
+      "path": "/api/moments/users/{id}/privacy",
+      "title": "获取对目标用户的动态屏蔽偏好",
+      "auth": "已登录",
+      "request": "—",
+      "response": "PreferenceResponse",
+      "notes": "",
+      "params": [
+        [
+          "id",
+          "path",
+          "integer",
+          true,
+          null,
+          "目标用户 ID"
+        ]
+      ],
+      "body": null,
+      "content_type": "application/json"
+    },
+    {
+      "group": "动态用户主页与隐私",
+      "method": "PUT",
+      "path": "/api/moments/users/{id}/privacy",
+      "title": "修改对目标用户的动态屏蔽偏好",
+      "auth": "已登录",
+      "request": "PreferenceRequest",
+      "response": "PreferenceResponse",
+      "notes": "",
+      "params": [
+        [
+          "id",
+          "path",
+          "integer",
+          true,
+          null,
+          "目标用户 ID"
+        ]
+      ],
+      "body": "PreferenceRequest",
+      "content_type": "application/json"
+    },
+    {
+      "group": "动态用户主页与隐私",
+      "method": "GET",
+      "path": "/api/moments/privacy",
+      "title": "获取动态屏蔽偏好（别名）",
+      "auth": "已登录",
+      "request": "Query: targetUserId",
+      "response": "PreferenceResponse",
+      "notes": "",
+      "params": [
+        [
+          "targetUserId",
+          "query",
+          "integer",
+          true,
+          null,
+          "目标用户 ID"
+        ]
+      ],
+      "body": null,
+      "content_type": "application/json"
+    },
+    {
+      "group": "动态用户主页与隐私",
+      "method": "PUT",
+      "path": "/api/moments/privacy",
+      "title": "修改动态屏蔽偏好（别名）",
+      "auth": "已登录",
+      "request": "Query + PreferenceRequest",
+      "response": "PreferenceResponse",
+      "notes": "",
+      "params": [
+        [
+          "targetUserId",
+          "query",
+          "integer",
+          true,
+          null,
+          "目标用户 ID"
+        ]
+      ],
+      "body": "PreferenceRequest",
+      "content_type": "application/json"
+    },
+    {
+      "group": "动态用户主页与隐私",
+      "method": "PUT",
+      "path": "/api/moments/privacy/profile",
+      "title": "修改自己的动态主页可见性",
+      "auth": "已登录",
+      "request": "ProfileVisibilityRequest",
+      "response": "ProfileSummary",
+      "notes": "",
+      "params": [],
+      "body": "ProfileVisibilityRequest",
+      "content_type": "application/json"
+    },
+    {
+      "group": "动态用户主页与隐私",
+      "method": "GET",
+      "path": "/api/moments/privacy/profile",
+      "title": "获取自己的动态主页可见性",
+      "auth": "已登录",
+      "request": "—",
+      "response": "ProfileSummary",
+      "notes": "",
+      "params": [],
+      "body": null,
+      "content_type": "application/json"
+    },
+    {
+      "group": "动态媒体",
+      "method": "POST",
+      "path": "/api/moments/images",
+      "title": "上传动态图片",
+      "auth": "已登录",
+      "request": "multipart: image",
+      "response": "MomentUploadResponse",
+      "notes": "",
+      "params": [],
+      "body": "MomentImageUpload",
+      "content_type": "multipart/form-data"
+    },
+    {
+      "group": "动态媒体",
+      "method": "POST",
+      "path": "/api/moments/comment-images",
+      "title": "上传评论图片",
+      "auth": "已登录",
+      "request": "multipart: image",
+      "response": "MomentUploadResponse",
+      "notes": "",
+      "params": [],
+      "body": "MomentImageUpload",
+      "content_type": "multipart/form-data"
+    },
+    {
+      "group": "动态分享与未读",
+      "method": "POST",
+      "path": "/api/moments/{id}/share",
+      "title": "分享动态/评论到会话",
+      "auth": "已登录",
+      "request": "MomentShareRequest",
+      "response": "ChatMessageResponse",
+      "notes": "",
+      "params": [
+        [
+          "id",
+          "path",
+          "integer",
+          true,
+          null,
+          "动态 ID"
+        ]
+      ],
+      "body": "MomentShareRequest",
+      "content_type": "application/json"
+    },
+    {
+      "group": "动态分享与未读",
+      "method": "GET",
+      "path": "/api/moments/unread-count",
+      "title": "相关动态未读数",
+      "auth": "已登录",
+      "request": "—",
+      "response": "UnreadResponse",
+      "notes": "",
+      "params": [],
+      "body": null,
+      "content_type": "application/json"
+    },
+    {
+      "group": "动态分享与未读",
+      "method": "PUT",
+      "path": "/api/moments/read",
+      "title": "批量标记动态已读",
+      "auth": "已登录",
+      "request": "MarkReadRequest",
+      "response": "null",
+      "notes": "",
+      "params": [],
+      "body": "MarkReadRequest",
+      "content_type": "application/json"
+    },
+    {
+      "group": "版本",
+      "method": "GET",
+      "path": "/api/version/check",
+      "title": "检查客户端更新",
+      "auth": "公开",
+      "request": "Query: appCode,currentVersionCode",
+      "response": "VersionCheckResponse",
+      "notes": "",
+      "params": [
+        [
+          "appCode",
+          "query",
+          "string",
+          true,
+          null,
+          "shop / customer / admin"
+        ],
+        [
+          "currentVersionCode",
+          "query",
+          "integer",
+          true,
+          null,
+          "当前构建号"
+        ]
+      ],
+      "body": null,
+      "content_type": "application/json"
+    },
+    {
+      "group": "版本",
+      "method": "POST",
+      "path": "/api/version/publish",
+      "title": "发布新版本",
+      "auth": "公开（当前 SecurityConfig 行为）",
+      "request": "VersionSaveRequest",
+      "response": "null",
+      "notes": "安全提醒：当前 /api/version/** 全部 permitAll，网页后台上线前建议将 publish 限制为 ADMIN。",
+      "params": [],
+      "body": "VersionSaveRequest",
+      "content_type": "application/json"
+    }
+  ]
+}

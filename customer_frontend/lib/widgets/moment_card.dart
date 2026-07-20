@@ -290,143 +290,163 @@ class _MomentCardState extends State<MomentCard> {
     final displayTime = _shouldShowEdited(_moment)
         ? '编辑于 ${formatMomentTime(_moment.editedAt!)}'
         : formatMomentTime(_moment.publishedAt ?? _moment.createdAt);
+    final hasCommentCard = !widget.detail && _hotComment != null;
 
     return Material(
-      color: Colors.white,
-      borderRadius: BorderRadius.circular(16),
-      clipBehavior: Clip.antiAlias,
-      child: InkWell(
-        onTap: _open,
-        child: Container(
-          padding: const EdgeInsets.fromLTRB(16, 15, 16, 8),
-          decoration: BoxDecoration(borderRadius: BorderRadius.circular(16)),
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              _MomentAuthorHeader(
-                moment: _moment,
-                displayTime: displayTime,
-                onAuthorTap: _openAuthor,
-                onEdit: _moment.mine ? _editMoment : null,
-                onDelete: _moment.mine ? _deleteMoment : null,
-              ),
-              const SizedBox(height: 13),
-              Text(
-                _moment.title,
-                style: const TextStyle(
-                  fontSize: 18,
-                  height: 1.3,
-                  fontWeight: FontWeight.w800,
-                  color: Color(0xFF202124),
-                ),
-              ),
-              const SizedBox(height: 7),
-              Text(
-                _moment.content,
-                maxLines: widget.detail ? null : 5,
-                overflow: widget.detail ? null : TextOverflow.ellipsis,
-                style: const TextStyle(
-                  fontSize: 15,
-                  height: 1.58,
-                  color: Color(0xFF3C4043),
-                ),
-              ),
-              if (!widget.detail && _moment.content.length > 150)
-                const Padding(
-                  padding: EdgeInsets.only(top: 4),
-                  child: Text(
-                    '展开全文',
-                    style: TextStyle(
-                      fontSize: 13,
-                      fontWeight: FontWeight.w600,
-                      color: Color(0xFFE77910),
+      color: Colors.transparent,
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          _MomentTopSection(
+            showCommentNotch: hasCommentCard,
+            child: InkWell(
+              onTap: _open,
+              child: Padding(
+                padding: const EdgeInsets.fromLTRB(16, 15, 16, 8),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    _MomentAuthorHeader(
+                      moment: _moment,
+                      displayTime: displayTime,
+                      onAuthorTap: _openAuthor,
+                      onEdit: _moment.mine ? _editMoment : null,
+                      onDelete: _moment.mine ? _deleteMoment : null,
                     ),
-                  ),
-                ),
-              if (_moment.images.isNotEmpty) ...[
-                const SizedBox(height: 12),
-                _MomentImages(images: _moment.images),
-              ],
-              if (_moment.shopId != null) ...[
-                const SizedBox(height: 12),
-                _MomentShopLink(moment: _moment),
-              ],
-              if (_moment.topics.isNotEmpty) ...[
-                const SizedBox(height: 11),
-                Wrap(
-                  spacing: 7,
-                  runSpacing: 7,
-                  children: [
-                    for (final topic in _moment.topics)
-                      _TopicChip(topic: topic, onTap: () => _openTopic(topic)),
-                  ],
-                ),
-              ],
-              if (_moment.visibility == 'PRIVATE') ...[
-                const SizedBox(height: 10),
-                const _Badge(
-                  text: '仅自己可见',
-                  icon: Icons.lock_outline_rounded,
-                  color: Color(0xFF697077),
-                ),
-              ],
-              if (_moment.reactions.isNotEmpty) ...[
-                const SizedBox(height: 12),
-                _ReactionBar(reactions: _moment.reactions, onReact: _react),
-              ],
-              const SizedBox(height: 10),
-              const Divider(height: 1, color: Color(0xFFEEEEEE)),
-              SizedBox(
-                height: 48,
-                child: Row(
-                  children: [
-                    Expanded(
-                      child: _Action(
-                        icon: _moment.liked
-                            ? Icons.favorite_rounded
-                            : Icons.favorite_border_rounded,
-                        text: _moment.likeCount == 0
-                            ? '点赞'
-                            : '${_moment.likeCount}',
-                        active: _moment.liked,
-                        onTap: _like,
+                    const SizedBox(height: 13),
+                    Text(
+                      _moment.title,
+                      style: const TextStyle(
+                        fontSize: 18,
+                        height: 1.3,
+                        fontWeight: FontWeight.w800,
+                        color: Color(0xFF202124),
                       ),
                     ),
-                    const _ActionDivider(),
-                    Expanded(
-                      child: _Action(
-                        icon: Icons.chat_bubble_outline_rounded,
-                        text: _moment.commentCount == 0
-                            ? '评论'
-                            : '${_moment.commentCount}',
-                        onTap: _open,
+                    const SizedBox(height: 7),
+                    Text(
+                      _moment.content,
+                      maxLines: widget.detail ? null : 5,
+                      overflow: widget.detail ? null : TextOverflow.ellipsis,
+                      style: const TextStyle(
+                        fontSize: 15,
+                        height: 1.58,
+                        color: Color(0xFF3C4043),
                       ),
                     ),
-                    const _ActionDivider(),
-                    Expanded(
-                      child: _ReactionPickerAction(
+                    if (!widget.detail && _moment.content.length > 150)
+                      const Padding(
+                        padding: EdgeInsets.only(top: 4),
+                        child: Text(
+                          '展开全文',
+                          style: TextStyle(
+                            fontSize: 13,
+                            fontWeight: FontWeight.w600,
+                            color: Color(0xFFE77910),
+                          ),
+                        ),
+                      ),
+                    if (_moment.images.isNotEmpty) ...[
+                      const SizedBox(height: 12),
+                      _MomentImages(images: _moment.images),
+                    ],
+                    if (_moment.shopId != null) ...[
+                      const SizedBox(height: 12),
+                      _MomentShopLink(moment: _moment),
+                    ],
+                    if (_moment.topics.isNotEmpty) ...[
+                      const SizedBox(height: 11),
+                      Wrap(
+                        spacing: 7,
+                        runSpacing: 7,
+                        children: [
+                          for (final topic in _moment.topics)
+                            _TopicChip(
+                              topic: topic,
+                              onTap: () => _openTopic(topic),
+                            ),
+                        ],
+                      ),
+                    ],
+                    if (_moment.visibility == 'PRIVATE') ...[
+                      const SizedBox(height: 10),
+                      const _Badge(
+                        text: '仅自己可见',
+                        icon: Icons.lock_outline_rounded,
+                        color: Color(0xFF697077),
+                      ),
+                    ],
+                    if (_moment.reactions.isNotEmpty) ...[
+                      const SizedBox(height: 12),
+                      _ReactionBar(
                         reactions: _moment.reactions,
-                        onSelected: _react,
+                        onReact: _react,
                       ),
-                    ),
-                    const _ActionDivider(),
-                    Expanded(
-                      child: _Action(
-                        icon: Icons.ios_share_rounded,
-                        text: '分享',
-                        onTap: _share,
+                    ],
+                    const SizedBox(height: 10),
+                    const Divider(height: 1, color: Color(0xFFEEEEEE)),
+                    SizedBox(
+                      height: 48,
+                      child: Row(
+                        children: [
+                          Expanded(
+                            child: _Action(
+                              icon: _moment.liked
+                                  ? Icons.favorite_rounded
+                                  : Icons.favorite_border_rounded,
+                              text: _moment.likeCount == 0
+                                  ? '点赞'
+                                  : '${_moment.likeCount}',
+                              active: _moment.liked,
+                              onTap: _like,
+                            ),
+                          ),
+                          const _ActionDivider(),
+                          Expanded(
+                            child: _Action(
+                              icon: Icons.chat_bubble_outline_rounded,
+                              text: _moment.commentCount == 0
+                                  ? '评论'
+                                  : '${_moment.commentCount}',
+                              onTap: _open,
+                            ),
+                          ),
+                          const _ActionDivider(),
+                          Expanded(
+                            child: _ReactionPickerAction(
+                              reactions: _moment.reactions,
+                              onSelected: _react,
+                            ),
+                          ),
+                          const _ActionDivider(),
+                          Expanded(
+                            child: _Action(
+                              icon: Icons.ios_share_rounded,
+                              text: '分享',
+                              onTap: _share,
+                            ),
+                          ),
+                        ],
                       ),
                     ),
                   ],
                 ),
               ),
-              if (!widget.detail && _hotComment != null) ...[
-                const SizedBox(height: 10),
-                _HotCommentPreview(comment: _hotComment!, onTap: _open),
-              ],
-            ],
+            ),
           ),
-        ),
+          if (hasCommentCard) ...[
+            const _PostCommentSeparator(),
+            _MomentCommentSection(
+              child: Padding(
+                padding: const EdgeInsets.fromLTRB(16, 12, 16, 12),
+                child: _HotCommentPreview(
+                  comment: _hotComment!,
+                  onTap: _open,
+                ),
+              ),
+            ),
+          ],
+        ],
       ),
     );
   }
@@ -657,6 +677,195 @@ class _TopicChip extends StatelessWidget {
   );
 }
 
+class _PostCommentSeparator extends StatelessWidget {
+  const _PostCommentSeparator();
+
+  @override
+  Widget build(BuildContext context) => const SizedBox(
+    height: 8,
+    width: double.infinity,
+    child: ColoredBox(color: Color(0xFFF3F4F6)),
+  );
+}
+
+class _MomentTopSection extends StatelessWidget {
+  const _MomentTopSection({
+    required this.child,
+    required this.showCommentNotch,
+  });
+
+  final Widget child;
+  final bool showCommentNotch;
+
+  @override
+  Widget build(BuildContext context) => Stack(
+    clipBehavior: Clip.none,
+    children: [
+      Material(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(16),
+        clipBehavior: Clip.antiAlias,
+        child: child,
+      ),
+      if (showCommentNotch)
+        const Positioned(
+          left: 0,
+          right: 0,
+          bottom: -1,
+          child: IgnorePointer(child: _CommentConnectorCutout()),
+        ),
+    ],
+  );
+}
+
+class _MomentCommentSection extends StatelessWidget {
+  const _MomentCommentSection({required this.child});
+
+  final Widget child;
+
+  @override
+  Widget build(BuildContext context) => Stack(
+    clipBehavior: Clip.none,
+    children: [
+      Positioned(
+        left: 0,
+        right: 0,
+        top: -10,
+        child: IgnorePointer(
+          child: Align(
+            alignment: _commentConnectorAlignment,
+            child: const _ConnectorShape(
+              width: 56,
+              height: 12,
+              color: Colors.white,
+              pointUp: true,
+            ),
+          ),
+        ),
+      ),
+      Material(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(16),
+        clipBehavior: Clip.antiAlias,
+        child: child,
+      ),
+    ],
+  );
+}
+
+const Alignment _commentConnectorAlignment = Alignment(-0.25, 0);
+
+class _CommentConnectorCutout extends StatelessWidget {
+  const _CommentConnectorCutout();
+
+  @override
+  Widget build(BuildContext context) => Align(
+    alignment: _commentConnectorAlignment,
+    child: const _ConnectorShape(
+      width: 56,
+      height: 12,
+      color: Color(0xFFF3F4F6),
+      pointUp: true,
+    ),
+  );
+}
+
+class _ConnectorShape extends StatelessWidget {
+  const _ConnectorShape({
+    required this.width,
+    required this.height,
+    required this.color,
+    required this.pointUp,
+  });
+
+  final double width;
+  final double height;
+  final Color color;
+  final bool pointUp;
+
+  @override
+  Widget build(BuildContext context) => CustomPaint(
+    size: Size(width, height),
+    painter: _ConnectorPainter(color: color, pointUp: pointUp),
+  );
+}
+
+class _ConnectorPainter extends CustomPainter {
+  const _ConnectorPainter({required this.color, required this.pointUp});
+
+  final Color color;
+  final bool pointUp;
+
+  Path _buildRoundedTriangle(Size size) {
+    final w = size.width;
+    final h = size.height;
+
+    // 保持原来的整体尺寸，只增强圆润感：
+    // 1) 左右两个底角不做尖角，改成和两端直线的弯曲过渡
+    // 2) 顶角单独做更明显的圆角
+    final leftJoinX = w * 0.12;
+    final rightJoinX = w * 0.88;
+    final leftShoulderX = w * 0.30;
+    final rightShoulderX = w * 0.70;
+    final shoulderY = h * 0.52;
+    final tipRadius = h * 0.36;
+    final tipTopY = h * 0.06;
+    final tipLeftX = w / 2 - tipRadius;
+    final tipRightX = w / 2 + tipRadius;
+    final tipShoulderY = h * 0.30;
+
+    final path = Path()
+      ..moveTo(0, h)
+      ..lineTo(leftJoinX, h)
+      ..cubicTo(
+        w * 0.27,
+        h,
+        leftShoulderX,
+        shoulderY,
+        tipLeftX,
+        tipShoulderY,
+      )
+      ..quadraticBezierTo(w / 2, tipTopY, tipRightX, tipShoulderY)
+      ..cubicTo(
+        rightShoulderX,
+        shoulderY,
+        w * 0.73,
+        h,
+        rightJoinX,
+        h,
+      )
+      ..lineTo(w, h)
+      ..close();
+
+    return path;
+  }
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    final paint = Paint()
+      ..color = color
+      ..style = PaintingStyle.fill
+      ..isAntiAlias = true;
+
+    final path = _buildRoundedTriangle(size);
+
+    if (pointUp) {
+      canvas.drawPath(path, paint);
+      return;
+    }
+
+    canvas.save();
+    canvas.translate(0, size.height);
+    canvas.scale(1, -1);
+    canvas.drawPath(path, paint);
+    canvas.restore();
+  }
+
+  @override
+  bool shouldRepaint(covariant _ConnectorPainter oldDelegate) =>
+      oldDelegate.color != color || oldDelegate.pointUp != pointUp;
+}
+
 class _HotCommentPreview extends StatelessWidget {
   const _HotCommentPreview({required this.comment, required this.onTap});
 
@@ -668,32 +877,10 @@ class _HotCommentPreview extends StatelessWidget {
     onTap: onTap,
     child: Ink(
       width: double.infinity,
-      padding: const EdgeInsets.fromLTRB(11, 7, 4, 7),
-      decoration: const BoxDecoration(
-        border: Border(left: BorderSide(color: Color(0xFFF2A04B), width: 2)),
-      ),
+      padding: const EdgeInsets.fromLTRB(10, 8, 8, 8),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          const Row(
-            children: [
-              Icon(
-                Icons.local_fire_department_rounded,
-                size: 15,
-                color: Color(0xFFE77910),
-              ),
-              SizedBox(width: 4),
-              Text(
-                '热门评论',
-                style: TextStyle(
-                  fontSize: 11,
-                  fontWeight: FontWeight.w700,
-                  color: Color(0xFFE77910),
-                ),
-              ),
-            ],
-          ),
-          const SizedBox(height: 8),
           _HotCommentLine(comment: comment),
           if (comment.replies.isNotEmpty)
             Padding(
@@ -967,6 +1154,45 @@ class _NetworkMomentImage extends StatelessWidget {
   );
 }
 
+class _CommentPreviewImage extends StatelessWidget {
+  const _CommentPreviewImage({required this.url, required this.compact});
+
+  final String url;
+  final bool compact;
+
+  @override
+  Widget build(BuildContext context) {
+    final size = compact ? 72.0 : 104.0;
+    return MomentImagePreview(
+      images: [url],
+      index: 0,
+      resolveUrl: resolveCustomerImageUrl,
+      child: ClipRRect(
+        borderRadius: BorderRadius.circular(8),
+        child: SizedBox.square(
+          dimension: size,
+          child: Image.network(
+            resolveCustomerImageUrl(url),
+            fit: BoxFit.cover,
+            loadingBuilder: (_, child, progress) => progress == null
+                ? child
+                : const SoftImageLoadingPlaceholder(),
+            errorBuilder: (_, _, _) => const ColoredBox(
+              color: Color(0xFFF0F1F3),
+              child: Center(
+                child: Icon(
+                  Icons.broken_image_outlined,
+                  color: Color(0xFF9AA0A6),
+                ),
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+}
+
 class _Badge extends StatelessWidget {
   const _Badge({required this.text, required this.color, this.icon});
 
@@ -1081,16 +1307,25 @@ class _HotCommentLine extends StatelessWidget {
               ],
             ),
             const SizedBox(height: 3),
-            Text(
-              comment.content,
-              maxLines: compact ? 1 : 2,
-              overflow: TextOverflow.ellipsis,
-              style: TextStyle(
-                fontSize: compact ? 12 : 13,
-                height: 1.4,
-                color: const Color(0xFF44474C),
+            if (comment.content.trim().isNotEmpty)
+              Text(
+                comment.content,
+                maxLines: compact ? 1 : 2,
+                overflow: TextOverflow.ellipsis,
+                style: TextStyle(
+                  fontSize: compact ? 12 : 13,
+                  height: 1.4,
+                  color: const Color(0xFF44474C),
+                ),
               ),
-            ),
+            if (comment.imageUrl?.isNotEmpty == true)
+              Padding(
+                padding: const EdgeInsets.only(top: 6),
+                child: _CommentPreviewImage(
+                  url: comment.imageUrl!,
+                  compact: compact,
+                ),
+              ),
           ],
         ),
       ),

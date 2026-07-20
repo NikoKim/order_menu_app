@@ -34,7 +34,7 @@ public final class MomentDtos {
   public record CommentRequest(@Size(max=2000) String content,Long parentCommentId,Long replyToCommentId,
       @Size(max=6) List<@Size(max=500) String> imageUrls) {}
   public record CommentResponse(Long id,Long momentId,AuthorResponse author,String content,List<String> imageUrls,
-      Long parentCommentId,Long replyToCommentId,String replyToNickname,Boolean authorBadge,Long likeCount,
+      Long parentCommentId,Long replyToCommentId,String replyToNickname,Boolean authorBadge,Boolean mine,Long likeCount,
       Boolean likedByMe,Long replyCount,List<CommentResponse> replies,
       @JsonFormat(pattern="yyyy-MM-dd'T'HH:mm:ss.SSS'+08:00'") LocalDateTime createdAt) {}
   public record PreferenceRequest(Boolean hideTargetMoments,Boolean hideMyMoments) {}
