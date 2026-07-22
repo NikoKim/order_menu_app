@@ -11,6 +11,22 @@ spring:
       enabled: true
       max-file-size: 30MB
       max-request-size: 32MB
+  data:
+    redis:
+      host: ${REDIS_HOST:127.0.0.1}
+      port: ${REDIS_PORT:6379}
+      password: ${REDIS_PASSWORD}
+      database: ${REDIS_DATABASE:0}
+      connect-timeout: 2s
+      timeout: 2s
+      repositories:
+        enabled: false
+      lettuce:
+        pool:
+          max-active: 16
+          max-idle: 8
+          min-idle: 1
+          max-wait: 1s
 
 mybatis-plus:
   type-aliases-package: com.order.menu.module.*.entity
@@ -46,3 +62,24 @@ app:
     gateway-token: ${ORDER_MENU_PUSH_GATEWAY_TOKEN:}
   cors:
     allowed-methods: GET,POST,PUT,DELETE,OPTIONS
+
+order-menu:
+  redis:
+    enabled: ${ORDER_MENU_REDIS_ENABLED:false}
+    environment: ${ORDER_MENU_REDIS_ENV:dev}
+
+    menu-cache-enabled: ${ORDER_MENU_MENU_CACHE_ENABLED:false}
+    moment-cache-enabled: ${ORDER_MENU_MOMENT_CACHE_ENABLED:false}
+    chat-cache-enabled: ${ORDER_MENU_CHAT_CACHE_ENABLED:false}
+    unread-cache-enabled: ${ORDER_MENU_UNREAD_CACHE_ENABLED:false}
+    idempotency-enabled: ${ORDER_MENU_IDEMPOTENCY_ENABLED:false}
+    websocket-bus-enabled: ${ORDER_MENU_WEBSOCKET_BUS_ENABLED:false}
+
+    shop-detail-ttl-seconds: 300
+    shop-menu-ttl-seconds: 120
+    moment-base-ttl-seconds: 300
+    chat-message-ttl-seconds: 1800
+    chat-recent-ttl-seconds: 1800
+    unread-count-ttl-seconds: 300
+    idempotency-pending-ttl-seconds: 120
+    idempotency-success-ttl-seconds: 600
