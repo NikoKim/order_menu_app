@@ -79,7 +79,19 @@ public class OrderService {
         order.setTotalAmount(total);
         order.setRemark(trimToNull(request.remark()));
         order.setStatus(StatusConstants.ORDER_SUBMITTED);
-        orderMapper.insert(order);
+        order.setClientRequestId(request.clientRequestId());
+
+        try {
+            orderMapper.insert(order);
+        } catch (org.springframework.dao.DuplicateKeyException exception) {
+            Order existing = orderMapper.selectByCustomerAndClientRequestId(
+                    customerUserId, request.clientRequestId());
+            if (existing != null) {
+                return new OrderDtos.OrderSubmitResponse(existing.getId(), existing.getOrderNo(),
+                        existing.getStatus(), existing.getTotalAmount());
+            }
+            throw exception;
+        }
 
         for (OrderLine line : lines) {
             Dish dish = line.dish();

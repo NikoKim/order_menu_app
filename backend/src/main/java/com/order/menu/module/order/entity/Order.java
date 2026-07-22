@@ -18,6 +18,7 @@ public class Order {
     private BigDecimal totalAmount;
     private String remark;
     private String status;
+    private String clientRequestId;
     private LocalDateTime createdAt;
     private LocalDateTime updatedAt;
 }

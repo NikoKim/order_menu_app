@@ -1,6 +1,7 @@
 package com.order.menu.module.order.dto;
 
 import jakarta.validation.Valid;
+import jakarta.validation.constraints.NotBlank;
 import jakarta.validation.constraints.NotEmpty;
 import jakarta.validation.constraints.NotNull;
 import jakarta.validation.constraints.Positive;
@@ -14,6 +15,9 @@ public final class OrderDtos {
     }
 
     public record CreateOrderRequest(
+            @NotBlank(message = "clientRequestId不能为空")
+            @Size(max = 64, message = "clientRequestId长度不能超过64")
+            String clientRequestId,
             @NotNull(message = "商家ID不能为空") Long shopId,
             @Size(max = 500, message = "备注不能超过500个字符") String remark,
             @NotEmpty(message = "订单菜品不能为空") List<@Valid CreateOrderItemRequest> items
