@@ -123,8 +123,19 @@ public class MessageController {
     }
 
     @GetMapping("/conversations/{conversationId}/messages")
-    public ApiResponse<MessageDtos.ConversationMessagesResponse> messages(@PathVariable Long conversationId) {
-        return ApiResponse.success(messageService.messages(UserContext.get().userId(), conversationId));
+    public ApiResponse<MessageDtos.ConversationMessagesResponse> messages(
+            @PathVariable Long conversationId,
+            @RequestParam(required = false) Long beforeId,
+            @RequestParam(defaultValue = "50") Integer limit) {
+        return ApiResponse.success(messageService.messages(UserContext.get().userId(), conversationId, beforeId, limit));
+    }
+
+    @PutMapping("/conversations/{conversationId}/read")
+    public ApiResponse<Void> markRead(
+            @PathVariable Long conversationId,
+            @RequestBody MessageDtos.ReadConversationRequest request) {
+        messageService.markConversationRead(UserContext.get().userId(), conversationId, request.lastReadMessageId());
+        return ApiResponse.success();
     }
 
     @GetMapping("/blocks/users/{userId}")

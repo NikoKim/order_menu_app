@@ -905,18 +905,105 @@ public class MessageService {
                 families, shopProfile);
     }
 
-    public MessageDtos.ConversationMessagesResponse messages(Long userId, Long conversationId) {
+    public MessageDtos.ConversationMessagesResponse messages(Long userId, Long conversationId,
+                                                              Long beforeId, Integer limit) {
         Conversation conversation = requireConversationMember(userId, conversationId);
-        List<ChatMessage> allEntities = chatMessageMapper.selectList(new LambdaQueryWrapper<ChatMessage>()
-                        .eq(ChatMessage::getConversationId, conversationId)
-                        .orderByAsc(ChatMessage::getCreatedAt)
-                        .orderByAsc(ChatMessage::getId));
-        markConversationRead(userId, conversationId, allEntities);
-        List<ChatMessage> entities = visibleMessages(userId, allEntities);
-        List<MessageDtos.ChatMessageResponse> messages = entities.stream()
+
+        int safeLimit = limit == null ? 50 : Math.max(1, Math.min(limit, 100));
+        int queryLimit = safeLimit + 1;
+
+        List<ChatMessage> entities;
+
+        if (beforeId == null) {
+            entities = chatMessageMapper.selectVisibleLatest(
+                    conversationId,
+                    userId,
+                    queryLimit
+            );
+        } else {
+            entities = chatMessageMapper.selectVisibleBefore(
+                    conversationId,
+                    userId,
+                    beforeId,
+                    queryLimit
+            );
+        }
+
+        boolean hasMore = entities.size() > safeLimit;
+
+        if (hasMore) {
+            entities = new java.util.ArrayList<>(
+                    entities.subList(0, safeLimit)
+            );
+        } else {
+            entities = new java.util.ArrayList<>(entities);
+        }
+
+        // SQL is DESC, frontend expects old -> new message order.
+        java.util.Collections.reverse(entities);
+
+        // Filter out failed blocked messages for non-sender.
+        List<ChatMessage> visible = entities.stream()
+                .filter(message -> !FAILED_BLOCKED.equals(message.getDeliveryStatus())
+                        || userId.equals(message.getSenderUserId()))
+                .toList();
+
+        List<MessageDtos.ChatMessageResponse> responses = visible.stream()
                 .map(this::toMessageResponse)
                 .toList();
-        return new MessageDtos.ConversationMessagesResponse(toConversationResponse(conversation, userId), messages);
+
+        Long nextBeforeId = entities.isEmpty()
+                ? null
+                : entities.get(0).getId();
+
+        return new MessageDtos.ConversationMessagesResponse(
+                toConversationResponse(conversation, userId),
+                responses,
+                hasMore,
+                nextBeforeId
+        );
+    }
+
+    @Transactional
+    public void markConversationRead(
+            Long userId,
+            Long conversationId,
+            Long lastReadMessageId) {
+        requireConversationMember(userId, conversationId);
+
+        if (lastReadMessageId == null) {
+            throw new BusinessException(
+                    ErrorCode.BAD_REQUEST,
+                    "lastReadMessageId不能为空"
+            );
+        }
+
+        int belongs = chatMessageMapper.countMessageInConversation(
+                conversationId,
+                lastReadMessageId
+        );
+
+        if (belongs == 0) {
+            throw new BusinessException(
+                    ErrorCode.BAD_REQUEST,
+                    "消息不属于当前会话"
+            );
+        }
+
+        int affected = conversationMemberMapper.updateLastReadMessageId(
+                conversationId,
+                userId,
+                lastReadMessageId
+        );
+
+        if (affected == 0) {
+            throw new BusinessException(
+                    ErrorCode.NOT_FOUND,
+                    "会话成员不存在"
+            );
+        }
+
+        afterCommit(() -> pushConversationUpdated(conversationId));
     }
 
     public void assertCanAccessChatImage(Long userId, Long conversationId, String filename) {
@@ -1763,18 +1850,6 @@ public class MessageService {
                 conversation.getStatus(), visibleLastMessageAt, messageVersion(conversation), directUserId,
                 displayName, displayAvatar, lastContent, unread, muted, pinned,
                 viewer == null ? null : viewer.getPinnedAt(), hidden, muted && unread > 0);
-    }
-
-    private void markConversationRead(Long userId, Long conversationId, List<ChatMessage> messages) {
-        if (messages.isEmpty()) return;
-        ConversationMember viewer = member(conversationId, userId);
-        ChatMessage latest = messages.get(messages.size() - 1);
-        if (viewer != null && latest.getId() != null
-                && (viewer.getLastReadMessageId() == null || latest.getId() > viewer.getLastReadMessageId())) {
-            viewer.setLastReadMessageId(latest.getId());
-            conversationMemberMapper.updateById(viewer);
-            pushConversationUpdated(conversationId);
-        }
     }
 
     private MessageDtos.ChatMessageResponse toMessageResponse(ChatMessage message) {

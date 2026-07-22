@@ -828,9 +828,9 @@ class MessageServiceTest {
         message.setId(5L);
         message.setConversationId(9L);
         message.setSenderUserId(2L);
-        when(chatMessageMapper.selectList(any())).thenReturn(List.of(message));
+        when(chatMessageMapper.selectVisibleLatest(9L, 1L, 51)).thenReturn(List.of(message));
 
-        MessageDtos.ConversationMessagesResponse response = service().messages(1L, 9L);
+        MessageDtos.ConversationMessagesResponse response = service().messages(1L, 9L, null, 50);
 
         assertEquals("Happy Kitchen", response.conversation().directUserNickname());
         assertEquals("Happy Kitchen", response.messages().get(0).senderNickname());
@@ -842,10 +842,9 @@ class MessageServiceTest {
         when(conversationMemberMapper.selectList(any())).thenReturn(List.of());
 
         BusinessException error = assertThrows(BusinessException.class,
-                () -> service().messages(3L, 9L));
+                () -> service().messages(3L, 9L, null, 50));
 
         assertEquals(ErrorCode.FORBIDDEN, error.getCode());
-        verify(chatMessageMapper, never()).selectList(any());
     }
 
     @Test
@@ -873,23 +872,37 @@ class MessageServiceTest {
     }
 
     @Test
-    void openingMessagesMarksLatestMessageRead() {
+    void openingMessagesDoesNotAutoMarkRead() {
         Conversation conversation = directConversation(9L, 1L);
         conversation.setDirectKey("1:2");
         ConversationMember viewer = member(9L, 1L);
         when(conversationMapper.selectById(9L)).thenReturn(conversation);
         when(conversationMemberMapper.selectList(any())).thenReturn(List.of(viewer, member(9L, 2L)));
-        when(conversationMemberMapper.selectOne(any())).thenReturn(viewer);
         ChatMessage latest = new ChatMessage();
         latest.setId(12L);
         latest.setConversationId(9L);
         latest.setSenderUserId(2L);
-        when(chatMessageMapper.selectList(any())).thenReturn(List.of(latest));
+        when(chatMessageMapper.selectVisibleLatest(9L, 1L, 51)).thenReturn(List.of(latest));
 
-        service().messages(1L, 9L);
+        service().messages(1L, 9L, null, 50);
 
-        assertEquals(12L, viewer.getLastReadMessageId());
-        verify(conversationMemberMapper).updateById(viewer);
+        // GET messages should not auto-mark read.
+        verify(conversationMemberMapper, never()).updateById(any(ConversationMember.class));
+    }
+
+    @Test
+    void markConversationReadUpdatesLastReadMessageId() {
+        Conversation conversation = directConversation(9L, 1L);
+        conversation.setDirectKey("1:2");
+        ConversationMember viewer = member(9L, 1L);
+        when(conversationMapper.selectById(9L)).thenReturn(conversation);
+        when(conversationMemberMapper.selectList(any())).thenReturn(List.of(viewer, member(9L, 2L)));
+        when(chatMessageMapper.countMessageInConversation(9L, 12L)).thenReturn(1);
+        when(conversationMemberMapper.updateLastReadMessageId(9L, 1L, 12L)).thenReturn(1);
+
+        service().markConversationRead(1L, 9L, 12L);
+
+        verify(conversationMemberMapper).updateLastReadMessageId(9L, 1L, 12L);
         verify(wsPushService).pushToUser(
                 org.mockito.ArgumentMatchers.eq(1L),
                 org.mockito.ArgumentMatchers.eq("CHAT"),
@@ -982,9 +995,10 @@ class MessageServiceTest {
         when(conversationMapper.selectById(9L)).thenReturn(conversation);
         when(conversationMemberMapper.selectList(any())).thenReturn(List.of(member(9L, 2L)));
         when(chatMessageMapper.selectList(any())).thenReturn(List.of(failed));
+        when(chatMessageMapper.selectVisibleLatest(9L, 2L, 51)).thenReturn(List.of(failed));
         when(userMapper.selectById(1L)).thenReturn(user(1L, true));
 
-        MessageDtos.ConversationMessagesResponse response = service().messages(2L, 9L);
+        MessageDtos.ConversationMessagesResponse response = service().messages(2L, 9L, null, 50);
 
         assertEquals(List.of(), response.messages());
         assertEquals(null, response.conversation().lastMessageContent());

@@ -200,7 +200,13 @@ public final class MessageDtos {
 
     public record ConversationMessagesResponse(
             ConversationResponse conversation,
-            List<ChatMessageResponse> messages) {
+            List<ChatMessageResponse> messages,
+            boolean hasMore,
+            Long nextBeforeId) {
+    }
+
+    public record ReadConversationRequest(
+            Long lastReadMessageId) {
     }
 
     public record NotificationResponse(

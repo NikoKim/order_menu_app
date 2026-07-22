@@ -36,4 +36,55 @@ public interface ChatMessageMapper extends BaseMapper<ChatMessage> {
               )
             """)
     List<Long> selectEstablishedDirectChatUserIds(@Param("userId") Long userId);
+
+    @Select("""
+        SELECT m.*
+        FROM chat_messages m
+        WHERE m.conversation_id = #{conversationId}
+          AND NOT EXISTS (
+              SELECT 1
+              FROM chat_message_deletions d
+              WHERE d.message_id = m.id
+                AND d.user_id = #{userId}
+          )
+        ORDER BY m.id DESC
+        LIMIT #{limit}
+        """)
+    List<ChatMessage> selectVisibleLatest(
+            @Param("conversationId") Long conversationId,
+            @Param("userId") Long userId,
+            @Param("limit") int limit
+    );
+
+    @Select("""
+        SELECT m.*
+        FROM chat_messages m
+        WHERE m.conversation_id = #{conversationId}
+          AND m.id < #{beforeId}
+          AND NOT EXISTS (
+              SELECT 1
+              FROM chat_message_deletions d
+              WHERE d.message_id = m.id
+                AND d.user_id = #{userId}
+          )
+        ORDER BY m.id DESC
+        LIMIT #{limit}
+        """)
+    List<ChatMessage> selectVisibleBefore(
+            @Param("conversationId") Long conversationId,
+            @Param("userId") Long userId,
+            @Param("beforeId") Long beforeId,
+            @Param("limit") int limit
+    );
+
+    @Select("""
+        SELECT COUNT(*)
+        FROM chat_messages
+        WHERE id = #{messageId}
+          AND conversation_id = #{conversationId}
+        """)
+    int countMessageInConversation(
+            @Param("conversationId") Long conversationId,
+            @Param("messageId") Long messageId
+    );
 }
