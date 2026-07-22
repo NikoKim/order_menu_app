@@ -126,7 +126,7 @@ public class MessageService {
         Map<String, Object> pushData = new java.util.HashMap<>();
         if (notification.getId() != null) pushData.put("notificationId", notification.getId());
         pushData.put("unreadCount", unreadCount);
-        wsPushService.pushToUser(userId, "NOTIFICATION", "CREATED", pushData);
+        afterCommit(() -> wsPushService.pushToUser(userId, "NOTIFICATION", "CREATED", pushData));
         if (mobilePushService != null) {
             afterCommit(() -> mobilePushService.dispatch(userId, title, content, payload));
         }
@@ -164,7 +164,7 @@ public class MessageService {
             Map<String, Object> pushData = new java.util.HashMap<>();
             if (notification.getId() != null) pushData.put("notificationId", notification.getId());
             pushData.put("unreadCount", unreadCount(userId));
-            wsPushService.pushToUser(userId, "NOTIFICATION", "CREATED", pushData);
+            afterCommit(() -> wsPushService.pushToUser(userId, "NOTIFICATION", "CREATED", pushData));
             if (mobilePushService != null) {
                 UserNotification pushed = notification;
                 afterCommit(() -> mobilePushService.dispatch(userId, title, content, pushed.getPayload()));
@@ -1833,7 +1833,8 @@ public class MessageService {
     }
 
     private void pushNotificationReadChanged(Long userId) {
-        wsPushService.pushToUser(userId, "NOTIFICATION", "READ_CHANGED", Map.of("unreadCount", unreadCount(userId)));
+        long count = unreadCount(userId);
+        afterCommit(() -> wsPushService.pushToUser(userId, "NOTIFICATION", "READ_CHANGED", Map.of("unreadCount", count)));
     }
 
     private void pushChatMessageCreated(Long conversationId, Long messageId) {

@@ -17,27 +17,29 @@
         <span v-if="moment.visibility" class="mc-vis-badge" :class="'vis-' + moment.visibility.toLowerCase()">
           {{ visLabel(moment.visibility) }}
         </span>
-        <button v-if="moment.editable" class="mc-more-btn" type="button" title="动态操作" aria-label="动态操作" @click.stop="menuOpen = !menuOpen">
+        <button ref="menuAnchor" class="mc-more-btn" type="button" title="动态操作" aria-label="动态操作" @click.stop="menuOpen = !menuOpen">
           <MoreVertical :size="20" />
         </button>
-        <div v-if="menuOpen" class="mc-menu-backdrop" @click.stop="menuOpen = false"></div>
-        <Transition name="mc-menu">
-          <div v-if="menuOpen" class="mc-owner-menu" @click.stop>
-            <button type="button" @click="runOwnerAction('edit')"><Pencil :size="16" />编辑</button>
-            <button type="button" class="danger" @click="runOwnerAction('delete')"><Trash2 :size="16" />删除</button>
+        <AnchoredMenu :open="menuOpen" :anchor="menuAnchor" @close="menuOpen = false">
+          <div class="mc-owner-menu">
+            <button type="button" @click="runOwnerAction('quote')"><Quote :size="16" />引用动态</button>
+            <button v-if="moment.editable" type="button" @click="runOwnerAction('edit')"><Pencil :size="16" />编辑</button>
+            <button v-if="moment.editable" type="button" class="danger" @click="runOwnerAction('delete')"><Trash2 :size="16" />删除</button>
           </div>
-        </Transition>
+        </AnchoredMenu>
       </div>
     </div>
 
     <!-- Title & Content -->
     <h3 v-if="moment.title" class="mc-title">{{ moment.title }}</h3>
     <div class="mc-content" :class="{ clamped: contentClamped }" v-if="moment.content">
-      <p ref="contentEl">{{ moment.content }}</p>
+      <p ref="contentEl"><MentionText :content="moment.content" :mentions="moment.mentions" /></p>
       <button v-if="showExpand" class="mc-expand" @click.stop="contentClamped = !contentClamped">
         {{ contentClamped ? '展开全文' : '收起' }}
       </button>
     </div>
+
+    <MomentQuoteCard v-if="moment.quote" :quote="moment.quote" @open="openQuote" />
 
     <!-- Images grid -->
     <div v-if="moment.imageUrls?.length" class="mc-images" :class="'img-n-' + Math.min(moment.imageUrls.length, 9)">
@@ -70,40 +72,49 @@
     </div>
 
     <!-- Comment preview -->
-    <div v-if="moment.hotComment" class="mc-comment-preview" @click.stop="$emit('comment', moment)">
-      <div class="mc-comment-heading">
-        <span>热门评论</span>
-        <span class="mc-comment-total">{{ moment.commentCount || 1 }} 条评论</span>
-      </div>
-      <div class="mc-comment-main">
-        <div class="mc-comment-avatar">
-          <img v-if="moment.hotComment.author?.avatarUrl" :src="imageUrl(moment.hotComment.author.avatarUrl)" alt="" />
-          <span v-else>{{ moment.hotComment.author?.nickname?.charAt(0) || '?' }}</span>
+    <div v-if="moment.hotComment || commentsExpanded" class="mc-comment-list">
+      <TransitionGroup name="mc-comment" tag="div" class="mc-comment-items">
+      <div v-for="comment in visibleComments" :key="comment.id" class="mc-comment-preview" @click.stop="$emit('comment', moment)">
+        <div class="mc-comment-main">
+          <div class="mc-comment-avatar">
+            <img v-if="comment.author?.avatarUrl" :src="imageUrl(comment.author.avatarUrl)" alt="" />
+            <span v-else>{{ comment.author?.nickname?.charAt(0) || '?' }}</span>
+          </div>
+          <div class="mc-comment-copy">
+            <div class="mc-comment-author">
+              <strong>{{ comment.author?.nickname }}</strong>
+              <span v-if="comment.authorBadge" class="mc-comment-badge">作者</span>
+              <time>{{ formatTime(comment.createdAt) }}</time>
+            </div>
+            <p><MentionText :content="comment.content || (comment.imageUrls?.length ? '[图片]' : '')" :mentions="comment.mentions" /></p>
+            <div v-if="comment.imageUrls?.length" class="mc-comment-images">
+              <span v-for="(img, i) in comment.imageUrls.slice(0, 3)" :key="i" class="mc-comment-image">
+                <img :src="imageUrl(img)" alt="" loading="lazy" />
+                <i v-if="i === 2 && comment.imageUrls.length > 3">
+                  +{{ comment.imageUrls.length - 3 }}
+                </i>
+              </span>
+            </div>
+            <div v-if="comment.likeCount || comment.replyCount" class="mc-comment-meta">
+              <span v-if="comment.likeCount"><Heart :size="13" />{{ comment.likeCount }}</span>
+              <span v-if="comment.replyCount"><MessageCircle :size="13" />{{ comment.replyCount }}</span>
+            </div>
+          </div>
         </div>
-        <div class="mc-comment-copy">
-          <div class="mc-comment-author">
-            <strong>{{ moment.hotComment.author?.nickname }}</strong>
-            <span v-if="moment.hotComment.authorBadge" class="mc-comment-badge">作者</span>
-          </div>
-          <p>{{ moment.hotComment.content || (moment.hotComment.imageUrls?.length ? '[图片]' : '') }}</p>
-          <div v-if="moment.hotComment.imageUrls?.length" class="mc-comment-images">
-            <span v-for="(img, i) in moment.hotComment.imageUrls.slice(0, 3)" :key="i" class="mc-comment-image">
-              <img :src="imageUrl(img)" alt="" loading="lazy" />
-              <i v-if="i === 2 && moment.hotComment.imageUrls.length > 3">
-                +{{ moment.hotComment.imageUrls.length - 3 }}
-              </i>
-            </span>
-          </div>
-          <div class="mc-comment-meta">
-            <span v-if="moment.hotComment.likeCount"><Heart :size="13" />{{ moment.hotComment.likeCount }}</span>
-            <span v-if="moment.hotComment.replyCount"><MessageCircle :size="13" />{{ moment.hotComment.replyCount }}</span>
-          </div>
+        <div v-if="comment.replies?.length" class="mc-reply-preview">
+          <p v-for="reply in comment.replies.slice(0, 2)" :key="reply.id">
+            <strong>{{ reply.author?.nickname }}</strong><span v-if="reply.replyToNickname"> 回复 {{ reply.replyToNickname }}</span>：<MentionText :content="reply.content || '[图片]'" :mentions="reply.mentions" />
+          </p>
         </div>
       </div>
-      <div v-if="moment.hotComment.replies?.length" class="mc-reply-preview">
-        <p v-for="reply in moment.hotComment.replies.slice(0, 2)" :key="reply.id">
-          <strong>{{ reply.author?.nickname }}</strong><span v-if="reply.replyToNickname"> 回复 {{ reply.replyToNickname }}</span>：{{ reply.content || '[图片]' }}
-        </p>
+      </TransitionGroup>
+      <LoadingSpinner v-if="commentsLoading" :variant="loadedComments.length <= 1 ? 'comment-list' : 'compact'" />
+      <div class="mc-comment-controls" @click.stop>
+        <button v-if="!commentsExpanded && canExpandComments" type="button" @click="expandComments">展开更多评论</button>
+        <button v-else-if="commentsExpanded && commentsHasMore" type="button" :disabled="commentsLoading" @click="loadMoreComments">
+          {{ commentsLoading ? '正在加载' : (commentLoadError ? '加载失败，点击重试' : '展开更多评论') }}
+        </button>
+        <button v-if="commentsExpanded" type="button" class="collapse" @click="collapseComments">收起评论</button>
       </div>
     </div>
 
@@ -126,38 +137,111 @@
       <span class="mc-act-div"></span>
       <button class="mc-act-btn" @click.stop="$emit('share', moment)">
         <Share2 class="mc-act-icon" :size="19" />
+        <Transition name="count" mode="out-in"><span :key="moment.shareCount || 0" class="mc-act-num">{{ moment.shareCount || 0 }}</span></Transition>
       </button>
     </div>
   </div>
 </template>
 
 <script setup>
-import { computed, ref, nextTick } from 'vue'
-import { Heart, MessageCircle, MoreVertical, Pencil, Share2, SmilePlus, Trash2 } from 'lucide-vue-next'
+import { computed, ref, nextTick, watch } from 'vue'
+import { useRouter } from 'vue-router'
+import { Heart, MessageCircle, MoreVertical, Pencil, Quote, Share2, SmilePlus, Trash2 } from 'lucide-vue-next'
+import { getMomentComments } from '../api/moments'
 import { imageUrl } from '../composables/useImage'
+import { formatMomentTime } from '../composables/useMomentTime'
+import AnchoredMenu from './AnchoredMenu.vue'
+import LoadingSpinner from './LoadingSpinner.vue'
+import MomentQuoteCard from './MomentQuoteCard.vue'
+import MentionText from './MentionText.vue'
 
 const props = defineProps({
   moment: { type: Object, required: true },
   noNavigate: { type: Boolean, default: false }
 })
+const router = useRouter()
 
-const emit = defineEmits(['click', 'author', 'image', 'reference', 'topic', 'comment', 'like', 'reaction', 'share', 'edit', 'delete'])
+const emit = defineEmits(['click', 'author', 'image', 'reference', 'topic', 'comment', 'like', 'reaction', 'share', 'quote', 'open-quote', 'edit', 'delete'])
 
 const contentClamped = ref(true)
 const contentEl = ref(null)
 const showExpand = ref(false)
 const menuOpen = ref(false)
+const menuAnchor = ref(null)
+const commentsExpanded = ref(false)
+const commentsLoading = ref(false)
+const commentLoadError = ref(false)
+const loadedComments = ref([])
+const commentsPage = ref(1)
+const commentsTotal = ref(0)
+const commentsHasMore = ref(false)
+const commentPageSize = 3
 const reactionCount = computed(() => (props.moment.reactions || []).reduce((sum, item) => sum + Number(item.count || 0), 0))
+const visibleComments = computed(() => commentsExpanded.value ? loadedComments.value : (props.moment.hotComment ? [props.moment.hotComment] : []))
+const canExpandComments = computed(() => Number(props.moment.rootCommentCount || 0) >= 2)
+
+async function loadMoreComments() {
+  if (commentsLoading.value) return
+  commentsLoading.value = true
+  commentLoadError.value = false
+  try {
+    const result = await getMomentComments(props.moment.id, { page: commentsPage.value, size: commentPageSize })
+    const knownIds = new Set(loadedComments.value.map(comment => comment.id))
+    const nextComments = (result.records || []).filter(comment => !knownIds.has(comment.id))
+    loadedComments.value.push(...nextComments)
+    commentsTotal.value = Number(result.total || loadedComments.value.length)
+    commentsHasMore.value = Boolean(result.hasMore)
+    commentsPage.value += 1
+  } catch {
+    commentLoadError.value = true
+    commentsHasMore.value = true
+    commentsTotal.value = Math.max(commentsTotal.value, loadedComments.value.length + 1)
+  } finally {
+    commentsLoading.value = false
+  }
+}
+
+async function expandComments() {
+  if (!loadedComments.value.length && props.moment.hotComment) loadedComments.value = [props.moment.hotComment]
+  commentsExpanded.value = true
+  if (commentsPage.value === 1) await loadMoreComments()
+}
+
+function collapseComments() {
+  commentsExpanded.value = false
+}
+
+watch(() => props.moment.id, () => {
+  commentsExpanded.value = false
+  commentsLoading.value = false
+  commentLoadError.value = false
+  loadedComments.value = []
+  commentsPage.value = 1
+  commentsTotal.value = 0
+  commentsHasMore.value = false
+})
 
 function runOwnerAction(action) {
   menuOpen.value = false
+  if (action === 'quote') {
+    if (!localStorage.getItem('token')) {
+      router.push({ path: '/customer/login', query: { redirect: router.currentRoute.value.fullPath } })
+      return
+    }
+    router.push({ path: '/customer/moments/new', query: { quotedMomentId: props.moment.id } })
+    return
+  }
   emit(action, props.moment)
+}
+
+function openQuote(quote) {
+  if (!quote?.momentId) return
+  router.push({ path: `/customer/moments/${quote.momentId}`, query: { ...(quote.commentId ? { commentId: quote.commentId } : {}), fromQuote: '1' } })
 }
 
 nextTick(() => {
   if (contentEl.value) {
-    const p = contentEl.value.querySelector('p')
-    if (p && p.scrollHeight > 76) showExpand.value = true
+    if (contentEl.value.scrollHeight > 76) showExpand.value = true
   }
 })
 
@@ -166,20 +250,7 @@ function visLabel(v) {
   return map[v] || v
 }
 
-function formatTime(ts) {
-  if (!ts) return ''
-  const d = new Date(ts)
-  const now = new Date()
-  const diff = now - d
-  if (diff < 60000) return '刚刚'
-  if (diff < 3600000) return Math.floor(diff / 60000) + '分钟前'
-  if (diff < 86400000) return Math.floor(diff / 3600000) + '小时前'
-  if (diff < 172800000) return '昨天'
-  if (d.getFullYear() === now.getFullYear()) {
-    return `${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`
-  }
-  return d.toLocaleDateString()
-}
+const formatTime = formatMomentTime
 </script>
 
 <style scoped>
@@ -206,13 +277,10 @@ function formatTime(ts) {
 .mc-header-actions { position: relative; display: flex; align-items: center; gap: 4px; }
 .mc-more-btn { width: 34px; height: 34px; display: inline-flex; align-items: center; justify-content: center; border-radius: 7px; background: transparent; color: var(--color-text-muted); }
 .mc-more-btn:hover { background: var(--color-bg); color: var(--color-text); }
-.mc-menu-backdrop { position: fixed; inset: 0; z-index: 38; }
-.mc-owner-menu { position: absolute; top: 38px; right: 0; z-index: 39; width: 126px; overflow: hidden; padding: 5px; background: #fff; border: 1px solid var(--color-line); border-radius: 8px; box-shadow: var(--shadow-lg); transform-origin: top right; }
+.mc-owner-menu { width: 142px; overflow: hidden; padding: 5px; background: #fff; border: 1px solid var(--color-line); border-radius: 8px; box-shadow: var(--shadow-lg); }
 .mc-owner-menu button { width: 100%; min-height: 38px; display: flex; align-items: center; gap: 9px; padding: 0 10px; background: transparent; border-radius: 6px; color: var(--color-text); font-size: 14px; text-align: left; }
 .mc-owner-menu button:hover { background: var(--color-bg); }
 .mc-owner-menu button.danger { color: var(--color-error); }
-.mc-menu-enter-active, .mc-menu-leave-active { transition: opacity .16s ease, transform .16s ease; }
-.mc-menu-enter-from, .mc-menu-leave-to { opacity: 0; transform: translateY(-4px) scale(.94); }
 .mc-author-row { display: flex; align-items: center; gap: 6px; }
 .mc-author-name { font-size: 15px; font-weight: 700; color: var(--color-text); }
 .mc-badge {
@@ -288,25 +356,32 @@ function formatTime(ts) {
 }
 
 /* Comment preview */
-.mc-comment-preview { margin-top: 12px; padding: 10px 12px; border-radius: 8px; background: #f6f7f8; cursor: pointer; }
-.mc-comment-heading { display: flex; align-items: center; justify-content: space-between; margin-bottom: 9px; color: #6f747b; font-size: 12px; font-weight: 700; }
-.mc-comment-total { color: #a0a4aa; font-weight: 500; }
-.mc-comment-main { display: flex; align-items: flex-start; gap: 9px; }
-.mc-comment-avatar { width: 30px; height: 30px; flex: 0 0 auto; display: grid; place-items: center; overflow: hidden; border-radius: 50%; background: #fff0df; color: #dd750f; font-size: 12px; font-weight: 700; }
+.mc-comment-list { margin-top: 8px; overflow: hidden; border-radius: 7px; background: #f6f7f8; }
+.mc-comment-preview { max-height: 640px; overflow: hidden; padding: 8px 10px; cursor: pointer; }
+.mc-comment-preview + .mc-comment-preview { border-top: 1px solid #e7e9ec; }
+.mc-comment-enter-active, .mc-comment-leave-active { transition: opacity .22s ease, transform .22s ease, max-height .22s ease, padding .22s ease; }
+.mc-comment-enter-from, .mc-comment-leave-to { max-height: 0; padding-top: 0; padding-bottom: 0; opacity: 0; transform: translateY(-5px); }
+.mc-comment-main { display: flex; align-items: flex-start; gap: 8px; }
+.mc-comment-avatar { width: 28px; height: 28px; flex: 0 0 auto; display: grid; place-items: center; overflow: hidden; border-radius: 50%; background: #fff0df; color: #dd750f; font-size: 12px; font-weight: 700; }
 .mc-comment-avatar img { width: 100%; height: 100%; object-fit: cover; }
 .mc-comment-copy { min-width: 0; flex: 1; }
-.mc-comment-author { display: flex; align-items: center; gap: 5px; margin-bottom: 2px; color: #34373b; font-size: 12px; }
+.mc-comment-author { display: flex; align-items: center; gap: 5px; margin-bottom: 1px; color: #34373b; font-size: 13px; }
+.mc-comment-author time { margin-left: auto; color: #969ba1; font-size: 11px; font-weight: 400; }
 .mc-comment-badge { padding: 0 5px; border-radius: 3px; background: #ffe5c8; color: #c76509; font-size: 10px; }
-.mc-comment-copy > p { display: -webkit-box; overflow: hidden; -webkit-box-orient: vertical; -webkit-line-clamp: 2; color: #50545a; font-size: 13px; line-height: 1.55; word-break: break-word; }
+.mc-comment-copy > p { display: -webkit-box; overflow: hidden; -webkit-box-orient: vertical; -webkit-line-clamp: 2; color: #50545a; font-size: 14px; line-height: 1.5; word-break: break-word; }
 .mc-comment-images { display: flex; gap: 5px; margin-top: 7px; }
 .mc-comment-image { width: 58px; height: 58px; position: relative; overflow: hidden; border-radius: 6px; background: #e9eaec; }
 .mc-comment-image img { width: 100%; height: 100%; display: block; object-fit: cover; }
 .mc-comment-image i { position: absolute; inset: 0; display: grid; place-items: center; background: rgba(0, 0, 0, 0.45); color: #fff; font-size: 13px; font-style: normal; font-weight: 700; }
-.mc-comment-meta { min-height: 18px; display: flex; align-items: center; gap: 12px; margin-top: 4px; color: #969ba1; font-size: 11px; }
+.mc-comment-meta { display: flex; align-items: center; gap: 12px; margin-top: 3px; color: #969ba1; font-size: 11px; }
 .mc-comment-meta span { display: inline-flex; align-items: center; gap: 3px; }
-.mc-reply-preview { margin: 8px 0 0 39px; padding: 7px 9px; border-radius: 6px; background: #fff; }
-.mc-reply-preview p { overflow: hidden; color: #6d7278; font-size: 12px; line-height: 1.6; text-overflow: ellipsis; white-space: nowrap; }
+.mc-reply-preview { margin: 6px 0 0 36px; padding: 6px 8px; border-radius: 6px; background: #fff; }
+.mc-reply-preview p { overflow: hidden; color: #6d7278; font-size: 13px; line-height: 1.55; text-overflow: ellipsis; white-space: nowrap; }
 .mc-reply-preview strong { color: #45494f; }
+.mc-comment-controls { display: flex; flex-direction: column; align-items: flex-start; gap: 1px; padding: 3px 8px 7px 42px; }
+.mc-comment-controls button { min-height: 30px; padding: 0 7px; background: transparent; color: #767b82; font-size: 12px; }
+.mc-comment-controls button:hover { color: var(--color-primary); }
+.mc-comment-controls button:disabled { cursor: wait; opacity: .65; }
 
 /* Action bar */
 .mc-actions {

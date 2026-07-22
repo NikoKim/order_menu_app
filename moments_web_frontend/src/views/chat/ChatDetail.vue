@@ -106,18 +106,18 @@
               </div>
 
               <!-- Menu button -->
-              <button class="msg-menu-btn" title="消息操作" @click.stop="msgMenuId = (msgMenuId === msg.id ? null : msg.id)">
+              <button class="msg-menu-btn" title="消息操作" @click.stop="toggleMessageMenu($event, msg)">
                 <MoreVertical :size="16" />
               </button>
-              <Transition name="action-pop">
-              <div v-if="msgMenuId === msg.id" class="msg-menu" :style="mobileMenuStyle">
-                <button @click="copyText(msg); msgMenuId = null"><Copy :size="15" /><span>复制</span></button>
-                <button @click="startReply(msg); msgMenuId = null"><Reply :size="15" /><span>回复</span></button>
-                <button v-if="role === 'SHOP' && isGroup" @click="toggleEssence(msg)"><Sparkles :size="15" /><span>{{ msg.isEssence || msg.essence ? '取消精华' : '精华' }}</span></button>
-                <button v-if="msg.senderUserId === myUserId" @click="handleRecall(msg)"><RotateCcw :size="15" /><span>撤回</span></button>
-                <button @click="handleDeleteMsg(msg)"><Trash2 :size="15" /><span>删除</span></button>
-              </div>
-              </Transition>
+              <AnchoredMenu :open="msgMenuId === msg.id" :anchor="messageMenuAnchor" @close="msgMenuId = null">
+                <div class="msg-menu">
+                  <button @click="copyText(msg); msgMenuId = null"><Copy :size="15" /><span>复制</span></button>
+                  <button @click="startReply(msg); msgMenuId = null"><Reply :size="15" /><span>回复</span></button>
+                  <button v-if="role === 'SHOP' && isGroup" @click="toggleEssence(msg)"><Sparkles :size="15" /><span>{{ msg.isEssence || msg.essence ? '取消精华' : '精华' }}</span></button>
+                  <button v-if="msg.senderUserId === myUserId" @click="handleRecall(msg)"><RotateCcw :size="15" /><span>撤回</span></button>
+                  <button @click="handleDeleteMsg(msg)"><Trash2 :size="15" /><span>删除</span></button>
+                </div>
+              </AnchoredMenu>
             </div>
           </template>
         </div>
@@ -155,7 +155,6 @@
       </Transition>
     </div>
 
-    <div v-if="msgMenuId" class="menu-backdrop" @click="msgMenuId = null"></div>
     <ImageViewer :visible="imageViewer.visible" :src="imageViewer.src" @close="imageViewer.visible = false" />
   </div>
 </template>
@@ -170,8 +169,10 @@ import { apiUrl } from '../../config/endpoints'
 import LoadingSpinner from '../../components/LoadingSpinner.vue'
 import EmptyState from '../../components/EmptyState.vue'
 import ImageViewer from '../../components/ImageViewer.vue'
+import AnchoredMenu from '../../components/AnchoredMenu.vue'
 import { customerChatEmojis } from '../../constants/chatEmojis'
 import { confirmNotice, notifyError } from '../../services/notice'
+import { connectCustomerWebSocket, subscribeCustomerWebSocket } from '../../services/customerWebSocket'
 
 const route = useRoute()
 const router = useRouter()
@@ -190,9 +191,9 @@ const textInputEl = ref(null)
 const emojiOpen = ref(false)
 const replyingTo = ref(null)
 const msgMenuId = ref(null)
+const messageMenuAnchor = ref(null)
 const latestEssence = ref(null)
 const highlightedMessageId = ref(null)
-const mobileMenuStyle = ref({})
 let longPressTimer = null
 let highlightTimer = null
 let pressStart = null
@@ -288,20 +289,21 @@ function scrollToBottom(behavior = 'smooth') {
 }
 
 function openMessageMenu(event, msg) {
-  if (!window.matchMedia('(max-width: 768px)').matches) return
   const rect = event.currentTarget.getBoundingClientRect()
   showMessageMenu(rect, msg)
 }
 
 function showMessageMenu(rect, msg) {
-  const headerBottom = document.querySelector('.chat-header')?.getBoundingClientRect().bottom || 0
-  const estimatedHeight = 54
-  const actionCount = 3 + (msg.senderUserId === myUserId.value ? 1 : 0) + (role === 'SHOP' && isGroup.value ? 1 : 0)
-  const estimatedWidth = Math.min(window.innerWidth - 16, actionCount * 64)
-  let top = rect.top - estimatedHeight - 8
-  if (top < headerBottom + 8) top = Math.min(window.innerHeight - estimatedHeight - 8, rect.bottom + 8)
-  const left = Math.max(8, Math.min(window.innerWidth - estimatedWidth - 8, rect.left + rect.width / 2 - estimatedWidth / 2))
-  mobileMenuStyle.value = { top: `${top}px`, left: `${left}px`, width: `${estimatedWidth}px` }
+  messageMenuAnchor.value = { getBoundingClientRect: () => rect }
+  msgMenuId.value = msg.id
+}
+
+function toggleMessageMenu(event, msg) {
+  if (msgMenuId.value === msg.id) {
+    msgMenuId.value = null
+    return
+  }
+  messageMenuAnchor.value = event.currentTarget
   msgMenuId.value = msg.id
 }
 
@@ -420,13 +422,18 @@ async function handleDeleteMsg(msg) {
 }
 
 let pollTimer = null
+let unsubscribeWs
 onMounted(async () => {
   try { myUserId.value = JSON.parse(localStorage.getItem('user') || '{}')?.id || 0 } catch { }
   await loadMessages()
   if (isGroup.value) { try { latestEssence.value = await getLatestUnreadEssence(conversationId.value) } catch { } }
-  pollTimer = setInterval(() => loadMessages({ silent: true }), 3000)
+  connectCustomerWebSocket()
+  unsubscribeWs = subscribeCustomerWebSocket('CHAT', message => {
+    if (Number(message?.data?.conversationId) === conversationId.value) loadMessages({ silent: true })
+  })
+  pollTimer = setInterval(() => loadMessages({ silent: true }), 60000)
 })
-onUnmounted(() => { clearInterval(pollTimer); clearTimeout(longPressTimer); clearTimeout(highlightTimer) })
+onUnmounted(() => { clearInterval(pollTimer); unsubscribeWs?.(); clearTimeout(longPressTimer); clearTimeout(highlightTimer) })
 
 const imageViewer = ref({ visible: false, src: '' })
 function viewImage(msg) {
@@ -579,12 +586,9 @@ function openShare(msg) {
 .chat-msg-wrapper:hover .msg-menu-btn { opacity: 1; }
 
 .msg-menu {
-  position: absolute; bottom: calc(100% + 6px); right: 0; z-index: 20;
   background: #fff; border-radius: var(--radius); box-shadow: var(--shadow-lg);
   min-width: 112px; max-width: calc(100vw - 24px); padding: 4px;
 }
-.chat-msg-wrapper:not(.mine) .msg-menu { right: auto; left: 0; }
-.chat-msg-wrapper.mine .msg-menu { right: 0; left: auto; }
 .msg-menu button {
   display: flex; width: 100%; align-items: center; gap: 7px; padding: 8px 14px; border: none; background: none;
   font-size: 13px; cursor: pointer; text-align: left; border-radius: 4px; color: var(--color-text);
@@ -652,10 +656,9 @@ function openShare(msg) {
   .msg-body { -webkit-touch-callout: none; user-select: none; }
   .msg-menu-btn { display: none; }
   .msg-menu {
-    position: fixed; right: auto !important; bottom: auto;
-    max-width: calc(100vw - 16px); min-width: 0; margin: 0; padding: 4px;
+    width: min(320px, calc(100vw - 16px)); max-width: calc(100vw - 16px); min-width: 0; margin: 0; padding: 4px;
     display: flex; align-items: stretch;
-    z-index: 122; border: 0; border-radius: 8px; background: #303236; color: #fff;
+    border: 0; border-radius: 8px; background: #303236; color: #fff;
     box-shadow: 0 8px 24px rgba(0, 0, 0, .24); transform-origin: center bottom;
   }
   .msg-menu button { min-width: 0; min-height: 48px; flex: 1; flex-direction: column; justify-content: center; gap: 3px; padding: 5px 3px; color: #fff; font-size: 11px; text-align: center; white-space: nowrap; }

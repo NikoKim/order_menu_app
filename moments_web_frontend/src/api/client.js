@@ -26,7 +26,8 @@ client.interceptors.response.use(
     throw err
   },
   error => {
-    if (error.response?.status === 401) {
+    const hadToken = Boolean(localStorage.getItem('token'))
+    if (error.response?.status === 401 && hadToken) {
       localStorage.removeItem('token')
       const currentPath = window.location.pathname
       if (!currentPath.includes('/login')) {

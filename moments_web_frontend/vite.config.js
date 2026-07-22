@@ -21,6 +21,16 @@ export default defineConfig({
       '/message-chat-images': {
         target: 'http://localhost:8080',
         changeOrigin: true
+      },
+      '/ws': {
+        target: 'ws://localhost:8080',
+        ws: true,
+        changeOrigin: true
+      },
+      '/share': {
+        target: 'http://localhost:8080',
+        changeOrigin: true,
+        rewrite: path => path.replace(/^\/share\/moments\/(\d+)/, '/api/moments/$1/share-card')
       }
     }
   },

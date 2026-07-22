@@ -23,17 +23,18 @@
         <span v-else class="conv-last-msg">{{ conversation.lastMessageContent || (isGroup ? '家庭群聊' : '开始聊天') }}</span>
       </div>
     </div>
-    <div v-if="showMenu" class="conv-menu-trigger" role="button" tabindex="0" title="更多操作"
+    <button v-if="showMenu" ref="menuAnchor" type="button" class="conv-menu-trigger" title="更多操作" aria-label="更多操作"
       @click.stop="menuOpen = !menuOpen" @keydown.enter.stop="menuOpen = !menuOpen">
       <MoreVertical :size="20" aria-hidden="true" />
-      <div v-if="menuOpen" class="conv-menu" @click.stop>
+    </button>
+    <AnchoredMenu :open="menuOpen" :anchor="menuAnchor" @close="menuOpen = false">
+      <div class="conv-menu">
         <button @click.stop="$emit('pin', conversation); menuOpen = false">
           {{ conversation.pinned ? '取消置顶' : '置顶' }}
         </button>
         <button v-if="conversation.isDirect" class="danger" @click.stop="$emit('delete', conversation); menuOpen = false">删除</button>
       </div>
-    </div>
-    <div v-if="menuOpen" class="menu-backdrop" @click.stop="menuOpen = false"></div>
+    </AnchoredMenu>
   </div>
   </div>
 </template>
@@ -42,6 +43,8 @@
 import { ref, computed } from 'vue'
 import { MoreVertical, Pin, Trash2 } from 'lucide-vue-next'
 import { imageUrl } from '../composables/useImage'
+import { formatMomentTime } from '../composables/useMomentTime'
+import AnchoredMenu from './AnchoredMenu.vue'
 
 const props = defineProps({
   conversation: { type: Object, required: true },
@@ -52,6 +55,7 @@ const props = defineProps({
 const emit = defineEmits(['click', 'pin', 'delete'])
 
 const menuOpen = ref(false)
+const menuAnchor = ref(null)
 const swipeOpen = ref(false)
 const swipeOffset = ref(0)
 let pointerStart = null
@@ -116,25 +120,11 @@ function runSwipeAction(action) {
   emit(action, props.conversation)
 }
 
-function formatTime(ts) {
-  if (!ts) return ''
-  const d = new Date(ts)
-  const now = new Date()
-  const diff = now - d
-  if (diff < 60000) return '刚刚'
-  if (diff < 3600000) return Math.floor(diff / 60000) + '分钟前'
-  if (diff < 86400000) return Math.floor(diff / 3600000) + '小时前'
-  if (diff < 172800000) return '昨天'
-  if (d.getFullYear() === now.getFullYear()) {
-    return `${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`
-  }
-  return d.toLocaleDateString()
-}
+const formatTime = formatMomentTime
 </script>
 
 <style scoped>
 .conv-swipe-shell { position: relative; overflow: hidden; background: #fff; border-radius: var(--radius-lg); }
-.conv-swipe-shell.menu-open { z-index: 55; }
 .conv-swipe-shell + .conv-swipe-shell { margin-top: 1px; }
 .conv-swipe-actions { position: absolute; top: 1px; right: 1px; bottom: 1px; display: none; opacity: 0; visibility: hidden; overflow: hidden; border-radius: 0 var(--radius-lg) var(--radius-lg) 0; transition: opacity .08s ease; }
 .conv-swipe-shell.open .conv-swipe-actions, .conv-swipe-shell.swiping .conv-swipe-actions { opacity: 1; visibility: visible; }
@@ -200,7 +190,6 @@ function formatTime(ts) {
 }
 .conv-menu-trigger:hover { background: var(--color-bg); }
 .conv-menu {
-  position: absolute; right: 0; top: 100%; z-index: 50;
   background: #fff; border-radius: var(--radius); box-shadow: var(--shadow-lg);
   min-width: 120px; padding: 4px; overflow: hidden;
 }
@@ -211,7 +200,6 @@ function formatTime(ts) {
 }
 .conv-menu button:hover { background: var(--color-bg); }
 .conv-menu button.danger { color: var(--color-error); }
-.menu-backdrop { position: fixed; inset: 0; z-index: 49; }
 
 @media (min-width: 481px) {
   .conv-swipe-shell { overflow: visible; }

@@ -12,6 +12,7 @@ import org.springframework.http.HttpHeaders;
 import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.util.HtmlUtils;
+import org.springframework.web.util.UriComponentsBuilder;
 import org.springframework.web.bind.annotation.*;
 import org.springframework.web.multipart.MultipartFile;
 
@@ -30,16 +31,34 @@ public class MomentController {
     return ApiResponse.success(service.feed(uid,feed,normalized,s,consumeExposure));
   }
   @GetMapping(value="/{id}/share-card",produces=MediaType.TEXT_HTML_VALUE)
-  public ResponseEntity<String> shareCard(@PathVariable Long id,@RequestParam(required=false)Long commentId){
+  public ResponseEntity<String> shareCard(@PathVariable Long id,@RequestParam(required=false)Long commentId,@RequestParam(required=false)String mode,@RequestParam(required=false)String v){
     String title="动态分享",description="点击查看动态详情",image="https://moment.zsj-unknown.top/app_icon.png";
     try{
       MomentDtos.MomentResponse moment=service.detail(-1L,id);
       title=moment.title()==null||moment.title().isBlank()?title:moment.title();
       description=moment.content()==null||moment.content().isBlank()?description:moment.content();
       if(moment.imageUrls()!=null&&!moment.imageUrls().isEmpty())image=absoluteImage(moment.imageUrls().get(0));
+      if(commentId!=null){
+        MomentDtos.CommentResponse comment=service.commentForShare(-1L,id,commentId);
+        if(comment.content()!=null&&!comment.content().isBlank())description=comment.content();
+        if(comment.imageUrls()!=null&&!comment.imageUrls().isEmpty())image=absoluteImage(comment.imageUrls().get(0));
+      }
     }catch(RuntimeException ignored){}
-    String target="https://moment.zsj-unknown.top/customer/moments/"+id+(commentId==null?"":"?commentId="+commentId);
-    String html=shareHtml(title,description,image,target);
+    String shareMode="isolated".equalsIgnoreCase(mode)?"isolated":"browse";
+    UriComponentsBuilder cardUrlBuilder=UriComponentsBuilder.fromHttpUrl("https://order-menu-backend.zsj-unknown.top/api/moments/"+id+"/share-card");
+    if(commentId!=null)cardUrlBuilder.queryParam("commentId",commentId);
+    cardUrlBuilder.queryParam("mode",shareMode);
+    if(v!=null&&!v.isBlank())cardUrlBuilder.queryParam("v",v);
+    String cardUrl=cardUrlBuilder.build().encode().toUriString();
+    UriComponentsBuilder targetUrlBuilder=UriComponentsBuilder.fromHttpUrl(
+        "isolated".equals(shareMode)
+            ?"https://moment.zsj-unknown.top/customer/moments/"+id
+            :"https://moment.zsj-unknown.top/customer/moments");
+    if("browse".equals(shareMode))targetUrlBuilder.queryParam("sharedMoment",id);
+    if(commentId!=null)targetUrlBuilder.queryParam("commentId",commentId);
+    if("isolated".equals(shareMode))targetUrlBuilder.queryParam("shareMode",shareMode);
+    String target=targetUrlBuilder.build().encode().toUriString();
+    String html=shareHtml(title,description,image,target,cardUrl);
     return ResponseEntity.ok().header(HttpHeaders.CACHE_CONTROL,"public, max-age=300").contentType(MediaType.TEXT_HTML).body(html);
   }
   @GetMapping("/{id}") public ApiResponse<MomentDtos.MomentResponse> detail(@PathVariable Long id){return ApiResponse.success(service.detail(uid(),id));}
@@ -55,11 +74,14 @@ public class MomentController {
   @PostMapping("/{id}/reactions") public ApiResponse<MomentDtos.MomentResponse> addReaction(@PathVariable Long id,@Valid @RequestBody MomentDtos.ReactionRequest r){return ApiResponse.success(service.react(uid(),id,r.emoji(),true));}
   @DeleteMapping("/{id}/reactions") public ApiResponse<MomentDtos.MomentResponse> removeReaction(@PathVariable Long id,@RequestParam String emoji){return ApiResponse.success(service.react(uid(),id,emoji,false));}
   @GetMapping("/{id}/comments") public ApiResponse<MomentDtos.PageResponse<MomentDtos.CommentResponse>> comments(@PathVariable Long id,@RequestParam(defaultValue="1")long page,@RequestParam(defaultValue="10")long pageSize){return ApiResponse.success(service.comments(uid(),id,page,pageSize));}
+  @GetMapping("/{momentId}/comments/{commentId}") public ApiResponse<MomentDtos.CommentResponse> comment(@PathVariable Long momentId,@PathVariable Long commentId){return ApiResponse.success(service.commentForShare(uid(),momentId,commentId));}
   @PostMapping("/{id}/comments") public ApiResponse<MomentDtos.CommentResponse> comment(@PathVariable Long id,@Valid @RequestBody MomentDtos.CommentRequest r){return ApiResponse.success(service.addComment(uid(),id,r));}
   @GetMapping({"/{momentId}/comments/{commentId}/replies","/comments/{commentId}/replies"}) public ApiResponse<MomentDtos.PageResponse<MomentDtos.CommentResponse>> replies(@PathVariable(required=false) Long momentId,@PathVariable Long commentId,@RequestParam(defaultValue="1")long page,@RequestParam(defaultValue="10")long pageSize){return ApiResponse.success(service.replies(uid(),commentId,page,pageSize));}
   @DeleteMapping({"/{momentId}/comments/{commentId}","/comments/{commentId}"}) public ApiResponse<Void> deleteComment(@PathVariable(required=false)Long momentId,@PathVariable Long commentId){service.deleteComment(uid(),commentId);return ApiResponse.success();}
   @PutMapping({"/{momentId}/comments/{commentId}/like","/comments/{commentId}/like"}) public ApiResponse<MomentDtos.CommentResponse> likeComment(@PathVariable(required=false)Long momentId,@PathVariable Long commentId,@RequestBody(required=false)MomentDtos.ToggleRequest r){return ApiResponse.success(service.likeComment(uid(),commentId,r==null||!Boolean.FALSE.equals(r.active())));}
   @GetMapping("/topics/suggestions") public ApiResponse<List<MomentDtos.TopicResponse>> topics(@RequestParam(required=false)String query){return ApiResponse.success(service.suggestTopics(query));}
+  @GetMapping("/mention-users") public ApiResponse<List<MomentDtos.AuthorResponse>> mentionUsers(@RequestParam String query){return ApiResponse.success(service.searchMentionUsers(uid(),query));}
+  @GetMapping("/users/{id}/card") public ApiResponse<MomentDtos.UserCardResponse> userCard(@PathVariable Long id){return ApiResponse.success(service.userCard(uid(),id));}
   @GetMapping("/topics") public ApiResponse<MomentDtos.PageResponse<MomentDtos.TopicResponse>> topicPage(@RequestParam(required=false)String query,@RequestParam(defaultValue="1")long page,@RequestParam(defaultValue="10")long pageSize){return ApiResponse.success(service.topicsPage(query,page,pageSize));}
   @PostMapping("/topics") public ApiResponse<MomentDtos.TopicResponse> createTopic(@Valid @RequestBody MomentDtos.TopicCreateRequest r){return ApiResponse.success(service.createTopic(uid(),r.name()));}
   @GetMapping("/topics/{id}/detail") public ApiResponse<MomentDtos.TopicResponse> topicDetail(@PathVariable Long id){return ApiResponse.success(service.topicDetail(id));}
@@ -75,22 +97,23 @@ public class MomentController {
   @PostMapping(value="/images",consumes="multipart/form-data") public ApiResponse<MomentDtos.UploadResponse> image(@RequestPart("image")MultipartFile f){return ApiResponse.success(media.store(uid(),f,false));}
   @PostMapping(value="/comment-images",consumes="multipart/form-data") public ApiResponse<MomentDtos.UploadResponse> commentImage(@RequestPart("image")MultipartFile f){return ApiResponse.success(media.store(uid(),f,true));}
   @PostMapping("/{id}/share") public ApiResponse<MessageDtos.ChatMessageResponse> share(@PathVariable Long id,@Valid @RequestBody MomentDtos.ShareRequest r){return ApiResponse.success(service.share(uid(),id,r));}
+  @PostMapping("/{id}/external-shares") public ApiResponse<MomentDtos.ShareStatsResponse> externalShare(@PathVariable Long id,@RequestBody(required=false) MomentDtos.ExternalShareRequest r){return ApiResponse.success(service.recordExternalShare(uid(),id,r==null?null:r.commentId()));}
   @GetMapping("/unread-count") public ApiResponse<MomentDtos.UnreadResponse> unread(){return ApiResponse.success(service.unread(uid()));}
   @PutMapping("/read") public ApiResponse<MomentDtos.UnreadResponse> read(@Valid @RequestBody MomentDtos.MarkReadRequest r){return ApiResponse.success(service.markRead(uid(),r.momentIds()));}
   private String absoluteImage(String url){if(url==null||url.isBlank())return "https://moment.zsj-unknown.top/app_icon.png";if(url.startsWith("http://")||url.startsWith("https://"))return url;return "https://order-menu-backend.zsj-unknown.top"+(url.startsWith("/")?url:"/"+url);}
-  private String shareHtml(String title,String description,String image,String target){
-    String safeTitle=HtmlUtils.htmlEscape(title);String safeDescription=HtmlUtils.htmlEscape(description.length()>180?description.substring(0,180)+"...":description);String safeImage=HtmlUtils.htmlEscape(image);String safeTarget=HtmlUtils.htmlEscape(target);
+  static String shareHtml(String title,String description,String image,String target,String cardUrl){
+    String safeTitle=HtmlUtils.htmlEscape(title);String safeDescription=HtmlUtils.htmlEscape(description.length()>180?description.substring(0,180)+"...":description);String safeImage=HtmlUtils.htmlEscape(image);String safeTarget=HtmlUtils.htmlEscape(target);String safeCardUrl=HtmlUtils.htmlEscape(cardUrl);
     return "<!doctype html><html lang=\"zh-CN\"><head><meta charset=\"utf-8\"><meta name=\"viewport\" content=\"width=device-width,initial-scale=1\">"+
       "<title>"+safeTitle+"</title><meta name=\"title\" content=\""+safeTitle+"\"><meta name=\"description\" content=\""+safeDescription+"\">"+
       "<meta itemprop=\"name\" content=\""+safeTitle+"\"><meta itemprop=\"description\" content=\""+safeDescription+"\"><meta itemprop=\"image\" content=\""+safeImage+"\">"+
       "<meta property=\"og:type\" content=\"article\"><meta property=\"og:site_name\" content=\""+safeTitle+"\">"+
       "<meta property=\"og:title\" content=\""+safeTitle+"\"><meta property=\"og:description\" content=\""+safeDescription+"\">"+
-      "<meta property=\"og:image\" content=\""+safeImage+"\"><meta property=\"og:url\" content=\""+safeTarget+"\">"+
+      "<meta property=\"og:image\" content=\""+safeImage+"\"><meta property=\"og:url\" content=\""+safeCardUrl+"\">"+
       "<meta name=\"twitter:card\" content=\"summary_large_image\"><meta name=\"twitter:title\" content=\""+safeTitle+"\">"+
       "<meta name=\"twitter:description\" content=\""+safeDescription+"\"><meta name=\"twitter:image\" content=\""+safeImage+"\">"+
-      "<meta http-equiv=\"refresh\" content=\"0;url="+safeTarget+"\"><link rel=\"canonical\" href=\""+safeTarget+"\"></head>"+
-      "<body><p><a href=\""+safeTarget+"\">查看动态详情</a></p><script>location.replace("+jsString(target)+")</script></body></html>";
+      "<link rel=\"canonical\" href=\""+safeCardUrl+"\"><style>html,body{width:100%;height:100%;margin:0;overflow:hidden;background:#fff}iframe{width:100%;height:100%;border:0;display:block}</style>"+
+      "</head><body><iframe src=\""+safeTarget+"\" title=\""+safeTitle+"\" loading=\"eager\" allow=\"web-share; clipboard-write\"></iframe>"+
+      "<noscript><a href=\""+safeTarget+"\">查看动态详情</a></noscript></body></html>";
   }
-  private String jsString(String value){return "\""+value.replace("\\","\\\\").replace("\"","\\\"").replace("<","\\u003c").replace(">","\\u003e").replace("&","\\u0026")+"\"";}
   private Long uid(){return UserContext.getOrNull()==null?-1L:UserContext.getOrNull().userId();}
 }

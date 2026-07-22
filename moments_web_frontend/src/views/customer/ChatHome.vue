@@ -11,6 +11,7 @@
       </button>
       <router-link v-if="isLoggedIn" class="mobile-message-link" to="/customer/message-center" title="消息中心" aria-label="消息中心">
         <Bell :size="21" aria-hidden="true" />
+        <i v-if="notificationUnread" class="message-badge">{{ badge(notificationUnread) }}</i>
       </router-link>
       <button v-if="isLoggedIn" class="mobile-menu-btn" title="账户菜单" aria-label="账户菜单" @click="mobileMenuOpen = !mobileMenuOpen">
         <img v-if="currentUser.avatarUrl" :src="imageUrl(currentUser.avatarUrl)" alt="" />
@@ -22,7 +23,7 @@
     <div v-if="mobileMenuOpen" class="mobile-menu-backdrop" @click="mobileMenuOpen = false"></div>
     <nav v-if="mobileMenuOpen" class="mobile-nav-menu" aria-label="更多页面">
       <template v-if="isLoggedIn">
-        <router-link to="/customer/message-center" @click="mobileMenuOpen = false"><Bell :size="19" /><span>消息中心</span></router-link>
+        <router-link to="/customer/message-center" @click="mobileMenuOpen = false"><Bell :size="19" /><span>消息中心</span><i v-if="notificationUnread" class="menu-badge">{{ badge(notificationUnread) }}</i></router-link>
         <router-link to="/customer/my-moments" @click="mobileMenuOpen = false"><Album :size="19" /><span>我的动态</span></router-link>
         <router-link to="/customer/moments/drafts" @click="mobileMenuOpen = false"><FileText :size="19" /><span>动态草稿</span></router-link>
         <router-link to="/customer/privacy" @click="mobileMenuOpen = false"><Settings :size="19" /><span>聊天设置</span></router-link>
@@ -33,10 +34,10 @@
     </nav>
 
     <div v-show="tab === 'chat'" class="tab-panel">
-      <ChatConversations variant="customer" />
+      <ChatConversations v-if="isLoggedIn" variant="customer" />
     </div>
     <div v-show="tab === 'moments'" class="tab-panel moments-panel">
-      <MomentFeed @header-visibility="setHeaderVisibility" />
+      <MomentFeed :active="tab === 'moments'" @header-visibility="setHeaderVisibility" @related-unread="momentUnread = $event" />
     </div>
   </section>
 </template>
@@ -44,23 +45,26 @@
 <script setup>
 import { computed, onMounted, onUnmounted, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
-import { Album, Bell, FileText, LogOut, Settings, ShieldCheck, UserRound } from 'lucide-vue-next'
-import { getConversations } from '../../api/messages'
+import { Album, Bell, FileText, LogIn, LogOut, Settings, ShieldCheck, UserRound } from 'lucide-vue-next'
+import { getConversations, getNotificationUnreadCount } from '../../api/messages'
 import { getMomentUnreadCount } from '../../api/moments'
 import ChatConversations from '../chat/ChatConversations.vue'
 import MomentFeed from '../moments/MomentFeed.vue'
 import { imageUrl } from '../../composables/useImage'
+import { connectCustomerWebSocket, disconnectCustomerWebSocket, subscribeCustomerWebSocket } from '../../services/customerWebSocket'
 
 const route = useRoute()
 const router = useRouter()
 const tab = ref(route.path === '/customer/moments' ? 'moments' : 'chat')
 const chatUnread = ref(0)
 const momentUnread = ref(0)
+const notificationUnread = ref(0)
 const mobileMenuOpen = ref(false)
 const headerHidden = ref(false)
 const isLoggedIn = computed(() => Boolean(localStorage.getItem('token')))
 const currentUser = computed(() => JSON.parse(localStorage.getItem('user') || '{}'))
 let pollTimer
+const wsUnsubscribers = []
 
 const badge = value => value > 99 ? '99+' : value
 
@@ -88,6 +92,7 @@ function setHeaderVisibility(state) {
 function logout() {
   localStorage.removeItem('token')
   localStorage.removeItem('user')
+  disconnectCustomerWebSocket()
   mobileMenuOpen.value = false
   router.replace('/customer/login')
 }
@@ -96,19 +101,50 @@ async function loadBadges() {
   if (!localStorage.getItem('token')) return
   try {
     const rows = await getConversations()
-    chatUnread.value = rows.reduce((sum, item) => sum + (item.unreadCount || 0), 0)
+    chatUnread.value = rows.filter(item => !item.muted).reduce((sum, item) => sum + (item.unreadCount || 0), 0)
   } catch { }
   try {
     const data = await getMomentUnreadCount()
     momentUnread.value = data.relatedUnreadCount || 0
   } catch { }
+  try { notificationUnread.value = Number(await getNotificationUnreadCount()) || 0 } catch { }
+}
+
+async function openSharedMoment() {
+  const momentId = String(route.query.sharedMoment || '')
+  if (!momentId || !/^\d+$/.test(momentId)) return
+  const query = { shareMode: 'browse' }
+  if (route.query.commentId) query.commentId = route.query.commentId
+  await router.replace('/customer/moments')
+  await router.push({ path: `/customer/moments/${momentId}`, query })
 }
 
 onMounted(() => {
+  openSharedMoment()
   loadBadges()
-  pollTimer = window.setInterval(loadBadges, 5000)
+  connectCustomerWebSocket()
+  wsUnsubscribers.push(
+    subscribeCustomerWebSocket('CHAT', loadBadges),
+    subscribeCustomerWebSocket('MOMENT', message => {
+      const count = Number(message?.data?.relatedUnreadCount)
+      if (Number.isFinite(count)) momentUnread.value = count
+      else loadBadges()
+    }),
+    subscribeCustomerWebSocket('NOTIFICATION', message => {
+      const count = Number(message?.data?.unreadCount)
+      if (Number.isFinite(count)) notificationUnread.value = count
+      else loadBadges()
+    }),
+    subscribeCustomerWebSocket('CONNECTION', message => {
+      if (message.action === 'CONNECTED') loadBadges()
+    })
+  )
+  pollTimer = window.setInterval(loadBadges, 60000)
 })
-onUnmounted(() => window.clearInterval(pollTimer))
+onUnmounted(() => {
+  window.clearInterval(pollTimer)
+  wsUnsubscribers.splice(0).forEach(unsubscribe => unsubscribe())
+})
 </script>
 
 <style scoped>
@@ -118,7 +154,9 @@ onUnmounted(() => window.clearInterval(pollTimer))
 .header-tab.active { color: #202124; font-weight: 800; }
 .header-tab.active::after { content: ''; position: absolute; left: 50%; bottom: 1px; width: 22px; height: 3px; transform: translateX(-50%); border-radius: 2px; background: #f28c28; }
 .tab-badge { min-width: 18px; height: 18px; display: grid; place-items: center; padding: 0 5px; border-radius: 10px; background: #e85d4a; color: #fff; font-size: 10px; font-style: normal; font-weight: 700; }
-.mobile-message-link { width: 40px; height: 40px; margin-left: auto; display: none; place-items: center; border-radius: 50%; color: #54585f; }
+.mobile-message-link { width: 40px; height: 40px; position: relative; margin-left: auto; display: none; place-items: center; border-radius: 50%; color: #54585f; }
+.message-badge { position: absolute; top: 1px; right: -3px; min-width: 17px; height: 17px; display: grid; place-items: center; padding: 0 4px; border: 2px solid #fff; border-radius: 10px; background: #e85d4a; color: #fff; font-size: 9px; font-style: normal; font-weight: 750; }
+.menu-badge { min-width: 19px; height: 19px; margin-left: auto; display: grid; place-items: center; padding: 0 5px; border-radius: 10px; background: #e85d4a; color: #fff; font-size: 10px; font-style: normal; }
 .mobile-message-link:active { background: #f2f3f5; }
 .mobile-menu-btn { width: 40px; height: 40px; display: none; place-items: center; flex: 0 0 auto; border-radius: 50%; background: transparent; color: #54585f; }
 .mobile-message-link + .mobile-menu-btn { margin-left: 0; }

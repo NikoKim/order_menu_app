@@ -20,6 +20,27 @@
     <template v-else-if="variant === 'compact'">
       <i class="sk-line compact-line"></i>
     </template>
+    <template v-else-if="variant === 'user-list'">
+      <div v-for="i in 5" :key="i" class="sk-user-row">
+        <i class="sk-circle user"></i><span><i class="sk-line medium"></i><i class="sk-line tiny"></i></span>
+      </div>
+    </template>
+    <template v-else-if="variant === 'quote-list'">
+      <div v-for="i in 3" :key="i" class="sk-quote-row">
+        <i class="sk-line title"></i><i class="sk-line short"></i><i class="sk-line wide"></i>
+      </div>
+    </template>
+    <template v-else-if="variant === 'comment-list'">
+      <div v-for="i in 2" :key="i" class="sk-comment-row">
+        <i class="sk-circle comment"></i>
+        <span><i class="sk-line short"></i><i class="sk-line wide"></i></span>
+      </div>
+    </template>
+    <template v-else-if="variant === 'topic-chips'">
+      <div class="sk-topic-list">
+        <i v-for="i in 6" :key="i" class="sk-topic" :class="{ wide: i % 3 === 0 }"></i>
+      </div>
+    </template>
     <template v-else>
       <div class="sk-generic"><i class="sk-line title"></i><i class="sk-line wide"></i><i class="sk-line medium"></i></div>
     </template>
@@ -38,8 +59,8 @@ defineProps({
 <style scoped>
 .skeleton-loader { width: 100%; padding: 12px; }
 .skeleton-loader.fullscreen { position: fixed; inset: 0; z-index: 1000; overflow: hidden; background: rgba(255,255,255,.94); }
-.sk-line, .sk-circle, .sk-bubble, .sk-media { display: block; overflow: hidden; position: relative; background: #eceef1; }
-.sk-line::after, .sk-circle::after, .sk-bubble::after, .sk-media::after { content: ''; position: absolute; inset: 0; transform: translateX(-100%); background: linear-gradient(90deg, transparent, rgba(255,255,255,.72), transparent); animation: shimmer 1.25s infinite; }
+.sk-line, .sk-circle, .sk-bubble, .sk-media, .sk-topic { display: block; overflow: hidden; position: relative; background: #eceef1; }
+.sk-line::after, .sk-circle::after, .sk-bubble::after, .sk-media::after, .sk-topic::after { content: ''; position: absolute; inset: 0; transform: translateX(-100%); background: linear-gradient(90deg, transparent, rgba(255,255,255,.72), transparent); animation: shimmer 1.25s infinite; }
 .sk-line { width: 100%; height: 11px; border-radius: 4px; }
 .sk-line + .sk-line { margin-top: 9px; }
 .sk-line.title { width: 68%; height: 17px; }
@@ -60,6 +81,21 @@ defineProps({
 .sk-generic { padding: 20px; background: #fff; border-radius: 8px; }
 .compact { padding: 16px 24px; }
 .compact-line { width: 92px; height: 8px; margin: 0 auto; }
+.user-list { padding: 0 8px 10px; }
+.sk-user-row { min-height: 50px; display: flex; align-items: center; gap: 11px; padding: 6px 10px; }
+.sk-user-row > span { min-width: 0; flex: 1; }
+.sk-circle.user { width: 36px; height: 36px; flex-basis: 36px; }
+.quote-list { padding: 0; }
+.sk-quote-row { min-height: 76px; padding: 11px 12px; border-bottom: 1px solid #eceef0; }
+.sk-quote-row .sk-line + .sk-line { margin-top: 7px; }
+.comment-list { padding: 4px 10px; }
+.sk-comment-row { min-height: 56px; display: flex; align-items: flex-start; gap: 8px; padding: 7px 0; }
+.sk-comment-row > span { min-width: 0; flex: 1; padding-top: 3px; }
+.sk-circle.comment { width: 28px; height: 28px; flex-basis: 28px; }
+.topic-chips { padding: 1px; }
+.sk-topic-list { display: flex; flex-wrap: wrap; gap: 7px; }
+.sk-topic { width: 92px; height: 30px; border-radius: 16px; }
+.sk-topic.wide { width: 114px; }
 .sr-only { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0, 0, 0, 0); }
 @keyframes shimmer { to { transform: translateX(100%); } }
 @media (max-width: 480px) { .skeleton-loader { padding: 8px 0; } .sk-moment { border-radius: 0; } }

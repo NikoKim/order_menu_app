@@ -20,6 +20,10 @@ export function createMoment(data) {
   return client.post('/moments', data)
 }
 
+export function searchMomentMentionUsers(query) {
+  return client.get('/moments/mention-users', { params: { query } })
+}
+
 export function updateMoment(id, data) {
   return client.put(`/moments/${id}`, data)
 }
@@ -60,6 +64,10 @@ export function removeMomentReaction(id, emoji) {
 // --- Comments ---
 export function getMomentComments(momentId, params = {}) {
   return client.get(`/moments/${momentId}/comments`, { params })
+}
+
+export function getMomentComment(momentId, commentId) {
+  return client.get(`/moments/${momentId}/comments/${commentId}`)
 }
 
 export function addMomentComment(momentId, data) {
@@ -132,6 +140,14 @@ export function markMomentsRead(momentIds) {
 // --- Share ---
 export function shareMoment(momentId, data) {
   return client.post(`/moments/${momentId}/share`, data)
+}
+
+export function recordExternalMomentShare(momentId, commentId = null) {
+  return client.post(`/moments/${momentId}/external-shares`, { commentId })
+}
+
+export function getMomentUserCard(userId) {
+  return client.get(`/moments/users/${userId}/card`)
 }
 
 // --- Image Upload (moments) ---

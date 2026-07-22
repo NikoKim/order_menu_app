@@ -5,12 +5,13 @@
       <div class="search-input-wrap">
         <Search class="search-icon" :size="18" aria-hidden="true" />
         <input v-model="searchText" class="search-input" placeholder="搜索用户开始聊天..." @input="onSearchInput" />
-        <button v-if="searchText" class="search-clear" title="清空搜索" @click="searchText = ''; searchResults = []">
+        <button v-if="searchText" class="search-clear" title="清空搜索" @click="clearSearch">
           <X :size="17" aria-hidden="true" />
         </button>
       </div>
-      <div v-if="searchResults.length" class="search-dropdown">
-        <div v-for="u in searchResults" :key="u.id" class="search-item" @click="startChat(u)">
+      <div v-if="searchLoading || searchResults.length" class="search-dropdown">
+        <LoadingSpinner v-if="searchLoading" variant="user-list" text="正在搜索用户" />
+        <div v-else v-for="u in searchResults" :key="u.id" class="search-item" @click="startChat(u)">
           <div class="search-avatar">
             <img v-if="u.avatarUrl" :src="imageUrl(u.avatarUrl)" alt="" />
             <UserRound v-else :size="18" aria-hidden="true" />
@@ -63,6 +64,7 @@ import { imageUrl } from '../../composables/useImage'
 import ConversationTile from '../../components/ConversationTile.vue'
 import LoadingSpinner from '../../components/LoadingSpinner.vue'
 import { confirmNotice, notifyError } from '../../services/notice'
+import { connectCustomerWebSocket, subscribeCustomerWebSocket } from '../../services/customerWebSocket'
 
 const props = defineProps({
   variant: { type: String, default: 'shop' }
@@ -74,7 +76,9 @@ const loading = ref(true)
 const loadError = ref('')
 const searchText = ref('')
 const searchResults = ref([])
+const searchLoading = ref(false)
 let searchTimer = null
+let searchSequence = 0
 
 const isActive = (c) => c.status !== 'DISSOLVED'
 const pinned = computed(() => conversations.value.filter(c => c.pinned && isActive(c) && !c.hidden))
@@ -98,10 +102,21 @@ function goDetail(conv) {
 function onSearchInput() {
   clearTimeout(searchTimer)
   const q = searchText.value.trim()
-  if (!q) { searchResults.value = []; return }
+  const current = ++searchSequence
+  if (!q) { searchResults.value = []; searchLoading.value = false; return }
+  searchLoading.value = true
   searchTimer = setTimeout(async () => {
-    try { searchResults.value = await searchChatUsers(q) } catch { searchResults.value = [] }
+    try { if (current === searchSequence) searchResults.value = await searchChatUsers(q) } catch { if (current === searchSequence) searchResults.value = [] }
+    finally { if (current === searchSequence) searchLoading.value = false }
   }, 300)
+}
+
+function clearSearch() {
+  clearTimeout(searchTimer)
+  searchSequence += 1
+  searchText.value = ''
+  searchResults.value = []
+  searchLoading.value = false
 }
 
 async function startChat(user) {
@@ -141,11 +156,14 @@ async function handleDelete(conv) {
 }
 
 let pollTimer = null
+let unsubscribeWs
 onMounted(() => {
   loadConversations()
-  pollTimer = setInterval(() => loadConversations({ silent: true }), 5000)
+  connectCustomerWebSocket()
+  unsubscribeWs = subscribeCustomerWebSocket('CHAT', () => loadConversations({ silent: true }))
+  pollTimer = setInterval(() => loadConversations({ silent: true }), 60000)
 })
-onUnmounted(() => clearInterval(pollTimer))
+onUnmounted(() => { clearInterval(pollTimer); unsubscribeWs?.() })
 </script>
 
 <style scoped>

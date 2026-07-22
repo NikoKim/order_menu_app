@@ -3,10 +3,10 @@
     <header class="page-header back-header">
       <button class="icon-btn" title="返回" @click="router.back()"><ArrowLeft :size="22" /></button>
       <h1 class="page-title">消息通知</h1>
-      <button v-if="notifications.length" class="read-all" @click="handleReadAll">全部已读</button>
+      <button v-if="hasUnread" class="read-all" @click="handleReadAll">全部已读</button>
     </header>
     <LoadingSpinner v-if="loading" />
-    <EmptyState v-else-if="error" icon="warning" :title="error" action-text="重试" @action="load" />
+    <EmptyState v-else-if="error" icon="warning" :title="error" action-text="重试" @action="load()" />
     <div v-else-if="notifications.length" class="notification-list">
       <button v-for="notice in notifications" :key="notice.id" class="notice-row" :class="{ unread: !notice.readAt && !notice.read }" @click="openNotice(notice)">
         <span class="notice-icon"><Bell :size="20" /></span>
@@ -24,25 +24,37 @@
 </template>
 
 <script setup>
-import { onMounted, ref } from 'vue'
+import { computed, onMounted, onUnmounted, ref } from 'vue'
 import { useRouter } from 'vue-router'
 import { ArrowLeft, Bell, ChevronRight } from 'lucide-vue-next'
 import { getNotifications, markAllNotificationsRead, markNotificationRead } from '../../api/messages'
 import LoadingSpinner from '../../components/LoadingSpinner.vue'
 import EmptyState from '../../components/EmptyState.vue'
+import { formatMomentTime } from '../../composables/useMomentTime'
+import { connectCustomerWebSocket, subscribeCustomerWebSocket } from '../../services/customerWebSocket'
 
 const router = useRouter()
 const notifications = ref([])
 const loading = ref(true)
 const error = ref('')
+const hasUnread = computed(() => notifications.value.some(item => !item.readAt && !item.read))
+let unsubscribeWs
 
-async function load() {
-  loading.value = true; error.value = ''
+async function load(silent = false) {
+  if (!silent) loading.value = true
+  error.value = ''
   try {
     const data = await getNotifications()
-    notifications.value = data.records || data || []
+    const rows = data?.notifications || data?.records || (Array.isArray(data) ? data : [])
+    notifications.value = rows.map(normalizeNotification)
   } catch (e) { error.value = e.message }
   finally { loading.value = false }
+}
+
+function normalizeNotification(notice) {
+  let payload = {}
+  try { payload = typeof notice.payload === 'string' ? JSON.parse(notice.payload) : (notice.payload || {}) } catch { }
+  return { ...notice, ...payload }
 }
 
 function typeLabel(type) {
@@ -50,25 +62,32 @@ function typeLabel(type) {
   return labels[type] || '消息通知'
 }
 
-function formatTime(value) { return value ? value.replace('T', ' ').slice(0, 16) : '' }
+const formatTime = formatMomentTime
 
 async function openNotice(notice) {
   if (!notice.readAt && !notice.read) {
-    try { await markNotificationRead(notice.id); notice.read = true } catch { }
+    try { await markNotificationRead(notice.id); notice.read = true; notice.readAt = new Date().toISOString() } catch { }
   }
   const role = JSON.parse(localStorage.getItem('user') || '{}')?.role
   const prefix = role === 'SHOP' ? '/shop' : '/customer'
   if (notice.orderId) router.push(`${prefix}/orders/${notice.orderId}`)
-  else if (notice.momentId) router.push(`${prefix}/moments/${notice.momentId}`)
+  else if (notice.momentId) router.push({ path: `${prefix}/moments/${notice.momentId}`, query: notice.commentId ? { commentId: notice.commentId } : {} })
   else if (notice.conversationId) router.push(`${prefix}/chat/${notice.conversationId}`)
 }
 
 async function handleReadAll() {
   await markAllNotificationsRead()
-  notifications.value.forEach(item => { item.read = true })
+  notifications.value.forEach(item => { item.read = true; item.readAt = item.readAt || new Date().toISOString() })
 }
 
-onMounted(load)
+onMounted(() => {
+  load()
+  connectCustomerWebSocket()
+  unsubscribeWs = subscribeCustomerWebSocket('NOTIFICATION', message => {
+    if (message.action === 'CREATED' || message.action === 'READ_CHANGED') load(true)
+  })
+})
+onUnmounted(() => unsubscribeWs?.())
 </script>
 
 <style scoped>

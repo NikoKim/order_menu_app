@@ -10,7 +10,7 @@
     </header>
 
     <div class="subpage-body">
-      <LoadingSpinner v-if="loading" text="搜索中..." />
+      <LoadingSpinner v-if="loading" variant="moment-feed" text="正在搜索动态" />
       <template v-else-if="results.length">
         <MomentCard v-for="item in results" :key="item.id" :moment="item" @click="open(item)" @comment="open(item)" @author="openAuthor" @topic="openTopic" />
       </template>

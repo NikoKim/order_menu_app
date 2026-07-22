@@ -10,7 +10,11 @@
         <input v-model="form.title" class="form-input title-input" minlength="3" maxlength="120" required placeholder="添加标题（至少3个字）" />
       </div>
       <div class="form-group">
-        <textarea v-model="form.content" class="form-textarea content-area" rows="6" maxlength="20000" placeholder="分享你的想法..."></textarea>
+        <textarea ref="contentEl" v-model="form.content" class="form-textarea content-area" rows="6" maxlength="20000" placeholder="分享你的想法，输入 @ 提及用户..." @input="handleContentInput"></textarea>
+      </div>
+
+      <div class="form-group">
+        <MomentQuotePicker v-model:selected="form.quote" :exclude-moment-id="editId" />
       </div>
 
       <!-- Images -->
@@ -71,14 +75,17 @@
             <span>搜索结果</span>
             <span v-if="topicSearching" class="topic-loading-copy"><LoaderCircle :size="14" class="spin" />正在匹配</span>
           </div>
-          <div v-if="topicSuggestions.length" class="topic-suggestions">
+          <div v-if="topicSearching" class="topic-skeletons" aria-label="正在搜索话题">
+            <span v-for="i in 5" :key="i" class="topic-skeleton"></span>
+          </div>
+          <div v-else-if="topicSuggestions.length" class="topic-suggestions">
             <button v-for="t in topicSuggestions" :key="t.id || t.name" class="topic-sug-item" @click="selectTopic(t)">
               <Hash :size="14" />
               <span>{{ t.name }}</span>
               <small>{{ topicCount(t) }}</small>
             </button>
           </div>
-          <button v-else-if="!topicSearching" class="topic-create-hint" @click="addTopic">
+          <button v-else class="topic-create-hint" @click="addTopic">
             暂无匹配话题，创建 <strong>#{{ topicQuery }}</strong>
           </button>
         </div>
@@ -121,24 +128,30 @@
         <button class="btn-publish" @click="publish" :disabled="saving"><Send :size="18" />{{ publishButtonText }}</button>
       </div>
     </div>
+    <MentionPicker :visible="mentionPickerOpen" :selected-ids="mentionUsers.map(user => user.id)" @select="selectMentionUser" @close="mentionPickerOpen = false" />
   </div>
 </template>
 
 <script setup>
-import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
+import { computed, nextTick, onBeforeUnmount, onMounted, ref } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { ArrowLeft, Globe2, Hash, ImagePlus, LoaderCircle, LockKeyhole, PlusCircle, RefreshCw, Save, Send, UsersRound, X } from 'lucide-vue-next'
-import { createMoment, updateMoment, getMomentDetail, uploadMomentImage, searchTopics as fetchTopics, createTopic } from '../../api/moments'
+import { createMoment, updateMoment, getMomentComment, getMomentDetail, uploadMomentImage, searchTopics as fetchTopics, createTopic } from '../../api/moments'
 import { imageUrl } from '../../composables/useImage'
 import { notifyError, notifySuccess } from '../../services/notice'
+import MentionPicker from '../../components/MentionPicker.vue'
+import MomentQuotePicker from '../../components/MomentQuotePicker.vue'
 
 const route = useRoute()
 const router = useRouter()
 const editId = ref(route.query.editId ? Number(route.query.editId) : null)
 
 const form = ref({
-  title: '', content: '', visibility: 'PUBLIC', topics: [], imageUrls: []
+  title: '', content: '', visibility: 'PUBLIC', topics: [], imageUrls: [], quote: null
 })
+const contentEl = ref(null)
+const mentionUsers = ref([])
+const mentionPickerOpen = ref(false)
 
 const visOpts = [
   { value: 'PUBLIC', label: '公开', desc: '所有人可见', icon: Globe2 },
@@ -240,14 +253,44 @@ function uploadedImageUrls() {
 }
 
 function momentPayload(status, imageUrls) {
+  const quote = form.value.quote
   return {
     title: form.value.title.trim(),
     content: form.value.content.trim(),
     visibility: form.value.visibility,
     status,
     topics: form.value.topics,
-    imageUrls
+    imageUrls,
+    quotedMomentId: quote?.type === 'MOMENT' ? quote.momentId : null,
+    quotedCommentId: quote?.type === 'COMMENT' ? quote.commentId : null,
+    mentionedUserIds: activeMentions().map(user => Number(user.id))
   }
+}
+
+function handleContentInput(event) {
+  const input = event?.target
+  const cursor = input?.selectionStart ?? form.value.content.length
+  if (form.value.content.slice(0, cursor).endsWith('@')) mentionPickerOpen.value = true
+}
+
+function selectMentionUser(user) {
+  const input = contentEl.value
+  const cursor = input?.selectionStart ?? form.value.content.length
+  const before = form.value.content.slice(0, cursor)
+  const after = form.value.content.slice(cursor)
+  const replaceAt = before.endsWith('@') ? before.slice(0, -1) : before
+  form.value.content = `${replaceAt}@${user.nickname} ${after}`
+  if (!mentionUsers.value.some(item => Number(item.id) === Number(user.id))) mentionUsers.value.push(user)
+  mentionPickerOpen.value = false
+  nextTick(() => {
+    const nextCursor = replaceAt.length + user.nickname.length + 2
+    input?.focus()
+    input?.setSelectionRange(nextCursor, nextCursor)
+  })
+}
+
+function activeMentions() {
+  return mentionUsers.value.filter(user => form.value.content.includes(`@${user.nickname}`))
 }
 
 function topicPage(result) {
@@ -409,12 +452,40 @@ onMounted(async () => {
         title: m.title || '', content: m.content || '',
         visibility: m.visibility || 'PUBLIC',
         topics: (m.topics || []).map(t => t.name),
-        imageUrls: m.imageUrls || []
+        imageUrls: m.imageUrls || [],
+        quote: m.quote || null
       }
+      mentionUsers.value = m.mentions || []
       savedStatus.value = m.status || 'PUBLISHED'
     } catch { }
   }
+  await loadRequestedQuote()
 })
+
+async function loadRequestedQuote() {
+  const momentId = Number(route.query.quotedMomentId)
+  const commentId = Number(route.query.quotedCommentId)
+  if (!momentId) return
+  try {
+    const source = await getMomentDetail(momentId)
+    if (commentId) {
+      const comment = await getMomentComment(momentId, commentId)
+      form.value.quote = {
+        type: 'COMMENT', momentId, commentId,
+        author: comment.author, momentTitle: source.title, content: comment.content,
+        createdAt: comment.createdAt, available: true
+      }
+      return
+    }
+    form.value.quote = {
+      type: 'MOMENT', momentId, commentId: null,
+      author: source.author, momentTitle: source.title, content: source.content,
+      createdAt: source.publishedAt || source.createdAt, available: true
+    }
+  } catch (e) {
+    notifyError(e.message || '引用内容不可用')
+  }
+}
 
 onBeforeUnmount(() => {
   clearTimeout(topicDebounce)

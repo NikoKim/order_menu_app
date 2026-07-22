@@ -48,6 +48,7 @@ public class SecurityConfig {
                         .requestMatchers(HttpMethod.GET,
                                 "/api/moments/drafts",
                                 "/api/moments/unread-count",
+                                "/api/moments/mention-users",
                                 "/api/moments/privacy",
                                 "/api/moments/privacy/**",
                                 "/api/moments/users/*/privacy"
@@ -58,11 +59,15 @@ public class SecurityConfig {
                                 "/api/moments/*/share-card",
                                 "/api/moments/*/availability",
                                 "/api/moments/*/comments",
+                                "/api/moments/*/comments/*",
                                 "/api/moments/*/comments/*/replies",
                                 "/api/moments/comments/*/replies",
+                                "/api/moments/users/*/card",
                                 "/api/moments/topics",
-                                "/api/moments/topics/**"
+                                "/api/moments/topics/**",
+                                "/e811102a0d9cad593d612a8e10ee7e4e.txt"
                         ).permitAll()
+                        .requestMatchers(HttpMethod.POST, "/api/moments/*/external-shares").permitAll()
                         .requestMatchers("/api/admin/**").hasRole("ADMIN")
                         .requestMatchers("/api/shop/**").hasRole("SHOP")
                         .requestMatchers("/api/upload/shop", "/api/upload/menu", "/api/upload/family").hasRole("SHOP")

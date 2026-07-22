@@ -1,21 +1,22 @@
 <template>
   <div class="share-overlay" @click.self="$emit('close')">
     <section class="share-dialog">
-      <h2>{{ mode === 'chat' ? '选择聊天' : (comment ? '分享评论' : '分享动态') }}</h2>
+      <h2>{{ mode === 'chat' ? '选择聊天' : (mode === 'external' ? '分享到其他应用' : (comment ? '分享评论' : '分享动态')) }}</h2>
       <div class="share-preview">
         <img v-if="moment.imageUrls?.[0]" :src="imageUrl(moment.imageUrls[0])" alt="" />
         <span><small>{{ comment?.author?.nickname || moment.author?.nickname || '动态用户' }}</small><strong>{{ moment.title || '分享了一条动态' }}</strong><p>{{ comment?.content || moment.content }}</p></span>
       </div>
       <div v-if="mode === 'options'" class="share-methods">
         <button type="button" @click="openChat"><MessageCircle :size="22" /><span><strong>分享到聊天</strong><small>发送{{ comment ? '评论' : '动态' }}卡片给好友或群聊</small></span></button>
-        <button type="button" @click="shareExternal"><Share2 :size="22" /><span><strong>分享到其他应用</strong><small>分享可点击进入{{ comment ? '评论' : '动态' }}详情的网页卡片</small></span></button>
+        <button type="button" @click="mode = 'external'"><Share2 :size="22" /><span><strong>分享到其他应用</strong><small>选择分享后的浏览范围</small></span></button>
       </div>
+      <ExternalShareOptions v-else-if="mode === 'external'" :item-label="comment ? '评论' : '动态'" @select="shareExternal" />
       <LoadingSpinner v-else-if="loading" />
       <div v-else-if="conversations.length" class="share-list">
         <ConversationTile v-for="conversation in conversations" :key="conversation.id" :conversation="conversation" :show-menu="false" variant="customer" @click="sendToChat(conversation)" />
       </div>
       <p v-else class="share-empty">暂无可用会话</p>
-      <button class="share-cancel" type="button" @click="mode === 'chat' ? (mode = 'options') : $emit('close')">{{ mode === 'chat' ? '返回' : '取消' }}</button>
+      <button class="share-cancel" type="button" @click="mode === 'chat' || mode === 'external' ? (mode = 'options') : $emit('close')">{{ mode === 'chat' || mode === 'external' ? '返回' : '取消' }}</button>
     </section>
   </div>
 </template>
@@ -29,6 +30,7 @@ import { imageUrl } from '../composables/useImage'
 import { shareMomentExternally } from '../services/shareCard'
 import { notifyError, notifySuccess } from '../services/notice'
 import ConversationTile from './ConversationTile.vue'
+import ExternalShareOptions from './ExternalShareOptions.vue'
 import LoadingSpinner from './LoadingSpinner.vue'
 
 const props = defineProps({
@@ -57,14 +59,16 @@ async function openChat() {
 async function sendToChat(conversation) {
   try {
     await shareMomentToChat({ momentId: props.moment.id, commentId: props.comment?.id || null, conversationId: conversation.id })
+    props.moment.shareCount = Number(props.moment.shareCount || 0) + 1
+    props.moment.appShareCount = Number(props.moment.appShareCount || 0) + 1
     notifySuccess('已分享到聊天')
     emit('close')
   } catch (error) { notifyError(error.message) }
 }
 
-function shareExternal() {
+function shareExternal(mode) {
   emit('close')
-  shareMomentExternally(props.moment, props.comment)
+  shareMomentExternally(props.moment, props.comment, { mode })
 }
 </script>
 

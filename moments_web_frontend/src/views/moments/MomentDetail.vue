@@ -1,18 +1,19 @@
 <template>
-  <div class="detail-page">
+  <div class="detail-page" :class="{ 'isolated-share': isIsolatedShare }">
     <header class="page-header" :class="{ hidden: headerHidden }">
-      <button class="back-btn" @click="$router.back()"><ArrowLeft :size="20" /></button>
+      <span v-if="isIsolatedShare" class="header-spacer"></span>
+      <button v-else class="back-btn" @click="goBack"><ArrowLeft :size="20" /></button>
       <h1 class="page-title">动态详情</h1>
       <div class="header-actions">
-        <button v-if="moment?.editable" class="more-btn" title="动态操作" aria-label="动态操作" @click.stop="ownerMenuOpen = !ownerMenuOpen"><MoreVertical :size="21" /></button>
+        <button v-if="moment" ref="ownerMenuAnchor" class="more-btn" title="动态操作" aria-label="动态操作" @click.stop="ownerMenuOpen = !ownerMenuOpen"><MoreVertical :size="21" /></button>
         <span v-else class="header-spacer"></span>
-        <div v-if="ownerMenuOpen" class="owner-menu-backdrop" @click.stop="ownerMenuOpen = false"></div>
-        <Transition name="owner-menu">
-          <div v-if="ownerMenuOpen" class="owner-menu" @click.stop>
-            <button @click="editMoment"><Pencil :size="16" />编辑</button>
-            <button class="danger" @click="removeMoment"><Trash2 :size="16" />删除</button>
+        <AnchoredMenu :open="ownerMenuOpen" :anchor="ownerMenuAnchor" @close="ownerMenuOpen = false">
+          <div class="owner-menu">
+            <button @click="quoteCurrentMoment"><Quote :size="16" />引用动态</button>
+            <button v-if="moment.editable" @click="editMoment"><Pencil :size="16" />编辑</button>
+            <button v-if="moment.editable" class="danger" @click="removeMoment"><Trash2 :size="16" />删除</button>
           </div>
-        </Transition>
+        </AnchoredMenu>
       </div>
     </header>
 
@@ -43,8 +44,10 @@
         </div>
 
         <div v-if="moment.content" class="moment-text">
-          <p>{{ moment.content }}</p>
+          <p><MentionText :content="moment.content" :mentions="moment.mentions" /></p>
         </div>
+
+        <MomentQuoteCard v-if="moment.quote" :quote="moment.quote" @open="openQuoted" />
 
         <!-- Images grid -->
         <div v-if="moment.imageUrls?.length" class="moment-images" :class="'img-n-' + Math.min(moment.imageUrls.length, 9)">
@@ -98,7 +101,7 @@
           <span class="act-div"></span>
           <button class="act-btn" @click="openShareSheet()">
             <Share2 class="act-icon" :size="19" />
-            <span>分享</span>
+            <span>分享 {{ moment.shareCount || 0 }}</span>
           </button>
         </div>
       </article>
@@ -123,18 +126,19 @@
                 <span v-if="c.author?.merchant" class="comment-badge merchant">商家</span>
                 <span class="comment-time">{{ fmtTime(c.createdAt) }}</span>
                 <div class="comment-more-wrap">
-                  <button class="comment-more" title="评论操作" aria-label="评论操作" @click.stop="toggleCommentMenu(`comment-${c.id}`)"><MoreVertical :size="17" /></button>
-                  <Transition name="owner-menu">
-                    <div v-if="commentMenuId === `comment-${c.id}`" class="comment-menu" @click.stop>
+                  <button class="comment-more" title="评论操作" aria-label="评论操作" @click.stop="toggleCommentMenu(`comment-${c.id}`, $event)"><MoreVertical :size="17" /></button>
+                  <AnchoredMenu :open="commentMenuId === `comment-${c.id}`" :anchor="commentMenuAnchor" @close="commentMenuId = null">
+                    <div class="comment-menu">
                       <button @click="openShareSheet(c, 'chat')"><MessageCircle :size="15" />分享到聊天</button>
                       <button @click="shareCommentExternally(c)"><Share2 :size="15" />分享到其他应用</button>
+                      <button @click="quoteComment(c)"><Quote :size="15" />引用评论</button>
                       <button v-if="c.mine" class="danger" @click="handleDeleteComment(c)"><Trash2 :size="15" />删除</button>
                     </div>
-                  </Transition>
+                  </AnchoredMenu>
                 </div>
               </div>
               <p v-if="c.replyToNickname" class="comment-reply-label">回复 <b>{{ c.replyToNickname }}</b></p>
-              <p class="comment-text">{{ c.content }}</p>
+              <p class="comment-text"><MentionText :content="c.content" :mentions="c.mentions" /></p>
               <div v-if="c.imageUrls?.length" class="comment-images">
                 <img v-for="(img, i) in c.imageUrls" :key="i" :src="imageUrl(img)" class="comment-img" @click="viewCommentImage(c.imageUrls, i)" />
               </div>
@@ -149,20 +153,41 @@
               <!-- Replies -->
               <div v-if="c.replyCount > 0 && c.replies?.length" class="comment-replies">
                 <div v-for="r in c.replies" :id="`comment-${r.id}`" :key="r.id" class="reply-item">
-                  <span class="reply-name">{{ r.author?.nickname }}</span>
-                  <span v-if="r.replyToNickname" class="reply-target"> 回复 <b>{{ r.replyToNickname }}</b></span>
-                  <span class="reply-colon">：</span>
-                  <span class="reply-text">{{ r.content }}</span>
-                  <span class="reply-more-wrap">
-                    <button class="reply-more" title="回复操作" aria-label="回复操作" @click.stop="toggleCommentMenu(`reply-${r.id}`)"><MoreVertical :size="15" /></button>
-                    <Transition name="owner-menu">
-                      <span v-if="commentMenuId === `reply-${r.id}`" class="comment-menu reply-menu" @click.stop>
-                        <button @click="openShareSheet(r, 'chat')"><MessageCircle :size="14" />分享到聊天</button>
-                        <button @click="shareCommentExternally(r)"><Share2 :size="14" />分享到其他应用</button>
-                        <button v-if="r.mine" class="danger" @click="handleDeleteReply(c, r)"><Trash2 :size="14" />删除</button>
+                  <div class="reply-avatar">
+                    <img v-if="r.author?.avatarUrl" :src="imageUrl(r.author.avatarUrl)" alt="" />
+                    <span v-else>{{ r.author?.nickname?.charAt(0) || '?' }}</span>
+                  </div>
+                  <div class="reply-body">
+                    <div class="reply-top">
+                      <span class="reply-name">{{ r.author?.nickname }}</span>
+                      <span v-if="r.authorBadge" class="comment-badge">作者</span>
+                      <span v-if="r.author?.merchant" class="comment-badge merchant">商家</span>
+                      <span class="comment-time">{{ fmtTime(r.createdAt) }}</span>
+                      <span class="reply-more-wrap">
+                        <button class="reply-more" title="回复操作" aria-label="回复操作" @click.stop="toggleCommentMenu(`reply-${r.id}`, $event)"><MoreVertical :size="15" /></button>
+                        <AnchoredMenu :open="commentMenuId === `reply-${r.id}`" :anchor="commentMenuAnchor" @close="commentMenuId = null">
+                          <span class="comment-menu reply-menu">
+                            <button @click="openShareSheet(r, 'chat')"><MessageCircle :size="14" />分享到聊天</button>
+                            <button @click="shareCommentExternally(r)"><Share2 :size="14" />分享到其他应用</button>
+                            <button @click="quoteComment(r)"><Quote :size="14" />引用评论</button>
+                            <button v-if="r.mine" class="danger" @click="handleDeleteReply(c, r)"><Trash2 :size="14" />删除</button>
+                          </span>
+                        </AnchoredMenu>
                       </span>
-                    </Transition>
-                  </span>
+                    </div>
+                    <p v-if="r.replyToNickname" class="comment-reply-label">回复 <b>{{ r.replyToNickname }}</b></p>
+                    <p class="reply-text"><MentionText :content="r.content" :mentions="r.mentions" /></p>
+                    <div v-if="r.imageUrls?.length" class="comment-images reply-images">
+                      <img v-for="(img, i) in r.imageUrls" :key="i" :src="imageUrl(img)" class="comment-img" @click="viewCommentImage(r.imageUrls, i)" />
+                    </div>
+                    <div class="comment-actions reply-actions">
+                      <button class="comment-like-btn" :class="{ liked: r.likedByMe }" @click="handleCommentLike(r)">
+                        <Heart :size="16" :fill="r.likedByMe ? 'currentColor' : 'none'" />
+                        <span v-if="r.likeCount">{{ r.likeCount }}</span>
+                      </button>
+                      <button class="comment-reply-btn" @click="startReply(r)">回复</button>
+                    </div>
+                  </div>
                 </div>
                 <button v-if="c.replyCount > (c.replies?.length || 0)" class="load-replies-btn" @click="loadReplies(c)">
                   展开更多回复 ({{ c.replyCount - (c.replies?.length || 0) }})
@@ -189,21 +214,28 @@
           <span>回复 {{ replyTarget.author?.nickname }}</span>
           <button class="reply-cancel" title="取消回复" @click="replyTarget = null"><X :size="16" /></button>
         </div>
+        <div v-if="commentImages.length" class="comment-image-previews">
+          <div v-for="item in commentImages" :key="item.id" class="comment-image-preview" :class="`is-${item.status}`">
+            <img :src="item.previewUrl" alt="待发送的评论图片" />
+            <span v-if="item.status === 'uploading'" class="comment-image-loading">上传中</span>
+            <button v-if="item.status === 'failed'" class="comment-image-retry" type="button" title="重新上传" aria-label="重新上传图片" @click="uploadCommentImageItem(item)"><RefreshCw :size="16" /></button>
+            <button class="comment-image-remove" type="button" title="移除图片" aria-label="移除图片" @click="removeCommentImage(item)"><X :size="15" /></button>
+          </div>
+        </div>
         <div class="comment-input-row">
-          <label class="comment-img-btn">
+          <label class="comment-img-btn" :class="{ disabled: commentImages.length >= 6 }">
             <ImagePlus :size="22" aria-label="添加图片" />
-            <input type="file" accept="image/*" hidden @change="handleCommentImage" />
+            <input type="file" accept="image/*" multiple hidden :disabled="commentImages.length >= 6" @change="handleCommentImage" />
           </label>
-          <input ref="commentInputEl" v-model="commentText" class="comment-text-input" :placeholder="replyTarget ? '写回复...' : '写评论...'" @keyup.enter="handleCommentSend" />
-          <button class="comment-send-btn" :disabled="!commentText.trim()" @click="handleCommentSend">发送</button>
+          <input ref="commentInputEl" v-model="commentText" class="comment-text-input" :placeholder="replyTarget ? '写回复...，输入 @ 提及用户' : '写评论...，输入 @ 提及用户'" @input="handleCommentInput" @keyup.enter="handleCommentSend" />
+          <button class="comment-send-btn" :disabled="!canSendComment" @click="handleCommentSend">{{ commentImages.some(item => item.status === 'uploading') ? '上传中' : '发送' }}</button>
         </div>
       </div>
     </template>
 
-    <div v-if="commentMenuId" class="comment-menu-backdrop" @click.stop="commentMenuId = null"></div>
-
     <!-- Image viewer -->
     <ImageViewer :visible="imageViewer.visible" :src="imageViewer.src" @close="imageViewer.visible = false" />
+    <MentionPicker :visible="mentionPickerOpen" :selected-ids="commentMentionUsers.map(user => user.id)" @select="selectMentionUser" @close="mentionPickerOpen = false" />
 
     <!-- Reaction picker -->
     <MomentReactionPicker
@@ -216,15 +248,16 @@
     <!-- Share sheet -->
     <div v-if="shareSheet.visible" class="modal-overlay" @click.self="shareSheet.visible = false">
       <div class="share-panel">
-        <h3 class="share-title">{{ shareSheet.mode === 'chat' ? '选择聊天' : (shareSheet.comment ? '分享评论' : '分享动态') }}</h3>
+        <h3 class="share-title">{{ shareSheet.mode === 'chat' ? '选择聊天' : (shareSheet.mode === 'external' ? '分享到其他应用' : (shareSheet.comment ? '分享评论' : '分享动态')) }}</h3>
         <div class="share-preview">
           <img v-if="moment.imageUrls?.[0]" :src="imageUrl(moment.imageUrls[0])" alt="" />
           <span><small>{{ shareSheet.comment?.author?.nickname || moment.author?.nickname || '动态用户' }}</small><strong>{{ moment.title || '分享了一条动态' }}</strong><p>{{ shareSheet.comment?.content || moment.content }}</p></span>
         </div>
         <div v-if="shareSheet.mode === 'options'" class="share-methods">
           <button type="button" @click="openChatShare"><MessageCircle :size="22" /><span><strong>分享到聊天</strong><small>发送{{ shareSheet.comment ? '评论' : '动态' }}卡片给好友或群聊</small></span></button>
-          <button type="button" @click="shareCurrentExternally"><Share2 :size="22" /><span><strong>分享到其他应用</strong><small>分享可点击进入{{ shareSheet.comment ? '评论' : '动态' }}详情的网页卡片</small></span></button>
+          <button type="button" @click="shareSheet.mode = 'external'"><Share2 :size="22" /><span><strong>分享到其他应用</strong><small>选择分享后的浏览范围</small></span></button>
         </div>
+        <ExternalShareOptions v-else-if="shareSheet.mode === 'external'" :item-label="shareSheet.comment ? '评论' : '动态'" @select="shareCurrentExternally" />
         <LoadingSpinner v-else-if="shareSheet.loading" />
         <div v-else-if="shareSheet.conversations.length === 0" class="share-empty">暂无可用会话</div>
         <div v-else-if="shareSheet.mode === 'chat'" class="share-list">
@@ -238,23 +271,29 @@
             @click="!shareSheet.sending && doShare(conv)"
           />
         </div>
-        <button class="share-cancel" @click="shareSheet.mode === 'chat' ? (shareSheet.mode = 'options') : (shareSheet.visible = false)">{{ shareSheet.mode === 'chat' ? '返回' : '取消' }}</button>
+        <button class="share-cancel" @click="shareSheet.mode === 'chat' || shareSheet.mode === 'external' ? (shareSheet.mode = 'options') : (shareSheet.visible = false)">{{ shareSheet.mode === 'chat' || shareSheet.mode === 'external' ? '返回' : '取消' }}</button>
       </div>
     </div>
   </div>
 </template>
 
 <script setup>
-import { computed, nextTick, ref, onMounted, onUnmounted } from 'vue'
+import { computed, nextTick, ref, onMounted, onUnmounted, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
-import { ArrowLeft, Heart, ImagePlus, MessageCircle, MoreVertical, Pencil, Share2, SmilePlus, Trash2, X } from 'lucide-vue-next'
-import { deleteMoment, getMomentDetail, setMomentLike, setMomentReaction, getMomentComments, addMomentComment, deleteMomentComment, setCommentLike, getCommentReplies, uploadMomentCommentImage } from '../../api/moments'
+import { ArrowLeft, Heart, ImagePlus, MessageCircle, MoreVertical, Pencil, Quote, RefreshCw, Share2, SmilePlus, Trash2, X } from 'lucide-vue-next'
+import { deleteMoment, getMomentComment, getMomentDetail, setMomentLike, setMomentReaction, getMomentComments, addMomentComment, deleteMomentComment, setCommentLike, getCommentReplies, uploadMomentCommentImage } from '../../api/moments'
 import { getConversations, shareMomentToChat } from '../../api/messages'
 import { imageUrl } from '../../composables/useImage'
+import { formatMomentTime } from '../../composables/useMomentTime'
+import AnchoredMenu from '../../components/AnchoredMenu.vue'
 import ImageViewer from '../../components/ImageViewer.vue'
 import LoadingSpinner from '../../components/LoadingSpinner.vue'
 import EmptyState from '../../components/EmptyState.vue'
 import ConversationTile from '../../components/ConversationTile.vue'
+import ExternalShareOptions from '../../components/ExternalShareOptions.vue'
+import MentionPicker from '../../components/MentionPicker.vue'
+import MentionText from '../../components/MentionText.vue'
+import MomentQuoteCard from '../../components/MomentQuoteCard.vue'
 import MomentReactionPicker from '../../components/MomentReactionPicker.vue'
 import { shareMomentExternally } from '../../services/shareCard'
 import { confirmNotice, notifyError, notifySuccess } from '../../services/notice'
@@ -271,19 +310,38 @@ const loadingComments = ref(false)
 const isLoggedIn = Boolean(localStorage.getItem('token'))
 
 const commentText = ref('')
+const commentImages = ref([])
+const commentMentionUsers = ref([])
+const mentionPickerOpen = ref(false)
 const commentInputEl = ref(null)
 const replyTarget = ref(null)
 const reactionMoment = ref(null)
 const imageViewer = ref({ visible: false, src: '' })
 const ownerMenuOpen = ref(false)
+const ownerMenuAnchor = ref(null)
 const commentMenuId = ref(null)
+const commentMenuAnchor = ref(null)
 const headerHidden = ref(false)
 const reactionCount = computed(() => (moment.value?.reactions || []).reduce((sum, item) => sum + Number(item.count || 0), 0))
+const isIsolatedShare = computed(() => route.query.shareMode === 'isolated')
+const canSendComment = computed(() => {
+  const hasContent = Boolean(commentText.value.trim()) || commentImages.value.some(item => item.status === 'ready')
+  const imagesSettled = commentImages.value.every(item => item.status === 'ready')
+  return hasContent && imagesSettled
+})
 let lastScrollY = 0
 
 const shareSheet = ref({ visible: false, mode: 'options', comment: null, conversations: [], loading: false, sending: false })
 
 const portalPrefix = route.path.startsWith('/shop/') ? '/shop' : '/customer'
+
+function goBack() {
+  if (route.query.shareMode === 'browse') {
+    router.replace(`${portalPrefix}/moments`)
+    return
+  }
+  router.back()
+}
 
 function goLogin() {
   router.push({ path: '/customer/login', query: { redirect: route.fullPath } })
@@ -299,7 +357,7 @@ async function loadDetail() {
   loading.value = true; error.value = ''
   try {
     moment.value = await getMomentDetail(route.params.id)
-  } catch (e) { error.value = e.message }
+  } catch (e) { error.value = route.query.fromQuote ? '该动态已被设置权限，无法查看详情' : e.message }
   finally { loading.value = false }
   loadComments()
 }
@@ -307,11 +365,27 @@ async function loadDetail() {
 async function loadComments() {
   try {
     const res = await getMomentComments(Number(route.params.id), { page: 1, pageSize: 20 })
-    comments.value = res.records || []
+    comments.value = (res.records || []).map(normalizeLegacyComment)
     hasMoreComments.value = res.hasMore !== false
     commentPage.value = 1
     const sharedCommentId = Number(route.query.commentId)
     if (sharedCommentId) {
+      const present = comments.value.some(comment => comment.id === sharedCommentId || comment.replies?.some(reply => reply.id === sharedCommentId))
+      if (!present) {
+        try {
+          const targetComment = normalizeLegacyComment(await getMomentComment(Number(route.params.id), sharedCommentId))
+          if (targetComment.parentCommentId) {
+            let root = comments.value.find(comment => comment.id === targetComment.parentCommentId)
+            if (!root) {
+              root = normalizeLegacyComment(await getMomentComment(Number(route.params.id), targetComment.parentCommentId))
+              comments.value.push(root)
+            }
+            await loadReplies(root)
+          } else {
+            comments.value.push(targetComment)
+          }
+        } catch { }
+      }
       await nextTick()
       const target = document.getElementById(`comment-${sharedCommentId}`)
       target?.scrollIntoView({ behavior: 'smooth', block: 'center' })
@@ -325,7 +399,7 @@ async function loadMoreComments() {
   loadingComments.value = true
   try {
     const res = await getMomentComments(Number(route.params.id), { page: commentPage.value + 1, pageSize: 20 })
-    comments.value.push(...(res.records || []))
+    comments.value.push(...(res.records || []).map(normalizeLegacyComment))
     hasMoreComments.value = res.hasMore !== false
     commentPage.value++
   } catch { }
@@ -335,8 +409,22 @@ async function loadMoreComments() {
 async function loadReplies(c) {
   try {
     const res = await getCommentReplies(Number(route.params.id), c.id, { page: 1, pageSize: 10 })
-    c.replies = res.records || []
+    c.replies = (res.records || []).map(normalizeLegacyComment)
   } catch { }
+}
+
+function normalizeLegacyComment(comment) {
+  const extracted = []
+  const content = String(comment?.content || '').replace(
+    /(?:https?:\/\/[^\s/]+)?\/images\/moment_mes\/[A-Za-z0-9._~!$&'()*+,;=:@%/-]+/g,
+    url => { extracted.push(url); return '' }
+  ).replace(/\s{2,}/g, ' ').trim()
+  return {
+    ...comment,
+    content,
+    imageUrls: [...new Set([...(comment?.imageUrls || []), ...extracted])],
+    replies: (comment?.replies || []).map(normalizeLegacyComment)
+  }
 }
 
 async function handleLike() {
@@ -363,13 +451,18 @@ async function handleCommentLike(c) {
 
 async function handleCommentSend() {
   if (!requireLogin()) return
-  if (!commentText.value.trim()) return
+  if (!canSendComment.value) return
   try {
     await addMomentComment(Number(route.params.id), {
       content: commentText.value.trim(),
-      parentCommentId: replyTarget.value?.id || null
+      parentCommentId: replyTarget.value ? (replyTarget.value.parentCommentId || replyTarget.value.id) : null,
+      replyToCommentId: replyTarget.value?.parentCommentId ? replyTarget.value.id : null,
+      imageUrls: commentImages.value.map(item => item.url),
+      mentionedUserIds: activeCommentMentions().map(user => user.id)
     })
     commentText.value = ''
+    commentMentionUsers.value = []
+    clearCommentImages()
     replyTarget.value = null
     loadComments()
     if (moment.value) moment.value.commentCount = (moment.value.commentCount || 0) + 1
@@ -378,7 +471,33 @@ async function handleCommentSend() {
 
 function startReply(c) {
   if (!requireLogin()) return
-  replyTarget.value = c; commentText.value = ''; commentInputEl.value?.focus()
+  replyTarget.value = c; commentText.value = ''; commentMentionUsers.value = []; commentInputEl.value?.focus()
+}
+
+function handleCommentInput(event) {
+  const input = event?.target
+  const cursor = input?.selectionStart ?? commentText.value.length
+  if (commentText.value.slice(0, cursor).endsWith('@')) mentionPickerOpen.value = true
+}
+
+function selectMentionUser(user) {
+  const input = commentInputEl.value
+  const cursor = input?.selectionStart ?? commentText.value.length
+  const before = commentText.value.slice(0, cursor)
+  const after = commentText.value.slice(cursor)
+  const replaceAt = before.endsWith('@') ? before.slice(0, -1) : before
+  commentText.value = `${replaceAt}@${user.nickname} ${after}`
+  if (!commentMentionUsers.value.some(item => Number(item.id) === Number(user.id))) commentMentionUsers.value.push(user)
+  mentionPickerOpen.value = false
+  nextTick(() => {
+    const nextCursor = replaceAt.length + user.nickname.length + 2
+    input?.focus()
+    input?.setSelectionRange(nextCursor, nextCursor)
+  })
+}
+
+function activeCommentMentions() {
+  return commentMentionUsers.value.filter(user => commentText.value.includes(`@${user.nickname}`))
 }
 
 async function handleDeleteComment(c) {
@@ -402,19 +521,51 @@ async function handleDeleteReply(parent, reply) {
   } catch (e) { notifyError(e.message) }
 }
 
-function toggleCommentMenu(id) {
+function toggleCommentMenu(id, event) {
+  commentMenuAnchor.value = event?.currentTarget || null
   commentMenuId.value = commentMenuId.value === id ? null : id
 }
 
 async function handleCommentImage(e) {
   if (!requireLogin()) return
-  const file = e.target.files?.[0]
-  if (!file) return
-  try {
-    const res = await uploadMomentCommentImage(file)
-    commentText.value += (commentText.value ? ' ' : '') + res.url
-  } catch (err) { notifyError(err.message) }
+  const remaining = Math.max(0, 6 - commentImages.value.length)
+  const files = Array.from(e.target.files || []).slice(0, remaining)
+  if (!files.length) return
+  if ((e.target.files?.length || 0) > remaining) notifyError('每条评论最多添加 6 张图片')
+  const items = files.map(file => ({
+    id: `${Date.now()}-${Math.random().toString(36).slice(2)}`,
+    file,
+    previewUrl: URL.createObjectURL(file),
+    url: '',
+    status: 'uploading'
+  }))
+  commentImages.value.push(...items)
+  await Promise.all(items.map(uploadCommentImageItem))
   e.target.value = ''
+}
+
+async function uploadCommentImageItem(item) {
+  const current = commentImages.value.find(candidate => candidate.id === item.id)
+  if (!current) return
+  current.status = 'uploading'
+  try {
+    const res = await uploadMomentCommentImage(current.file)
+    current.url = res.url
+    current.status = 'ready'
+  } catch (err) {
+    current.status = 'failed'
+    notifyError(err.message)
+  }
+}
+
+function removeCommentImage(item) {
+  URL.revokeObjectURL(item.previewUrl)
+  commentImages.value = commentImages.value.filter(current => current.id !== item.id)
+}
+
+function clearCommentImages() {
+  commentImages.value.forEach(item => URL.revokeObjectURL(item.previewUrl))
+  commentImages.value = []
 }
 
 function showReactionPicker(m) { if (requireLogin()) reactionMoment.value = m }
@@ -473,30 +624,52 @@ async function doShare(conv) {
     } else {
       await shareMomentToChat({ momentId: moment.value.id, conversationId: conv.id })
     }
+    moment.value.shareCount = Number(moment.value.shareCount || 0) + 1
+    moment.value.appShareCount = Number(moment.value.appShareCount || 0) + 1
     shareSheet.value.visible = false
     notifySuccess('已分享到聊天')
   } catch (e) { notifyError(e.message) }
   finally { shareSheet.value.sending = false }
 }
 
-function shareCurrentExternally() {
+function shareCurrentExternally(mode) {
   const comment = shareSheet.value.comment
   shareSheet.value.visible = false
-  shareMomentExternally(moment.value, comment)
+  shareMomentExternally(moment.value, comment, { mode })
 }
 
 function shareCommentExternally(comment) {
   commentMenuId.value = null
-  shareMomentExternally(moment.value, comment)
+  openShareSheet(comment)
+  shareSheet.value.mode = 'external'
+}
+
+function quoteCurrentMoment() {
+  ownerMenuOpen.value = false
+  if (!requireLogin()) return
+  router.push({ path: `${portalPrefix}/moments/new`, query: { quotedMomentId: moment.value.id } })
+}
+
+function quoteComment(comment) {
+  commentMenuId.value = null
+  if (!requireLogin()) return
+  router.push({ path: `${portalPrefix}/moments/new`, query: { quotedMomentId: moment.value.id, quotedCommentId: comment.id } })
+}
+
+function openQuoted(quote) {
+  if (!quote?.momentId) return
+  router.push({ path: `${portalPrefix}/moments/${quote.momentId}`, query: { ...(quote.commentId ? { commentId: quote.commentId } : {}), fromQuote: '1' } })
 }
 
 function goReference(ref) {
+  if (isIsolatedShare.value) return
   if (ref.shopId) {
     router.push(`/customer/shop/${ref.shopId}/menu`)
   }
 }
 
 function goTopic(t) {
+  if (isIsolatedShare.value) return
   if (!t?.id) return
   router.push({
     path: `${portalPrefix}/moments/topics/${t.id}`,
@@ -505,6 +678,7 @@ function goTopic(t) {
 }
 
 function goAuthor(a) {
+  if (isIsolatedShare.value) return
   if (a?.id) {
     router.push({
       path: `${portalPrefix}/chat/user/${a.id}`,
@@ -541,27 +715,23 @@ function visLabel(v) {
   return map[v] || v
 }
 
-function fmtTime(ts) {
-  if (!ts) return ''
-  const d = new Date(ts)
-  const now = new Date()
-  const diff = now - d
-  if (diff < 60000) return '刚刚'
-  if (diff < 3600000) return Math.floor(diff / 60000) + '分钟前'
-  if (diff < 86400000) return Math.floor(diff / 3600000) + '小时前'
-  if (diff < 172800000) return '昨天'
-  if (d.getFullYear() === now.getFullYear()) {
-    return `${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`
-  }
-  return d.toLocaleDateString()
-}
+const fmtTime = formatMomentTime
 
 onMounted(() => { loadDetail(); window.addEventListener('scroll', handlePageScroll, { passive: true }) })
-onUnmounted(() => window.removeEventListener('scroll', handlePageScroll))
+watch(() => route.fullPath, (current, previous) => {
+  if (previous && current !== previous) loadDetail()
+})
+onUnmounted(() => {
+  window.removeEventListener('scroll', handlePageScroll)
+  clearCommentImages()
+})
 </script>
 
 <style scoped>
 .detail-page { min-height: 100dvh; background: #f6f7f8; padding-bottom: 20px; }
+.detail-page.isolated-share .author-avatar,
+.detail-page.isolated-share .moment-ref,
+.detail-page.isolated-share .moment-topic { cursor: default; }
 .page-header { min-height: 60px; position: sticky; top: 0; z-index: 30; display: grid; grid-template-columns: 40px 1fr 40px; align-items: center; padding: 9px 12px; background: rgba(255,255,255,.96); border-bottom: 1px solid #eaecf0; transition: transform .24s ease, opacity .2s ease; }
 .page-header.hidden { transform: translateY(-100%); opacity: 0; pointer-events: none; }
 .back-btn {
@@ -573,13 +743,10 @@ onUnmounted(() => window.removeEventListener('scroll', handlePageScroll))
 .header-actions { position: relative; width: 40px; height: 40px; display: grid; place-items: center; }
 .more-btn { width: 38px; height: 38px; display: inline-flex; align-items: center; justify-content: center; border-radius: 50%; background: transparent; color: var(--color-text); }
 .more-btn:hover { background: var(--color-bg); }
-.owner-menu-backdrop { position: fixed; inset: 0; z-index: 31; }
-.owner-menu { position: absolute; top: 42px; right: 0; z-index: 32; width: 128px; padding: 5px; background: #fff; border: 1px solid var(--color-line); border-radius: 8px; box-shadow: var(--shadow-lg); transform-origin: top right; }
+.owner-menu { width: 128px; padding: 5px; background: #fff; border: 1px solid var(--color-line); border-radius: 8px; box-shadow: var(--shadow-lg); }
 .owner-menu button { width: 100%; min-height: 39px; display: flex; align-items: center; gap: 9px; padding: 0 10px; background: transparent; border-radius: 6px; color: var(--color-text); font-size: 14px; }
 .owner-menu button:hover { background: var(--color-bg); }
 .owner-menu button.danger { color: var(--color-error); }
-.owner-menu-enter-active, .owner-menu-leave-active { transition: opacity .16s ease, transform .16s ease; }
-.owner-menu-enter-from, .owner-menu-leave-to { opacity: 0; transform: translateY(-4px) scale(.94); }
 
 .error-wrap { min-height: 30vh; display: flex; align-items: center; justify-content: center; }
 
@@ -709,12 +876,11 @@ onUnmounted(() => window.removeEventListener('scroll', handlePageScroll))
 .comment-more-wrap, .reply-more-wrap { position: relative; z-index: 42; margin-left: auto; }
 .comment-more, .reply-more { width: 28px; height: 28px; display: inline-flex; align-items: center; justify-content: center; background: transparent; color: var(--color-text-muted); border-radius: 50%; }
 .comment-more:hover, .reply-more:hover { background: var(--color-bg); }
-.comment-menu { position: absolute; top: 30px; right: 0; z-index: 44; width: 174px; padding: 4px; background: #fff; border: 1px solid var(--color-line); border-radius: 8px; box-shadow: var(--shadow-lg); transform-origin: top right; }
+.comment-menu { display: block; width: 174px; padding: 4px; background: #fff; border: 1px solid var(--color-line); border-radius: 8px; box-shadow: var(--shadow-lg); }
 .comment-menu button { width: 100%; min-height: 38px; display: flex; align-items: center; gap: 8px; padding: 0 9px; background: transparent; border-radius: 6px; color: var(--color-text); font-size: 13px; }
 .comment-menu button:hover { background: var(--color-bg); }
 .comment-menu button.danger { color: var(--color-error); }
 .comment-menu button.danger:hover { background: var(--color-error-light); }
-.comment-menu-backdrop { position: fixed; inset: 0; z-index: 41; }
 
 .comment-reply-label { font-size: 12px; color: var(--color-text-muted); margin-bottom: 2px; }
 .comment-text { font-size: 14px; line-height: 1.6; color: var(--color-text-secondary); word-break: break-word; }
@@ -736,17 +902,21 @@ onUnmounted(() => window.removeEventListener('scroll', handlePageScroll))
 .comment-reply-btn:hover { background: var(--color-bg); }
 
 .comment-replies {
-  margin-top: 8px; padding: 10px; background: var(--color-bg);
+  margin-top: 8px; padding: 8px 10px; background: var(--color-bg);
   border-radius: var(--radius);
 }
-.reply-item { font-size: 13px; line-height: 1.6; padding: 4px 0; }
-.reply-name { font-weight: 600; color: var(--color-text); }
-.reply-target { color: var(--color-text-muted); }
-.reply-colon { color: var(--color-text-muted); }
-.reply-text { color: var(--color-text-secondary); }
-.reply-more-wrap { display: inline-block; margin-left: 4px; vertical-align: middle; }
+.reply-item { display: flex; align-items: flex-start; gap: 9px; padding: 8px 0; font-size: 13px; line-height: 1.55; }
+.reply-item + .reply-item { border-top: 1px solid #e5e7ea; }
+.reply-avatar { width: 30px; height: 30px; flex: 0 0 30px; display: grid; place-items: center; overflow: hidden; border-radius: 50%; background: #fff0df; color: #d96f0a; font-size: 12px; font-weight: 700; }
+.reply-avatar img { width: 100%; height: 100%; object-fit: cover; }
+.reply-body { min-width: 0; flex: 1; }
+.reply-top { min-height: 28px; display: flex; align-items: center; gap: 5px; flex-wrap: wrap; }
+.reply-name { font-weight: 700; color: var(--color-text); }
+.reply-text { color: var(--color-text-secondary); word-break: break-word; }
+.reply-images { margin: 5px 0 2px; }
+.reply-more-wrap { display: inline-block; margin-left: auto; vertical-align: middle; }
 .reply-more { width: 24px; height: 24px; }
-.reply-menu { top: 25px; display: block; }
+.reply-actions { margin-top: 5px; }
 .load-replies-btn {
   border: none; background: none; font-size: 13px; color: var(--color-primary);
   cursor: pointer; padding: 4px 0; margin-top: 4px; font-weight: 500;
@@ -775,9 +945,21 @@ onUnmounted(() => window.removeEventListener('scroll', handlePageScroll))
   background: var(--color-bg); border-radius: var(--radius); margin-bottom: 8px;
 }
 .reply-cancel { border: none; background: none; font-size: 14px; color: var(--color-text-muted); cursor: pointer; }
+.comment-image-previews { display: flex; gap: 8px; overflow-x: auto; margin-bottom: 9px; padding: 1px; }
+.comment-image-preview { position: relative; width: 76px; height: 76px; flex: 0 0 76px; overflow: hidden; border: 1px solid var(--color-line); border-radius: 7px; background: #eef0f2; }
+.comment-image-preview img { width: 100%; height: 100%; object-fit: cover; transition: opacity .2s ease; }
+.comment-image-preview.is-uploading img { opacity: .48; }
+.comment-image-loading { position: absolute; inset: 0; display: grid; place-items: center; overflow: hidden; color: #555b63; font-size: 11px; font-weight: 650; }
+.comment-image-loading::before { position: absolute; inset: 0; background: linear-gradient(100deg, transparent 20%, rgba(255,255,255,.72) 50%, transparent 80%); content: ''; transform: translateX(-100%); animation: comment-image-shimmer 1.15s infinite; }
+.comment-image-retry, .comment-image-remove { position: absolute; z-index: 2; display: grid; place-items: center; color: #fff; background: rgba(20,22,25,.72); }
+.comment-image-remove { top: 4px; right: 4px; width: 25px; height: 25px; border-radius: 50%; }
+.comment-image-retry { inset: 0; width: 34px; height: 34px; margin: auto; border-radius: 50%; }
+.comment-image-preview.is-failed img { opacity: .52; }
+@keyframes comment-image-shimmer { to { transform: translateX(100%); } }
 .comment-input-row { display: flex; gap: 8px; align-items: center; }
 .comment-img-btn { font-size: 22px; cursor: pointer; color: var(--color-text-muted); padding: 4px; border-radius: var(--radius); }
 .comment-img-btn:hover { color: var(--color-primary); }
+.comment-img-btn.disabled { opacity: .38; cursor: not-allowed; }
 .comment-text-input {
   flex: 1; border: none; outline: none; font-size: 14px;
   padding: 8px 12px; background: var(--color-bg); border-radius: 20px; color: var(--color-text);

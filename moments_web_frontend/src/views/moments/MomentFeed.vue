@@ -6,7 +6,8 @@
         推荐
       </button>
       <button class="feed-tab" :class="{ active: tab === 'RELATED' }" @click="switchTab('RELATED')">
-        相关
+        <span>相关</span>
+        <i v-if="relatedUnread" class="feed-tab-badge">{{ badge(relatedUnread) }}</i>
       </button>
       <div class="feed-actions">
         <button class="feed-icon-btn" title="搜索动态" aria-label="搜索动态" @click="router.push('/customer/moments/search')"><Search :size="20" /></button>
@@ -31,10 +32,10 @@
         ref="feedContainer"
         @scroll="handleScroll"
       >
-        <MomentCard v-for="m in feed" :key="m.id" :moment="m"
+        <MomentCard v-for="m in feed" :key="m.id" :moment="m" :data-moment-id="m.id"
           @click="goDetail(m)" @like="handleLike(m)" @comment="goDetail(m)" @share="showShareSheet(m)"
           @reaction="showReactionPicker(m)" @topic="goTopic" @author="goAuthor" @image="(idx) => viewImages(m, idx)" @reference="goReference(m)"
-          @edit="editMoment(m)" @delete="removeMoment(m)" />
+          @quote="quoteMoment(m)" @open-quote="openQuoted" @edit="editMoment(m)" @delete="removeMoment(m)" />
         <LoadingSpinner v-if="loadingMore" variant="compact" />
         <div v-if="!hasMore && feed.length" class="feed-end">— 没有更多了 —</div>
       </div>
@@ -55,32 +56,33 @@
     <!-- Share sheet -->
     <div v-if="shareMoment" class="modal-overlay" @click.self="shareMoment = null">
       <div class="share-sheet">
-        <h3 class="share-title">{{ shareMode === 'chat' ? '选择聊天' : '分享动态' }}</h3>
+        <h3 class="share-title">{{ shareMode === 'chat' ? '选择聊天' : (shareMode === 'external' ? '分享到其他应用' : '分享动态') }}</h3>
         <div class="share-preview">
           <img v-if="shareMoment.imageUrls?.[0]" :src="imageUrl(shareMoment.imageUrls[0])" alt="" />
           <span><small>{{ shareMoment.author?.nickname || '动态用户' }}</small><strong>{{ shareMoment.title || '分享了一条动态' }}</strong><p>{{ shareMoment.content }}</p></span>
         </div>
         <div v-if="shareMode === 'options'" class="share-methods">
           <button type="button" @click="openChatShare"><MessageCircle :size="22" /><span><strong>分享到聊天</strong><small>发送动态卡片给好友或群聊</small></span></button>
-          <button type="button" @click="shareMomentExternally(shareMoment)"><Share2 :size="22" /><span><strong>分享到其他应用</strong><small>分享可点击进入动态详情的网页卡片</small></span></button>
+          <button type="button" @click="shareMode = 'external'"><Share2 :size="22" /><span><strong>分享到其他应用</strong><small>选择分享后的浏览范围</small></span></button>
         </div>
+        <ExternalShareOptions v-else-if="shareMode === 'external'" @select="shareExternal" />
         <LoadingSpinner v-else-if="shareLoading" />
         <template v-else-if="shareMode === 'chat'">
           <ConversationTile v-for="c in shareConversations" :key="c.id" :conversation="c" :show-menu="false"
             @click="doShare(c)" />
           <p v-if="!shareConversations.length" class="share-empty">暂无可用会话</p>
         </template>
-        <button class="share-cancel" @click="shareMode === 'chat' ? (shareMode = 'options') : (shareMoment = null)">{{ shareMode === 'chat' ? '返回' : '取消' }}</button>
+        <button class="share-cancel" @click="shareMode === 'chat' || shareMode === 'external' ? (shareMode = 'options') : (shareMoment = null)">{{ shareMode === 'chat' || shareMode === 'external' ? '返回' : '取消' }}</button>
       </div>
     </div>
   </div>
 </template>
 
 <script setup>
-import { nextTick, ref, onMounted, onUnmounted } from 'vue'
+import { nextTick, ref, onMounted, onUnmounted, watch } from 'vue'
 import { useRouter } from 'vue-router'
 import { FileText, MessageCircle, Search, Share2, SquarePen } from 'lucide-vue-next'
-import { deleteMoment, getMoments, setMomentLike, setMomentReaction } from '../../api/moments'
+import { deleteMoment, getMomentUnreadCount, getMoments, markMomentsRead, setMomentLike, setMomentReaction } from '../../api/moments'
 import { getConversations, shareMomentToChat } from '../../api/messages'
 import { imageUrl } from '../../composables/useImage'
 import MomentCard from '../../components/MomentCard.vue'
@@ -88,11 +90,14 @@ import ImageViewer from '../../components/ImageViewer.vue'
 import ConversationTile from '../../components/ConversationTile.vue'
 import LoadingSpinner from '../../components/LoadingSpinner.vue'
 import EmptyState from '../../components/EmptyState.vue'
+import ExternalShareOptions from '../../components/ExternalShareOptions.vue'
 import MomentReactionPicker from '../../components/MomentReactionPicker.vue'
 import { shareMomentExternally } from '../../services/shareCard'
 import { confirmNotice, notifyError, notifySuccess } from '../../services/notice'
+import { connectCustomerWebSocket, subscribeCustomerWebSocket } from '../../services/customerWebSocket'
 
 const router = useRouter()
+const props = defineProps({ active: { type: Boolean, default: true } })
 const tab = ref(sessionStorage.getItem('moment-feed-tab') || 'RECOMMENDED')
 const feed = ref([])
 const loading = ref(true)
@@ -101,6 +106,8 @@ const page = ref(1)
 const hasMore = ref(true)
 const loadingMore = ref(false)
 const newCount = ref(0)
+const relatedUnread = ref(0)
+const reportedRead = new Set()
 
 const imageViewer = ref({ visible: false, src: '' })
 const reactionMoment = ref(null)
@@ -110,54 +117,121 @@ const shareLoading = ref(false)
 const shareMode = ref('options')
 
 const feedContainer = ref(null)
-const emit = defineEmits(['header-visibility'])
+const emit = defineEmits(['header-visibility', 'related-unread'])
 let lastScrollTop = 0
 let scrollDirection = 0
 let scrollDistance = 0
 
+function storedScroll(type) {
+  const scoped = sessionStorage.getItem(`moment-feed-scroll-${type}`)
+  if (scoped !== null) return Math.max(0, Number(scoped) || 0)
+  return type === tab.value ? Math.max(0, Number(sessionStorage.getItem('moment-feed-scroll')) || 0) : 0
+}
+
+const tabStates = {
+  RECOMMENDED: { records: [], page: 1, hasMore: true, newCount: 0, loaded: false, scrollTop: storedScroll('RECOMMENDED') },
+  RELATED: { records: [], page: 1, hasMore: true, newCount: 0, loaded: false, scrollTop: storedScroll('RELATED') }
+}
+
+function saveCurrentTabState(captureScroll = true) {
+  const state = tabStates[tab.value]
+  if (!state) return
+  state.records = feed.value
+  state.page = page.value
+  state.hasMore = hasMore.value
+  state.newCount = newCount.value
+  state.loaded = state.loaded || (!loading.value && !error.value)
+  if (captureScroll && feedContainer.value) state.scrollTop = feedContainer.value.scrollTop
+  sessionStorage.setItem(`moment-feed-scroll-${tab.value}`, String(state.scrollTop))
+}
+
+async function restoreTabState(type) {
+  const state = tabStates[type]
+  error.value = ''
+  loadingMore.value = false
+  if (state.loaded) {
+    feed.value = state.records
+    page.value = state.page
+    hasMore.value = state.hasMore
+    newCount.value = state.newCount
+    loading.value = false
+  } else {
+    feed.value = []
+    page.value = 1
+    hasMore.value = true
+    newCount.value = 0
+    loading.value = true
+    await loadFeed()
+  }
+  await nextTick()
+  if (feedContainer.value) feedContainer.value.scrollTop = state.scrollTop
+  lastScrollTop = state.scrollTop
+  scrollDirection = 0
+  scrollDistance = 0
+  scheduleVisibleReadCheck()
+}
+
 async function loadFeed() {
+  const requestedTab = tab.value
+  const requestedPage = page.value
   error.value = ''
   try {
     const role = JSON.parse(localStorage.getItem('user') || '{}')?.role
     const res = await getMoments({
-      feed: tab.value,
-      page: page.value,
+      feed: requestedTab,
+      page: requestedPage,
       pageSize: 20,
       consumeExposure: role === 'CUSTOMER'
     })
-    feed.value = res.records || []
-    hasMore.value = res.hasMore !== false
+    const records = res.records || []
+    const state = tabStates[requestedTab]
+    state.records = records
+    state.hasMore = res.hasMore !== false
+    state.page = requestedPage
+    state.newCount = 0
+    state.loaded = true
+    if (tab.value !== requestedTab) return
+    feed.value = records
+    hasMore.value = state.hasMore
     newCount.value = 0
-  } catch (e) { error.value = e.message }
-  finally { loading.value = false }
+    scheduleVisibleReadCheck()
+  } catch (e) { if (tab.value === requestedTab) error.value = e.message }
+  finally { if (tab.value === requestedTab) loading.value = false }
 }
 
 async function loadMore() {
   if (!hasMore.value || loadingMore.value) return
+  const requestedTab = tab.value
+  const nextPage = page.value + 1
   loadingMore.value = true
   try {
-    const res = await getMoments({ feed: tab.value, page: page.value + 1, pageSize: 20 })
+    const res = await getMoments({ feed: requestedTab, page: nextPage, pageSize: 20 })
     const records = res.records || []
-    feed.value.push(...records)
-    hasMore.value = res.hasMore !== false
-    page.value++
+    const state = tabStates[requestedTab]
+    state.records.push(...records)
+    state.hasMore = res.hasMore !== false
+    state.page = nextPage
+    if (tab.value !== requestedTab) return
+    feed.value = state.records
+    hasMore.value = state.hasMore
+    page.value = nextPage
+    scheduleVisibleReadCheck()
   } catch { }
-  finally { loadingMore.value = false }
+  finally { if (tab.value === requestedTab) loadingMore.value = false }
 }
 
-function switchTab(t) {
+async function switchTab(t) {
   if (tab.value === t) return
+  saveCurrentTabState()
   tab.value = t
   sessionStorage.setItem('moment-feed-tab', t)
-  sessionStorage.setItem('moment-feed-scroll', '0')
-  page.value = 1
-  loading.value = true
-  loadFeed()
+  await restoreTabState(t)
 }
 
 function handleScroll(e) {
   const el = e.target
-  sessionStorage.setItem('moment-feed-scroll', String(el.scrollTop))
+  tabStates[tab.value].scrollTop = el.scrollTop
+  sessionStorage.setItem(`moment-feed-scroll-${tab.value}`, String(el.scrollTop))
   if (el.scrollHeight - el.scrollTop - el.clientHeight < 300) loadMore()
   const delta = el.scrollTop - lastScrollTop
   const direction = Math.sign(delta)
@@ -170,6 +244,7 @@ function handleScroll(e) {
   else if (direction > 0 && el.scrollTop > 88 && scrollDistance > 16) emitHeaderVisibility('hide')
   else if (direction < 0 && scrollDistance > 12) emitHeaderVisibility('show')
   lastScrollTop = el.scrollTop
+  scheduleVisibleReadCheck()
 }
 
 function emitHeaderVisibility(state) {
@@ -222,19 +297,34 @@ async function openChatShare() {
 async function doShare(conv) {
   const moment = shareMoment.value
   if (!moment) return
-  try { await shareMomentToChat({ conversationId: conv.id, momentId: moment.id }); shareMoment.value = null; notifySuccess('已分享到聊天') }
+  try { await shareMomentToChat({ conversationId: conv.id, momentId: moment.id }); moment.shareCount = Number(moment.shareCount || 0) + 1; moment.appShareCount = Number(moment.appShareCount || 0) + 1; shareMoment.value = null; notifySuccess('已分享到聊天') }
   catch (e) { notifyError(e.message) }
+}
+
+function shareExternal(mode) {
+  const moment = shareMoment.value
+  shareMoment.value = null
+  if (moment) shareMomentExternally(moment, null, { mode })
 }
 
 function goNew() {
   if (requireLogin()) router.push('/customer/moments/new')
 }
 function editMoment(moment) { router.push(`/customer/moments/new?editId=${moment.id}`) }
+function quoteMoment(moment) {
+  if (!requireLogin()) return
+  router.push({ path: '/customer/moments/new', query: { quotedMomentId: moment.id } })
+}
+function openQuoted(quote) {
+  if (!quote?.momentId) return
+  router.push({ path: `/customer/moments/${quote.momentId}`, query: { ...(quote.commentId ? { commentId: quote.commentId } : {}), fromQuote: '1' } })
+}
 async function removeMoment(moment) {
   if (!await confirmNotice('确认删除这条动态？')) return
   try {
     await deleteMoment(moment.id)
     feed.value = feed.value.filter(item => item.id !== moment.id)
+    saveCurrentTabState(false)
   } catch (e) { notifyError(e.message) }
 }
 function goDetail(m) { router.push(`/customer/moments/${m.id}`) }
@@ -263,6 +353,59 @@ function goReference(ref) {
 }
 
 let pollTimer = null
+let unsubscribeWs
+let visibilityFrame = 0
+const badge = value => value > 99 ? '99+' : value
+
+async function loadRelatedUnread() {
+  if (!localStorage.getItem('token')) return
+  try {
+    const data = await getMomentUnreadCount()
+    setRelatedUnread(Number(data?.relatedUnreadCount) || 0)
+  } catch { }
+}
+
+function setRelatedUnread(value) {
+  relatedUnread.value = Math.max(0, Number(value) || 0)
+  emit('related-unread', relatedUnread.value)
+}
+
+function scheduleVisibleReadCheck() {
+  window.cancelAnimationFrame(visibilityFrame)
+  visibilityFrame = window.requestAnimationFrame(markVisibleRelatedMomentsRead)
+}
+
+async function markVisibleRelatedMomentsRead() {
+  if (!props.active || tab.value !== 'RELATED' || !feedContainer.value || !localStorage.getItem('token')) return
+  const viewport = feedContainer.value.getBoundingClientRect()
+  const unreadIds = feed.value
+    .filter(moment => moment.readByMe === false && !reportedRead.has(Number(moment.id)))
+    .filter(moment => {
+      const element = feedContainer.value.querySelector(`[data-moment-id="${moment.id}"]`)
+      if (!element) return false
+      const rect = element.getBoundingClientRect()
+      return rect.bottom > viewport.top && rect.top < viewport.bottom
+    })
+    .map(moment => Number(moment.id))
+  if (!unreadIds.length) return
+
+  unreadIds.forEach(id => reportedRead.add(id))
+  feed.value.forEach(moment => {
+    if (unreadIds.includes(Number(moment.id))) moment.readByMe = true
+  })
+  setRelatedUnread(Math.max(0, relatedUnread.value - unreadIds.length))
+  try {
+    const result = await markMomentsRead(unreadIds)
+    setRelatedUnread(Number(result?.relatedUnreadCount) || 0)
+  } catch {
+    unreadIds.forEach(id => reportedRead.delete(id))
+    feed.value.forEach(moment => {
+      if (unreadIds.includes(Number(moment.id))) moment.readByMe = false
+    })
+    loadRelatedUnread()
+  }
+}
+
 async function checkForNewRelatedMoments() {
   if (tab.value !== 'RELATED' || !feed.value.length) {
     newCount.value = 0
@@ -275,19 +418,39 @@ async function checkForNewRelatedMoments() {
   } catch { }
 }
 
+function handleMomentWs(message) {
+  const count = Number(message?.data?.relatedUnreadCount)
+  if (Number.isFinite(count)) setRelatedUnread(count)
+  else loadRelatedUnread()
+  checkForNewRelatedMoments()
+}
+
 onMounted(async () => {
-  await loadFeed()
-  await nextTick()
-  const savedScroll = Number(sessionStorage.getItem('moment-feed-scroll') || 0)
-  if (feedContainer.value && savedScroll > 0) {
-    feedContainer.value.scrollTop = savedScroll
-    lastScrollTop = savedScroll
-  }
+  await restoreTabState(tab.value)
   if (!localStorage.getItem('token')) return
-  pollTimer = setInterval(checkForNewRelatedMoments, 12000)
+  await loadRelatedUnread()
+  connectCustomerWebSocket()
+  unsubscribeWs = subscribeCustomerWebSocket('MOMENT', handleMomentWs)
+  pollTimer = setInterval(() => { loadRelatedUnread(); checkForNewRelatedMoments() }, 60000)
+  scheduleVisibleReadCheck()
+})
+watch(() => props.active, active => {
+  if (!active) {
+    saveCurrentTabState()
+    return
+  }
+  nextTick(() => {
+    const state = tabStates[tab.value]
+    if (feedContainer.value) feedContainer.value.scrollTop = state.scrollTop
+    lastScrollTop = state.scrollTop
+    scheduleVisibleReadCheck()
+  })
 })
 onUnmounted(() => {
+  saveCurrentTabState()
   clearInterval(pollTimer)
+  window.cancelAnimationFrame(visibilityFrame)
+  unsubscribeWs?.()
 })
 </script>
 
@@ -295,11 +458,13 @@ onUnmounted(() => {
 .moment-feed { height: 100%; min-height: 0; position: relative; display: flex; flex-direction: column; }
 .feed-tabs { height: 58px; display: flex; gap: 4px; align-items: center; padding: 4px 8px 4px 10px; background: #fff; border-bottom: 1px solid #eee; }
 .feed-tab {
-  padding: 8px 16px; border: none; background: none;
+  min-width: 70px; height: 42px; display: inline-flex; align-items: center; justify-content: center; gap: 5px;
+  padding: 8px 12px; border: none; background: none;
   font-size: 16px; font-weight: 500; color: var(--color-text-muted);
   cursor: pointer; border-radius: var(--radius); transition: all 0.2s;
   position: relative;
 }
+.feed-tab-badge { min-width: 18px; height: 18px; display: grid; place-items: center; padding: 0 5px; border-radius: 10px; background: #e85d4a; color: #fff; font-size: 10px; font-style: normal; font-weight: 700; }
 .feed-tab.active { color: var(--color-text); font-weight: 800; }
 .feed-tab.active::after {
   content: ''; position: absolute; bottom: 0; left: 50%; transform: translateX(-50%);

@@ -2,8 +2,8 @@
   <div v-if="route.meta.bare" class="bare-layout">
     <router-view />
   </div>
-  <div v-else class="moments-shell" :class="{ immersive: route.meta.immersive }">
-    <aside class="desktop-rail" aria-label="主导航">
+  <div v-else class="moments-shell" :class="{ immersive: route.meta.immersive, 'isolated-share': isolatedShare }">
+    <aside v-if="!isolatedShare" class="desktop-rail" aria-label="主导航">
       <router-link :to="landingPath" class="brand" aria-label="香狗点餐聊天与动态">
         <img src="/app_icon.png" alt="" />
         <span>香狗</span>
@@ -13,10 +13,11 @@
         <router-link :to="landingPath" class="rail-link" :class="{ active: isChatHome }">
           <MessageCircle :size="22" aria-hidden="true" />
           <span>聊天与动态</span>
-          <i v-if="unread" class="unread-dot">{{ unread > 99 ? '99+' : unread }}</i>
+          <i v-if="chatUnread" class="unread-dot">{{ chatUnread > 99 ? '99+' : chatUnread }}</i>
         </router-link>
         <router-link to="/customer/message-center" class="rail-link">
           <Bell :size="22" aria-hidden="true" /><span>消息中心</span>
+          <i v-if="notificationUnread" class="unread-dot">{{ notificationUnread > 99 ? '99+' : notificationUnread }}</i>
         </router-link>
         <router-link to="/customer/my-moments" class="rail-link">
           <Album :size="22" aria-hidden="true" /><span>我的动态</span>
@@ -52,43 +53,65 @@
 import { computed, onMounted, onUnmounted, ref } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { Album, Bell, LogIn, LogOut, MessageCircle, Settings, ShieldCheck, UserRound } from 'lucide-vue-next'
-import { getConversations } from '../api/messages'
+import { getConversations, getNotificationUnreadCount } from '../api/messages'
 import { imageUrl } from '../composables/useImage'
+import { connectCustomerWebSocket, disconnectCustomerWebSocket, subscribeCustomerWebSocket } from '../services/customerWebSocket'
 
 const route = useRoute()
 const router = useRouter()
-const unread = ref(0)
+const chatUnread = ref(0)
+const notificationUnread = ref(0)
 let timer
+const wsUnsubscribers = []
 
 const user = computed(() => {
   try { return JSON.parse(localStorage.getItem('user') || 'null') } catch { return null }
 })
 const isChatHome = computed(() => route.path === '/customer/chat')
 const landingPath = computed(() => localStorage.getItem('token') ? '/customer/chat' : '/customer/moments')
+const isolatedShare = computed(() => route.query.shareMode === 'isolated')
 
 async function refreshUnread() {
   if (!localStorage.getItem('token')) return
   try {
     const rows = await getConversations()
-    unread.value = rows.reduce((sum, item) => sum + (item.unreadCount || 0), 0)
+    chatUnread.value = rows.filter(item => !item.muted).reduce((sum, item) => sum + (item.unreadCount || 0), 0)
   } catch { }
+  try { notificationUnread.value = Number(await getNotificationUnreadCount()) || 0 } catch { }
 }
 function logout() {
   localStorage.removeItem('token')
   localStorage.removeItem('user')
+  disconnectCustomerWebSocket()
   router.replace('/customer/login')
 }
 
 onMounted(() => {
   refreshUnread()
-  timer = window.setInterval(refreshUnread, 15000)
+  connectCustomerWebSocket()
+  wsUnsubscribers.push(
+    subscribeCustomerWebSocket('CHAT', refreshUnread),
+    subscribeCustomerWebSocket('NOTIFICATION', message => {
+      const count = Number(message?.data?.unreadCount)
+      if (Number.isFinite(count)) notificationUnread.value = count
+      else refreshUnread()
+    }),
+    subscribeCustomerWebSocket('CONNECTION', message => {
+      if (message.action === 'CONNECTED') refreshUnread()
+    })
+  )
+  timer = window.setInterval(refreshUnread, 60000)
 })
-onUnmounted(() => window.clearInterval(timer))
+onUnmounted(() => {
+  window.clearInterval(timer)
+  wsUnsubscribers.splice(0).forEach(unsubscribe => unsubscribe())
+})
 </script>
 
 <style scoped>
 .bare-layout { min-height: 100dvh; }
 .moments-shell { min-height: 100dvh; display: grid; grid-template-columns: 248px minmax(0, 760px); justify-content: center; background: #f6f7f8; }
+.moments-shell.isolated-share { grid-template-columns: minmax(0, 760px); }
 .desktop-rail { height: 100dvh; position: sticky; top: 0; display: flex; flex-direction: column; padding: 24px 18px 18px; background: #fff; border-right: 1px solid #eaecf0; }
 .brand { display: flex; align-items: center; gap: 11px; padding: 0 10px 26px; color: #202124; font-size: 20px; font-weight: 800; }
 .brand img { width: 38px; height: 38px; border-radius: 8px; object-fit: cover; }

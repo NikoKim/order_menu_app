@@ -1,6 +1,6 @@
 import { chromium } from 'playwright-core'
 
-const base = 'http://127.0.0.1:5174'
+const base = process.env.QA_BASE_URL || 'http://127.0.0.1:5174'
 const browser = await chromium.launch({
   executablePath: 'C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe',
   headless: true
@@ -12,7 +12,8 @@ const sampleMoments = Array.from({ length: 12 }, (_, index) => ({
   title: `今天的动态标题 ${index + 1}`,
   content: '记录一段刚刚发生的小事，也分享此刻的心情。移动端和电脑端都应该自然、清晰地呈现。',
   visibility: 'PUBLIC', status: 'PUBLISHED', imageUrls: index === 0 ? ['/images/sample.svg'] : [],
-  topics: [{ id: 1, name: '日常记录' }], likeCount: 8 + index, commentCount: 3,
+  topics: [{ id: 1, name: '日常记录' }], likeCount: 8 + index, commentCount: 3, rootCommentCount: index === 1 ? 1 : 3,
+  hotComment: { id: 90 + index, momentId: index + 1, author: { id: 8, nickname: '评论用户' }, content: '动态卡片评论预览', imageUrls: [], likeCount: 1, replyCount: 0, replies: [], createdAt: '2026-07-20T12:01:00.000+08:00' },
   reactions: [{ emoji: '😊', count: 2, reactedByMe: false }], editable: false,
   publishedAt: '2026-07-20T12:00:00.000+08:00'
 }))
@@ -29,12 +30,18 @@ const topics = [
   { id: 4, name: '周末去哪儿', usageCount: 64, userCount: 22, momentCount: 64 },
   { id: 5, name: '随手拍', usageCount: 49, userCount: 19, momentCount: 49 }
 ]
+let lastCommentPayload = null
 
 async function mockApi(page) {
   await page.route('**/images/sample.svg', route => route.fulfill({
     status: 200,
     contentType: 'image/svg+xml',
     body: '<svg xmlns="http://www.w3.org/2000/svg" width="900" height="560"><rect width="900" height="560" fill="#f39a3c"/><circle cx="450" cy="280" r="150" fill="#fff1df"/></svg>'
+  }))
+  await page.route('**/images/moment_mes/7/legacy-comment.png', route => route.fulfill({
+    status: 200,
+    contentType: 'image/png',
+    body: Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=', 'base64')
   }))
   await page.route('**/api/**', async route => {
     const url = new URL(route.request().url())
@@ -58,7 +65,13 @@ async function mockApi(page) {
           { id: 16, senderUserId: 7, senderNickname: '我', type: 'TEXT', content: '发送失败的消息', deliveryFailed: true, failureReason: '对方已将您拉黑，无法发送消息', createdAt: new Date(Date.now() - 60_000).toISOString() }
         ]
       }
-    } else if (url.pathname.endsWith('/messages/conversations')) data = conversations
+    } else if (url.pathname.endsWith('/messages/conversations')) {
+      if (!route.request().headers().authorization) {
+        await route.fulfill({ status: 401, contentType: 'application/json', body: JSON.stringify({ code: 401, message: '未登录' }) })
+        return
+      }
+      data = conversations
+    }
     else if (url.pathname.endsWith('/moments/topics') && route.request().method() === 'POST') {
       const body = route.request().postDataJSON()
       data = { id: 99, name: body.name, usageCount: 0, userCount: 0, momentCount: 0 }
@@ -75,9 +88,20 @@ async function mockApi(page) {
       data = { ...sampleMoments[0], ...route.request().postDataJSON(), id: 77 }
     }
     else if (url.pathname.endsWith('/moments/unread-count')) data = { relatedUnreadCount: 0 }
+    else if (url.pathname.endsWith('/moments/comment-images') && route.request().method() === 'POST') {
+      data = { url: '/images/comment-upload.png' }
+    }
+    else if (/\/moments\/\d+\/comments$/.test(url.pathname) && route.request().method() === 'POST') {
+      lastCommentPayload = route.request().postDataJSON()
+      data = { id: 92, momentId: 1, content: lastCommentPayload.content, imageUrls: lastCommentPayload.imageUrls || [] }
+    }
     else if (/\/moments\/\d+\/comments$/.test(url.pathname)) data = {
-      records: [{ id: 91, momentId: 1, author: { id: 7, nickname: '测试用户' }, content: '这是一条自己的评论', imageUrls: [], mine: Boolean(route.request().headers().authorization), likeCount: 0, replyCount: 0, replies: [], createdAt: '2026-07-20T12:00:00.000+08:00' }],
-      hasMore: false
+      records: [
+        { id: 91, momentId: 1, author: { id: 7, nickname: '测试用户' }, content: '这是一条自己的评论', imageUrls: [], mine: Boolean(route.request().headers().authorization), likeCount: 0, replyCount: 0, replies: [], createdAt: '2026-07-20T12:00:00.000+08:00' },
+        { id: 93, momentId: 1, author: { id: 8, nickname: '旧版用户' }, content: '/images/moment_mes/7/legacy-comment.png', imageUrls: [], mine: false, likeCount: 0, replyCount: 0, replies: [], createdAt: '2026-07-20T12:01:00.000+08:00' }
+      ],
+      total: 4,
+      hasMore: url.searchParams.get('page') !== '2'
     }
     else if (/\/moments\/\d+$/.test(url.pathname)) data = { ...sampleMoments[0], content: sampleMoments[0].content.repeat(28) }
     else if (url.pathname.endsWith('/moments')) data = { records: sampleMoments, hasMore: false, total: sampleMoments.length }
@@ -108,6 +132,30 @@ desktop.on('console', message => { if (message.type() === 'error') console.error
 await mockApi(desktop)
 let response = await desktop.goto(`${base}/customer/moments`, { waitUntil: 'networkidle' })
 assert(response?.status() === 200, '动态深层路由未返回 200')
+assert(new URL(desktop.url()).pathname === '/customer/moments', '游客访问动态时被隐藏的聊天请求带到了登录页')
+assert(await desktop.locator('.conv-search').count() === 0, '游客访问动态时仍然挂载了聊天组件')
+await desktop.evaluate(async () => {
+  const { default: client } = await import('/src/api/client.js')
+  try { await client.get('/messages/conversations') } catch { }
+})
+await desktop.waitForTimeout(100)
+assert(new URL(desktop.url()).pathname === '/customer/moments', '游客在公开页面遇到 401 时被全局拦截器强制跳转登录')
+const firstFeedCard = desktop.locator('.moment-card').first()
+assert(await firstFeedCard.locator('.mc-comment-preview').count() === 1, '动态卡片默认没有只展示一条评论')
+assert(await desktop.locator('.moment-card').nth(1).locator('.mc-comment-controls button').count() === 0, '只有一条直接评论时错误显示了展开评论')
+await firstFeedCard.locator('.mc-comment-controls button').first().click()
+assert(await firstFeedCard.locator('.mc-comment-preview').first().isVisible(), '首次展开时原有评论发生闪烁或消失')
+await firstFeedCard.locator('.mc-comment-preview').nth(1).waitFor({ state: 'visible' })
+assert(await firstFeedCard.locator('.mc-comment-preview').count() >= 2, '展开更多评论后没有显示更多评论')
+assert(await firstFeedCard.locator('.mc-comment-controls .collapse').isVisible(), '展开评论后没有提供收起评论按钮')
+const [moreButtonBox, collapseButtonBox] = await Promise.all([
+  firstFeedCard.locator('.mc-comment-controls button').first().boundingBox(),
+  firstFeedCard.locator('.mc-comment-controls .collapse').boundingBox()
+])
+assert(Math.abs(moreButtonBox.x - collapseButtonBox.x) < 2, '展开更多评论和收起评论没有纵向对齐')
+await firstFeedCard.locator('.mc-comment-controls .collapse').click()
+await firstFeedCard.locator('.mc-comment-preview').nth(1).waitFor({ state: 'hidden' })
+assert(await firstFeedCard.locator('.mc-comment-preview').count() === 1, '收起评论后没有恢复成一条评论')
 await assertNoHorizontalOverflow(desktop, '桌面动态页')
 await desktop.screenshot({ path: 'qa-desktop.png', fullPage: true })
 await desktop.addInitScript(() => {
@@ -135,8 +183,9 @@ assert(await desktopConversationMenu.evaluate(el => {
   const target = document.elementFromPoint(rect.left + rect.width / 2, rect.bottom - 8)
   return target === el || el.contains(target)
 }), 'PC 会话操作菜单被下一条会话遮挡')
-await desktop.locator('.menu-backdrop').click({ position: { x: 8, y: 8 } })
+await desktop.locator('.conv-search').click({ position: { x: 8, y: 8 } })
 assert(new URL(desktop.url()).pathname === '/customer/chat', '关闭会话菜单时误进入了会话')
+await desktop.waitForTimeout(180)
 assert(await desktop.locator('.conv-menu').count() === 0, '点击外部后会话菜单没有消失')
 await desktop.locator('.conv-menu-trigger').nth(1).click()
 await desktop.locator('.conv-menu').getByRole('button', { name: '删除' }).click()
@@ -196,6 +245,9 @@ assert(!await mobile.locator('.switch-header').evaluate(el => el.classList.conta
 await mobile.waitForTimeout(260)
 assert(!await mobile.locator('.switch-header').evaluate(el => el.classList.contains('header-hidden')), '动态页上滑后顶部操作栏没有恢复')
 await mobile.goto(`${base}/customer/moments/1`, { waitUntil: 'networkidle' })
+const legacyComment = mobile.locator('#comment-93')
+assert((await legacyComment.locator('.comment-text').textContent()).trim() === '', '旧版评论图片 URL 仍显示为评论文字')
+assert(await legacyComment.locator('.comment-img').isVisible(), '旧版评论图片 URL 没有兼容渲染为图片')
 const [detailArticleBox, detailImagesBox] = await Promise.all([
   mobile.locator('.detail-article').boundingBox(),
   mobile.locator('.moment-images').boundingBox()
@@ -242,26 +294,77 @@ await mobile.locator('.editor-img-status.failed').waitFor({ state: 'visible' })
 assert(await mobile.locator('.editor-img-wrap.is-failed').count() === 1, '图片重试失败后没有保留')
 await mobile.screenshot({ path: 'qa-editor-topics-mobile.png', fullPage: false })
 await mobile.goto(`${base}/customer/moments/1`, { waitUntil: 'networkidle' })
-await mobile.locator('.comment-more').click()
-assert(await mobile.locator('.comment-menu').isVisible(), '自己的评论没有三点删除菜单')
-assert(await mobile.locator('.comment-menu').getByText('分享到聊天').isVisible(), '评论菜单缺少分享到聊天')
-assert(await mobile.locator('.comment-menu').getByText('分享到其他应用').isVisible(), '评论菜单缺少分享到其他应用')
-await mobile.locator('.comment-menu').getByText('分享到聊天').click()
+await mobile.locator('.comment-img-btn input[type="file"]').setInputFiles({
+  name: 'comment.png',
+  mimeType: 'image/png',
+  buffer: Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=', 'base64')
+})
+await mobile.locator('.comment-image-preview.is-ready').waitFor({ state: 'visible' })
+assert(await mobile.locator('.comment-text-input').inputValue() === '', '评论图片上传后仍把 URL 嵌入了输入框')
+assert(await mobile.locator('.comment-image-preview img').isVisible(), '评论图片上传后没有直接显示图片预览')
+assert(await mobile.locator('.comment-send-btn').isEnabled(), '只有图片的评论无法发送')
+await mobile.screenshot({ path: 'qa-comment-image-mobile.png', fullPage: false })
+await mobile.locator('.comment-send-btn').click()
+await mobile.waitForTimeout(100)
+assert(lastCommentPayload?.content === '' && lastCommentPayload?.imageUrls?.[0] === '/images/comment-upload.png', '评论图片没有通过 imageUrls 字段发送')
+  await mobile.locator('.comment-more').first().click()
+  const visibleCommentMenu = mobile.locator('.anchored-menu-surface:visible .comment-menu')
+  await visibleCommentMenu.waitFor({ state: 'visible' })
+  assert(await visibleCommentMenu.isVisible(), '自己的评论没有三点删除菜单')
+  assert(await visibleCommentMenu.getByText('分享到聊天').isVisible(), '评论菜单缺少分享到聊天')
+  assert(await visibleCommentMenu.getByText('分享到其他应用').isVisible(), '评论菜单缺少分享到其他应用')
+  await visibleCommentMenu.getByText('分享到聊天').click()
 assert((await mobile.locator('.share-preview').textContent()).includes('这是一条自己的评论'), '评论分享到聊天没有携带评论卡片内容')
 await mobile.locator('.share-cancel').click()
 await mobile.locator('.share-cancel').click()
+  await mobile.evaluate(() => { window.__sharedLink = null })
+  await mobile.locator('.comment-more').first().click()
+  await visibleCommentMenu.waitFor({ state: 'visible' })
+  await visibleCommentMenu.getByText('分享到其他应用').click()
+await mobile.getByRole('button', { name: /^分享评论/ }).click()
+await mobile.waitForFunction(() => window.__sharedLink?.url)
+const sharedComment = await mobile.evaluate(() => window.__sharedLink)
+const sharedCommentUrl = new URL(sharedComment.url)
+assert(sharedComment.title === '今天的动态标题 1', '评论外部分享标题没有沿用动态标题')
+assert(sharedComment.text.startsWith('今天的动态标题 1\n这是一条自己的评论'), '评论外部分享内容不是评论内容')
+assert(sharedCommentUrl.pathname === '/api/moments/1/share-card' && sharedCommentUrl.searchParams.get('commentId') === '91', '评论外部分享链接没有携带评论标识')
+await mobile.evaluate(() => { window.__sharedLink = null })
 await mobile.locator('.moment-actions .act-btn').filter({ hasText: '分享' }).click()
 assert(await mobile.locator('.share-methods').isVisible(), '动态分享未显示分享方式选择')
 assert((await mobile.locator('.share-title').textContent()).trim() === '分享动态', '动态分享被错误识别为评论分享')
 await mobile.waitForTimeout(260)
 await mobile.screenshot({ path: 'qa-share-mobile.png', fullPage: false })
 await mobile.locator('.share-methods').getByText('分享到其他应用').click()
+assert(await mobile.getByRole('checkbox', { name: /只分享此动态/ }).isVisible(), '外部分享没有显示只分享此动态复选框')
+assert(!await mobile.getByRole('checkbox', { name: /只分享此动态/ }).isChecked(), '只分享此动态不应默认勾选')
+await mobile.locator('.info-button').click()
+await mobile.locator('.info-tooltip').waitFor({ state: 'visible' })
+await mobile.screenshot({ path: 'qa-share-options-mobile.png', fullPage: false })
+await mobile.getByRole('button', { name: /^分享动态/ }).click()
 await mobile.waitForFunction(() => window.__sharedLink?.url)
 assert((await mobile.evaluate(() => window.__sharedLink.files?.length || 0)) === 0, '外部分享仍然生成了图片文件')
-assert((await mobile.evaluate(() => window.__sharedLink.url)).includes('/api/moments/1/share-card'), '外部分享没有使用带动态摘要的分享链接')
+const sharedMomentUrl = new URL(await mobile.evaluate(() => window.__sharedLink.url))
+assert(sharedMomentUrl.origin === 'https://order-menu-backend.zsj-unknown.top', '外部分享没有使用动态元数据接口')
+assert(sharedMomentUrl.pathname === '/api/moments/1/share-card', '外部分享没有使用带动态摘要的分享链接')
 assert((await mobile.evaluate(() => window.__sharedLink.title)) === '今天的动态标题 1', '外部分享标题不是动态标题')
 assert((await mobile.evaluate(() => window.__sharedLink.text)).startsWith('今天的动态标题 1\n记录一段刚刚发生的小事'), 'QQ 分享文本没有按“标题换行内容”组织')
 assert(new URL(await mobile.evaluate(() => window.__sharedLink.url)).searchParams.has('v'), '外部分享链接缺少缓存版本，可能继续命中旧卡片')
+assert(new URL(await mobile.evaluate(() => window.__sharedLink.url)).searchParams.get('v').startsWith('q9-'), '微信分享链接没有切换到新的卡片版本')
+assert(new URL(await mobile.evaluate(() => window.__sharedLink.url)).searchParams.get('mode') === 'browse', '默认外部分享没有使用可浏览动态模式')
+await mobile.locator('.moment-actions .act-btn').filter({ hasText: '分享' }).click()
+await mobile.locator('.share-methods').getByText('分享到其他应用').click()
+await mobile.getByRole('checkbox', { name: /只分享此动态/ }).check()
+await mobile.getByRole('button', { name: /^分享动态/ }).click()
+await mobile.waitForFunction(() => new URL(window.__sharedLink?.url || location.href).searchParams.get('mode') === 'isolated')
+assert(new URL(await mobile.evaluate(() => window.__sharedLink.url)).searchParams.get('mode') === 'isolated', '只分享此动态没有使用隔离模式')
+await mobile.goto(`${base}/customer/moments?sharedMoment=1`, { waitUntil: 'networkidle' })
+await mobile.waitForURL(url => url.pathname === '/customer/moments/1' && url.searchParams.get('shareMode') === 'browse')
+await mobile.locator('.back-btn').click()
+await mobile.waitForURL(url => url.pathname === '/customer/moments' && !url.search)
+await mobile.goto(`${base}/customer/moments/1?shareMode=isolated`, { waitUntil: 'networkidle' })
+assert(await mobile.locator('.desktop-rail').count() === 0, '只分享此动态仍然显示了动态浏览入口')
+assert(await mobile.locator('.back-btn').count() === 0, '只分享此动态仍然显示了返回按钮')
+await mobile.screenshot({ path: 'qa-isolated-detail-mobile.png', fullPage: false })
 await mobile.goto(`${base}/customer/chat`, { waitUntil: 'networkidle' })
 const firstConversation = mobile.locator('.conv-tile').first()
 const conversationBox = await firstConversation.boundingBox()

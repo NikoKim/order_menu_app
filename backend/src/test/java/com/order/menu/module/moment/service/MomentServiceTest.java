@@ -10,6 +10,7 @@ class MomentServiceTest {
   @Mock MomentLikeMapper likes; @Mock MomentReactionMapper reactions; @Mock MomentCommentMapper comments;
   @Mock MomentReadMapper reads; @Mock MomentCommentLikeMapper commentLikes; @Mock MomentUserPreferenceMapper preferences;
   @Mock MomentFeedExposureMapper exposures; @Mock com.order.menu.websocket.WsPushService wsPushService;
+  @Mock MomentQuoteMapper quotes; @Mock MomentMentionMapper mentions; @Mock MomentCommentMentionMapper commentMentions;
   @Mock UserMapper users; @Mock ShopMapper shops; @Mock DishMapper dishes; @Mock ConversationMemberMapper members;
   @Mock FamilyMemberMapper families; @Mock ChatMessageMapper chatMessages; @Mock MessageService messages; @Mock MomentCachePort cache;
   @InjectMocks MomentService service;
@@ -18,9 +19,19 @@ class MomentServiceTest {
     AtomicReference<Moment> saved=new AtomicReference<>();
     doAnswer(inv->{Moment m=inv.getArgument(0);m.setId(9L);saved.set(m);return 1;}).when(moments).insert(any(Moment.class));
     when(moments.selectById(9L)).thenAnswer(inv->saved.get());
+    when(comments.selectCount(any())).thenReturn(4L,1L);
     User user=new User();user.setId(1L);user.setNickname("u");user.setRole("CUSTOMER");when(users.selectById(1L)).thenReturn(user);
     MomentDtos.MomentResponse result=service.create(1L,new MomentDtos.UpsertRequest("","","PRIVATE","DRAFT",null,null,List.of(),List.of()));
     assertEquals("DRAFT",result.status()); assertEquals("",saved.get().getTitle());
+    assertEquals(4L,result.commentCount());assertEquals(1L,result.rootCommentCount());
+  }
+
+  @Test void ownMentionCardIsMarkedSelfAndRevealsPrivatePhone() {
+    User user=new User();user.setId(1L);user.setNickname("owner");user.setRole("CUSTOMER");user.setPhone("13800000000");user.setShowPhone(false);when(users.selectById(1L)).thenReturn(user);
+
+    MomentDtos.UserCardResponse result=service.userCard(1L,1L);
+
+    assertTrue(result.self());assertTrue(result.phoneVisible());assertEquals("13800000000",result.phone());
   }
 
   @Test void publishedMomentRequiresCompleteTitleAndContent() {
@@ -33,6 +44,20 @@ class MomentServiceTest {
     when(moments.selectCount(any())).thenReturn(2L);
     assertEquals(2L,service.unread(1L).relatedUnreadCount());
     verify(chatMessages).selectEstablishedDirectChatUserIds(1L);
+  }
+
+  @Test void commentReplyPreviewUsesOldestFirstOrdering() {
+    Moment moment=published(22L,8L);MomentComment root=new MomentComment();root.setId(101L);root.setMomentId(22L);root.setAuthorUserId(8L);root.setCreatedAt(java.time.LocalDateTime.now());
+    MomentComment older=new MomentComment();older.setId(102L);older.setMomentId(22L);older.setParentCommentId(101L);older.setAuthorUserId(8L);older.setCreatedAt(java.time.LocalDateTime.of(2026,7,17,12,0));
+    MomentComment newer=new MomentComment();newer.setId(103L);newer.setMomentId(22L);newer.setParentCommentId(101L);newer.setAuthorUserId(8L);newer.setCreatedAt(java.time.LocalDateTime.of(2026,7,17,13,0));
+    com.baomidou.mybatisplus.extension.plugins.pagination.Page<MomentComment> raw=new com.baomidou.mybatisplus.extension.plugins.pagination.Page<>(1,10);raw.setRecords(List.of(root));raw.setTotal(1);
+    when(moments.selectById(22L)).thenReturn(moment);when(comments.selectPage(any(),any())).thenReturn(raw);
+    User author=new User();author.setId(8L);author.setNickname("author");author.setRole("CUSTOMER");when(users.selectById(8L)).thenReturn(author);
+    when(comments.selectList(any())).thenReturn(List.of(newer,older));
+
+    var result=service.comments(7L,22L,1,10);
+
+    assertEquals(List.of(102L,103L),result.records().get(0).replies().stream().map(MomentDtos.CommentResponse::id).toList());
   }
 
   @Test void partialPreferenceUpdatePreservesOtherSwitch() {
@@ -135,6 +160,62 @@ class MomentServiceTest {
     InOrder order=inOrder(moments,reactions,messages);order.verify(moments).selectByIdForUpdate(8L);order.verify(reactions).selectOne(any());order.verify(reactions).insert(any(com.order.menu.module.moment.entity.MomentReaction.class));order.verify(reactions).selectList(any());order.verify(messages).upsertNotification(any(),any(),any(),any(),any(),any());
     org.apache.ibatis.annotations.Select lockingSelect=MomentMapper.class.getMethod("selectByIdForUpdate",Long.class).getAnnotation(org.apache.ibatis.annotations.Select.class);
     assertTrue(String.join(" ",lockingSelect.value()).contains("FOR UPDATE"));
+  }
+
+  @Test void quotedMomentStoresSnapshotAndNotifiesWithPublishingMomentLink() {
+    Moment source=published(10L,2L);source.setTitle("被引用标题");source.setContent("被引用正文");
+    AtomicReference<Moment> saved=new AtomicReference<>();AtomicReference<MomentQuote> savedQuote=new AtomicReference<>();
+    doAnswer(inv->{Moment m=inv.getArgument(0);m.setId(20L);saved.set(m);return 1;}).when(moments).insert(any(Moment.class));
+    doAnswer(inv->{savedQuote.set(inv.getArgument(0));return 1;}).when(quotes).insert(any(MomentQuote.class));
+    when(moments.selectById(anyLong())).thenAnswer(inv->{Long id=inv.getArgument(0);return id==10L?source:saved.get();});
+    when(quotes.selectById(20L)).thenAnswer(inv->savedQuote.get());
+    when(users.selectById(anyLong())).thenAnswer(inv->{Long id=inv.getArgument(0);User u=new User();u.setId(id);u.setNickname(id==1L?"发布者":"来源作者");u.setRole("CUSTOMER");u.setStatus(1);return u;});
+
+    MomentDtos.MomentResponse result=service.create(1L,new MomentDtos.UpsertRequest(
+        "发表标题","发表正文","PUBLIC","PUBLISHED",null,null,List.of(),List.of(),10L,null,List.of()));
+
+    assertEquals("被引用标题",result.quote().momentTitle());assertEquals("被引用正文",result.quote().content());
+    verify(messages).upsertNotification(eq(2L),eq("MOMENT_QUOTED"),eq("动态通知"),
+        eq("发布者在发表标题下引用了你的动态：被引用标题"),argThat(payload->payload.contains("\"momentId\":20")),anyString());
+  }
+
+  @Test void editingKeepsUnavailableQuoteSnapshotWithoutRevalidatingSource() {
+    Moment owner=published(20L,1L);Moment hidden=published(10L,2L);hidden.setVisibility("PRIVATE");
+    MomentQuote snapshot=new MomentQuote();snapshot.setMomentId(20L);snapshot.setQuoteType("MOMENT");snapshot.setQuotedMomentId(10L);snapshot.setAuthorUserId(2L);snapshot.setAuthorNickname("来源作者");snapshot.setAuthorRole("CUSTOMER");snapshot.setMomentTitle("快照标题");snapshot.setQuotedContent("快照正文");snapshot.setQuotedAt(java.time.LocalDateTime.now());
+    when(moments.selectById(20L)).thenReturn(owner);when(moments.selectById(10L)).thenReturn(hidden);when(quotes.selectById(20L)).thenReturn(snapshot);
+    User author=new User();author.setId(1L);author.setNickname("发布者");author.setRole("CUSTOMER");when(users.selectById(1L)).thenReturn(author);
+
+    MomentDtos.MomentResponse result=service.update(1L,20L,new MomentDtos.UpsertRequest(
+        "新标题","新正文","PUBLIC","PUBLISHED",null,null,List.of(),List.of(),10L,null,List.of()));
+
+    assertFalse(result.quote().available());assertEquals("快照正文",result.quote().content());
+    verify(quotes,never()).deleteById(20L);verify(quotes,never()).insert(any(MomentQuote.class));
+  }
+
+  @Test void appShareIsCountedOnlyAfterChatMessageSucceeds() {
+    Moment moment=published(31L,2L);when(moments.selectById(31L)).thenReturn(moment);
+    User author=new User();author.setId(2L);author.setNickname("author");when(users.selectById(2L)).thenReturn(author);
+    when(messages.shareMoment(anyLong(),anyLong(),any(),any(),any(),any())).thenReturn(null);
+
+    service.share(1L,31L,new MomentDtos.ShareRequest(9L,null));
+
+    verify(moments).incrementAppShareCount(31L);
+
+    reset(messages,moments);when(moments.selectById(31L)).thenReturn(moment);when(users.selectById(2L)).thenReturn(author);
+    when(messages.shareMoment(anyLong(),anyLong(),any(),any(),any(),any())).thenThrow(new RuntimeException("send failed"));
+    assertThrows(RuntimeException.class,()->service.share(1L,31L,new MomentDtos.ShareRequest(9L,null)));
+    verify(moments,never()).incrementAppShareCount(anyLong());
+  }
+
+  @Test void confirmedExternalShareReturnsUpdatedChannelCounts() {
+    Moment moment=published(32L,2L);moment.setShareCount(7L);moment.setAppShareCount(4L);moment.setExternalShareCount(3L);
+    when(moments.selectById(32L)).thenReturn(moment);
+    doAnswer(inv->{moment.setShareCount(8L);moment.setExternalShareCount(4L);return 1;}).when(moments).incrementExternalShareCount(32L);
+
+    MomentDtos.ShareStatsResponse result=service.recordExternalShare(1L,32L,null);
+
+    verify(moments).incrementExternalShareCount(32L);
+    assertEquals(8L,result.shareCount());assertEquals(4L,result.appShareCount());assertEquals(4L,result.externalShareCount());
   }
 
   private Moment published(Long id,Long author){Moment m=new Moment();m.setId(id);m.setAuthorUserId(author);m.setTitle("title");m.setContent("content");m.setStatus("PUBLISHED");m.setVisibility("PUBLIC");m.setPublishedAt(java.time.LocalDateTime.now());m.setCreatedAt(m.getPublishedAt());return m;}
