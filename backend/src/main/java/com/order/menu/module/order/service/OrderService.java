@@ -61,11 +61,11 @@ public class OrderService {
         }
         BigDecimal total = BigDecimal.ZERO;
         List<OrderLine> lines = new ArrayList<>();
-        for (OrderDtos.CreateOrderItemRequest item : request.items()) {
+        // Sort by dishId to reduce deadlock risk under concurrent orders.
+        List<OrderDtos.CreateOrderItemRequest> sortedItems = new ArrayList<>(request.items());
+        sortedItems.sort(java.util.Comparator.comparing(OrderDtos.CreateOrderItemRequest::dishId));
+        for (OrderDtos.CreateOrderItemRequest item : sortedItems) {
             Dish dish = requireOnSaleDish(request.shopId(), item.dishId());
-            if (dish.getStock() != null && dish.getStock() < item.quantity()) {
-                throw new BusinessException(ErrorCode.CONFLICT, "Insufficient dish stock");
-            }
             OptionSelection optionSelection = resolveOptions(dish.getId(), item.optionItemIds());
             BigDecimal unitPrice = dish.getPrice().add(optionSelection.amount());
             BigDecimal subtotal = unitPrice.multiply(BigDecimal.valueOf(item.quantity()));
@@ -83,9 +83,10 @@ public class OrderService {
 
         for (OrderLine line : lines) {
             Dish dish = line.dish();
-            if (dish.getStock() != null) {
-                dish.setStock(dish.getStock() - line.quantity());
-                dishMapper.updateById(dish);
+            int affected = dishMapper.deductStock(dish.getId(), line.quantity());
+            if (affected == 0 && dish.getStock() != null) {
+                throw new BusinessException(ErrorCode.CONFLICT,
+                        "Insufficient stock for dish: " + dish.getName());
             }
             OrderItem orderItem = new OrderItem();
             orderItem.setOrderId(order.getId());
@@ -132,12 +133,10 @@ public class OrderService {
             throw new BusinessException(ErrorCode.FORBIDDEN, "无权限取消该订单，请反馈商家。");
         }
 
-        if (!StatusConstants.ORDER_SUBMITTED.equals(order.getStatus())) {
-            throw new BusinessException(ErrorCode.CONFLICT, "当前订单订单状态无法被取消。");
+        int changed = orderMapper.changeToCancelledIfAllowed(orderId, StatusConstants.ORDER_CANCELLED);
+        if (changed == 0) {
+            return;
         }
-
-        order.setStatus(StatusConstants.ORDER_CANCELLED);
-        orderMapper.updateById(order);
 
         restoreStock(order);
 
@@ -179,12 +178,10 @@ public class OrderService {
     public void reject(Long ownerUserId, Long orderId) {
         Order order = requireOwnedOrder(ownerUserId, orderId);
 
-        if (!StatusConstants.ORDER_SUBMITTED.equals(order.getStatus())) {
-            throw new BusinessException(ErrorCode.CONFLICT, "当前订单状态无法被拒绝。");
+        int changed = orderMapper.changeToCancelledIfAllowed(orderId, StatusConstants.ORDER_REJECTED);
+        if (changed == 0) {
+            return;
         }
-
-        order.setStatus(StatusConstants.ORDER_REJECTED);
-        orderMapper.updateById(order);
 
         restoreStock(order);
 
@@ -276,14 +273,14 @@ public class OrderService {
     private void restoreStock(Order order) {
         List<OrderItem> items = orderItemMapper.selectList(new LambdaQueryWrapper<OrderItem>()
                 .eq(OrderItem::getOrderId, order.getId()));
-        for (OrderItem item : items) {
-            Dish dish = dishMapper.selectById(item.getDishId());
-            if (dish != null && dish.getStock() != null) {
-                int quantity = item.getQuantity() == null ? 0 : item.getQuantity();
-                dish.setStock(dish.getStock() + quantity);
-                dishMapper.updateById(dish);
-            }
-        }
+        items.stream()
+                .sorted(java.util.Comparator.comparing(OrderItem::getDishId))
+                .forEach(item -> {
+                    int restored = dishMapper.restoreStock(item.getDishId(), item.getQuantity());
+                    if (restored == 0) {
+                        throw new BusinessException(ErrorCode.NOT_FOUND, "恢复库存失败，菜品不存在");
+                    }
+                });
     }
 
     private Order requireOrder(Long orderId) {
