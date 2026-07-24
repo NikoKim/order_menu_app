@@ -20,7 +20,22 @@ class _RecordingClient extends http.BaseClient {
   Future<http.StreamedResponse> send(http.BaseRequest request) async {
     this.request = request;
     if (request is http.Request) body = request.body;
-    final data = request.url.path.endsWith('/order-shares')
+    final data =
+        request.url.path.endsWith('/conversations/7/typing') &&
+            request.method == 'GET'
+        ? {
+            'userIds': [18, '21'],
+          }
+        : request.url.path.endsWith('/conversations/7/messages')
+        ? {
+            'conversation': {'id': 7, 'type': 'DIRECT', 'status': 'ACTIVE'},
+            'messages': <Object?>[],
+            'hasMore': true,
+            'nextBeforeId': 45,
+          }
+        : request.url.path.endsWith('/orders')
+        ? {'id': 42, 'orderNo': 'OM-42'}
+        : request.url.path.endsWith('/order-shares')
         ? {
             'id': 12,
             'conversationId': 7,
@@ -76,6 +91,28 @@ void main() {
   });
 
   test(
+    'order creation sends the caller-stable idempotency identifier',
+    () async {
+      final client = _RecordingClient();
+      final api = CustomerApi(
+        ApiClient(httpClient: client, baseUrl: 'https://example.test/api'),
+      );
+
+      await api.createOrder(
+        clientRequestId: '8a71804e-cf67-4a61-a385-b52df15069cf',
+        shopId: 9,
+        items: const [],
+      );
+
+      expect(client.request?.url.path, '/api/orders');
+      expect(
+        jsonDecode(client.body!)['clientRequestId'],
+        '8a71804e-cf67-4a61-a385-b52df15069cf',
+      );
+    },
+  );
+
+  test(
     'order share sends both the conversation and order identifiers',
     () async {
       final client = _RecordingClient();
@@ -106,5 +143,48 @@ void main() {
     });
     expect(result.hidden, isTrue);
     expect(result.messageVersion, 4);
+  });
+
+  test('chat pagination and explicit read use cursor contracts', () async {
+    final client = _RecordingClient();
+    final api = CustomerApi(
+      ApiClient(httpClient: client, baseUrl: 'https://example.test/api'),
+    );
+
+    final page = await api.chatMessages(7, beforeId: 80, limit: 25);
+
+    expect(client.request?.url.path, '/api/messages/conversations/7/messages');
+    expect(client.request?.url.queryParameters, {
+      'beforeId': '80',
+      'limit': '25',
+    });
+    expect(page.hasMore, isTrue);
+    expect(page.nextBeforeId, 45);
+
+    await api.markConversationRead(7, 99);
+    expect(client.request?.method, 'PUT');
+    expect(client.request?.url.path, '/api/messages/conversations/7/read');
+    expect(jsonDecode(client.body!), {'lastReadMessageId': 99});
+  });
+
+  test('presence and typing APIs use the realtime chat contracts', () async {
+    final client = _RecordingClient();
+    final api = CustomerApi(
+      ApiClient(httpClient: client, baseUrl: 'https://example.test/api'),
+    );
+
+    await api.heartbeatPresence();
+    expect(client.request?.method, 'PUT');
+    expect(client.request?.url.path, '/api/messages/presence/online');
+
+    await api.setConversationTyping(7, true);
+    expect(client.request?.method, 'PUT');
+    expect(client.request?.url.path, '/api/messages/conversations/7/typing');
+    expect(jsonDecode(client.body!), {'active': true});
+
+    final users = await api.typingUsers(7);
+    expect(client.request?.method, 'GET');
+    expect(client.request?.url.path, '/api/messages/conversations/7/typing');
+    expect(users, {18, 21});
   });
 }

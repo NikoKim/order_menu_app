@@ -22,6 +22,7 @@ import com.order.menu.module.order.mapper.OrderMapper;
 import com.order.menu.module.shop.entity.Shop;
 import com.order.menu.module.shop.mapper.ShopMapper;
 import com.order.menu.module.shop.service.ShopService;
+import com.order.menu.module.shop.service.cache.MenuCacheInvalidator;
 import com.order.menu.module.user.entity.User;
 import com.order.menu.module.user.mapper.UserMapper;
 import java.math.BigDecimal;
@@ -56,6 +57,10 @@ class OrderServiceTest {
     private FamilyService familyService;
     @Mock
     private WsPushService wsPushService;
+    @Mock
+    private MessageService messageService;
+    @Mock
+    private MenuCacheInvalidator menuCacheInvalidator;
 
     @Test
     void completeAddsItemQuantitiesToDishSalesCount() {
@@ -103,7 +108,8 @@ class OrderServiceTest {
 
     private OrderService service() {
         return new OrderService(orderMapper, orderItemMapper, dishMapper, shopMapper, shopService, userMapper,
-                dishOptionGroupMapper, dishOptionItemMapper, familyService, wsPushService, mock(MessageService.class));
+                dishOptionGroupMapper, dishOptionItemMapper, familyService, wsPushService, messageService,
+                menuCacheInvalidator);
     }
 
     private Order acceptedOrder() {

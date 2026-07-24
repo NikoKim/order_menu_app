@@ -6,7 +6,12 @@ import com.order.menu.module.dish.entity.DishOptionGroup;
 import com.order.menu.module.dish.entity.DishOptionItem;
 import com.order.menu.module.dish.mapper.DishOptionGroupMapper;
 import com.order.menu.module.dish.mapper.DishOptionItemMapper;
+import java.util.Collection;
+import java.util.Collections;
+import java.util.HashMap;
+import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Map;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
 
@@ -17,12 +22,47 @@ public class DishOptionService {
     private final DishOptionItemMapper itemMapper;
 
     public List<DishDtos.OptionGroupResponse> groups(Long dishId) {
-        return groupMapper.selectList(new LambdaQueryWrapper<DishOptionGroup>()
-                        .eq(DishOptionGroup::getDishId, dishId)
+        return groupsByDishIds(List.of(dishId)).getOrDefault(dishId, List.of());
+    }
+
+    public Map<Long, List<DishDtos.OptionGroupResponse>> groupsByDishIds(Collection<Long> dishIds) {
+        if (dishIds == null || dishIds.isEmpty()) {
+            return Collections.emptyMap();
+        }
+
+        List<Long> ids = dishIds.stream().distinct().toList();
+        List<DishOptionGroup> groups = groupMapper.selectList(new LambdaQueryWrapper<DishOptionGroup>()
+                        .in(DishOptionGroup::getDishId, ids)
+                        .orderByAsc(DishOptionGroup::getDishId)
                         .orderByAsc(DishOptionGroup::getSortOrder)
-                        .orderByAsc(DishOptionGroup::getId))
+                        .orderByAsc(DishOptionGroup::getId));
+        if (groups.isEmpty()) {
+            return Collections.emptyMap();
+        }
+
+        List<Long> groupIds = groups.stream().map(DishOptionGroup::getId).toList();
+        Map<Long, List<DishOptionItem>> itemsByGroup = itemMapper.selectList(
+                        new LambdaQueryWrapper<DishOptionItem>()
+                                .in(DishOptionItem::getGroupId, groupIds)
+                                .orderByAsc(DishOptionItem::getGroupId)
+                                .orderByAsc(DishOptionItem::getSortOrder)
+                                .orderByAsc(DishOptionItem::getId))
                 .stream()
-                .map(group -> new DishDtos.OptionGroupResponse(
+                .collect(java.util.stream.Collectors.groupingBy(
+                        DishOptionItem::getGroupId,
+                        LinkedHashMap::new,
+                        java.util.stream.Collectors.toList()));
+
+        Map<Long, List<DishDtos.OptionGroupResponse>> result = new HashMap<>();
+        for (DishOptionGroup group : groups) {
+            List<DishDtos.OptionItemResponse> items = itemsByGroup
+                    .getOrDefault(group.getId(), List.of())
+                    .stream()
+                    .map(item -> new DishDtos.OptionItemResponse(
+                            item.getId(), item.getName(), item.getPriceDelta(), item.getSortOrder()))
+                    .toList();
+            result.computeIfAbsent(group.getDishId(), ignored -> new java.util.ArrayList<>())
+                    .add(new DishDtos.OptionGroupResponse(
                         group.getId(),
                         group.getName(),
                         group.getRequired() != null && group.getRequired() == 1,
@@ -30,18 +70,9 @@ public class DishOptionService {
                         group.getMinSelect() == null ? (group.getRequired() != null && group.getRequired() == 1 ? 1 : 0) : group.getMinSelect(),
                         group.getMaxSelect(),
                         group.getSortOrder(),
-                        itemMapper.selectList(new LambdaQueryWrapper<DishOptionItem>()
-                                        .eq(DishOptionItem::getGroupId, group.getId())
-                                        .orderByAsc(DishOptionItem::getSortOrder)
-                                        .orderByAsc(DishOptionItem::getId))
-                                .stream()
-                                .map(item -> new DishDtos.OptionItemResponse(
-                                        item.getId(),
-                                        item.getName(),
-                                        item.getPriceDelta(),
-                                        item.getSortOrder()))
-                                .toList()))
-                .toList();
+                        items));
+        }
+        return result;
     }
 
     public void replace(Long dishId, List<DishDtos.OptionGroupRequest> groups) {

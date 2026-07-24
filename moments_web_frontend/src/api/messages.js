@@ -41,6 +41,22 @@ export function getMessages(conversationId, params = {}) {
   return client.get(`/messages/conversations/${conversationId}/messages`, { params })
 }
 
+export function markConversationRead(conversationId, lastReadMessageId) {
+  return client.put(`/messages/conversations/${conversationId}/read`, { lastReadMessageId })
+}
+
+export function sendPresenceHeartbeat() {
+  return client.put('/messages/presence/online')
+}
+
+export function setConversationTyping(conversationId, active) {
+  return client.put(`/messages/conversations/${conversationId}/typing`, { active })
+}
+
+export function getConversationTyping(conversationId) {
+  return client.get(`/messages/conversations/${conversationId}/typing`)
+}
+
 export function sendMessage(conversationId, data) {
   return client.post(`/messages/conversations/${conversationId}/messages`, data)
 }

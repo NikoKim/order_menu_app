@@ -15,11 +15,14 @@ import com.order.menu.module.dish.service.DishOptionService;
 import com.order.menu.module.shop.dto.ShopDtos;
 import com.order.menu.module.shop.entity.Shop;
 import com.order.menu.module.shop.mapper.ShopMapper;
+import com.order.menu.module.shop.service.cache.MenuCacheInvalidator;
+import com.order.menu.module.shop.service.cache.ShopCachePort;
 
 import java.util.Collections;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
+import java.util.Optional;
 import java.util.stream.Collectors;
 
 import com.order.menu.websocket.WsPushService;
@@ -35,6 +38,8 @@ public class ShopService {
     private final DishMapper dishMapper;
     private final DishOptionService dishOptionService;
     private final WsPushService wsPushService;
+    private final ShopCachePort shopCachePort;
+    private final MenuCacheInvalidator menuCacheInvalidator;
 
     public PageResponse<ShopDtos.ShopResponse> list(int page, int pageSize, String keyword, String familyCode) {
         String safeKeyword = StringUtils.hasText(keyword) ? keyword.trim() : null;
@@ -140,11 +145,25 @@ public class ShopService {
     }
 
     public ShopDtos.ShopResponse detail(Long shopId) {
-        return toResponse(requireById(shopId));
+        Shop shop = requireById(shopId);
+        Optional<ShopDtos.ShopResponse> cached = shopCachePort.getShopDetail(shopId);
+        if (cached.isPresent()) {
+            return cached.get();
+        }
+        ShopDtos.ShopResponse response = toResponse(shop);
+        shopCachePort.putShopDetail(shopId, response);
+        return response;
     }
 
     public ShopDtos.ShopResponse myShop(Long ownerUserId) {
-        return toResponse(requireOwnedShop(ownerUserId));
+        Shop shop = requireOwnedShop(ownerUserId);
+        Optional<ShopDtos.ShopResponse> cached = shopCachePort.getShopDetail(shop.getId());
+        if (cached.isPresent()) {
+            return cached.get();
+        }
+        ShopDtos.ShopResponse response = toResponse(shop);
+        shopCachePort.putShopDetail(shop.getId(), response);
+        return response;
     }
 
     public ShopDtos.ShopResponse updateMyShop(Long ownerUserId, ShopDtos.ShopUpdateRequest request) {
@@ -193,6 +212,8 @@ public class ShopService {
 
         shopMapper.updateById(shop);
 
+        menuCacheInvalidator.evictShopAfterCommit(shop.getId());
+
         Shop updated = shopMapper.selectById(shop.getId());
 
         if (!Objects.equals(oldBusinessStatus, updated.getBusinessStatus())) {
@@ -209,26 +230,45 @@ public class ShopService {
 
     public ShopDtos.MenuResponse menu(Long shopId) {
         Shop shop = requireById(shopId);
+        Optional<ShopDtos.MenuResponse> cached = shopCachePort.getMenu(shopId);
+        if (cached.isPresent()) {
+            return cached.get();
+        }
+        ShopDtos.MenuResponse response = loadMenuFromDatabase(shop);
+        shopCachePort.putMenu(shopId, response);
+        return response;
+    }
+
+    private ShopDtos.MenuResponse loadMenuFromDatabase(Shop shop) {
+        Long shopId = shop.getId();
         List<MenuCategory> categories = categoryMapper.selectList(new LambdaQueryWrapper<MenuCategory>()
                 .eq(MenuCategory::getShopId, shopId)
                 .eq(MenuCategory::getStatus, 1)
                 .orderByAsc(MenuCategory::getSortOrder));
+        List<Dish> dishes = dishMapper.selectList(new LambdaQueryWrapper<Dish>()
+                .eq(Dish::getShopId, shopId)
+                .eq(Dish::getStatus, StatusConstants.DISH_ON_SALE)
+                .orderByAsc(Dish::getCategoryId)
+                .orderByAsc(Dish::getSortOrder));
+        Map<Long, List<Dish>> dishesByCategory = dishes.stream()
+                .collect(Collectors.groupingBy(Dish::getCategoryId, Collectors.toList()));
+        Map<Long, List<DishDtos.OptionGroupResponse>> optionsByDish = dishOptionService
+                .groupsByDishIds(dishes.stream().map(Dish::getId).toList());
         List<ShopDtos.CategoryMenuResponse> categoryResponses = categories.stream().map(category -> {
-            List<com.order.menu.module.dish.dto.DishDtos.DishResponse> dishes = dishMapper.selectList(new LambdaQueryWrapper<Dish>()
-                            .eq(Dish::getShopId, shopId)
-                            .eq(Dish::getCategoryId, category.getId())
-                            .eq(Dish::getStatus, StatusConstants.DISH_ON_SALE)
-                            .orderByAsc(Dish::getSortOrder))
-                    .stream().map(this::toDishResponse).toList();
-            return new ShopDtos.CategoryMenuResponse(category.getId(), category.getName(), dishes);
+            List<DishDtos.DishResponse> categoryDishes = dishesByCategory
+                    .getOrDefault(category.getId(), List.of())
+                    .stream()
+                    .map(dish -> toDishResponse(dish, optionsByDish.getOrDefault(dish.getId(), List.of())))
+                    .toList();
+            return new ShopDtos.CategoryMenuResponse(category.getId(), category.getName(), categoryDishes);
         }).toList();
         return new ShopDtos.MenuResponse(toResponse(shop), categoryResponses);
     }
 
-    private com.order.menu.module.dish.dto.DishDtos.DishResponse toDishResponse(Dish dish) {
-        return new com.order.menu.module.dish.dto.DishDtos.DishResponse(dish.getId(), dish.getShopId(), dish.getCategoryId(), dish.getName(),
+    private DishDtos.DishResponse toDishResponse(Dish dish, List<DishDtos.OptionGroupResponse> optionGroups) {
+        return new DishDtos.DishResponse(dish.getId(), dish.getShopId(), dish.getCategoryId(), dish.getName(),
                 dish.getDescription(), dish.getPrice(), dish.getImageUrl(), dish.getStock(), dish.getSalesCount(),
-                dish.getStatus(), dish.getSortOrder(), dish.getRecommendOrder(), dishOptionService.groups(dish.getId()));
+                dish.getStatus(), dish.getSortOrder(), dish.getRecommendOrder(), optionGroups);
     }
 
     private String normalizeJoinMode(String value) {

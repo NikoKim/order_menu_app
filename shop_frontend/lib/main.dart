@@ -113,7 +113,7 @@ class ShopShell extends StatefulWidget {
   State<ShopShell> createState() => _ShopShellState();
 }
 
-class _ShopShellState extends State<ShopShell> {
+class _ShopShellState extends State<ShopShell> with WidgetsBindingObserver {
   int _index = 0;
   bool _checking = true;
   bool _loggedIn = false;
@@ -124,6 +124,7 @@ class _ShopShellState extends State<ShopShell> {
   int _unreadMessageNotifications = 0;
   StreamSubscription? _wsSubscription;
   StreamSubscription<bool>? _connectionSubscription;
+  Timer? _presenceHeartbeatTimer;
   final _chatBadgeRequests = LatestRequest();
   final _notificationBadgeRequests = LatestRequest();
 
@@ -132,6 +133,7 @@ class _ShopShellState extends State<ShopShell> {
   @override
   void initState() {
     super.initState();
+    WidgetsBinding.instance.addObserver(this);
     _restore();
 
     if (!_hasCheckedUpdate) {
@@ -171,6 +173,27 @@ class _ShopShellState extends State<ShopShell> {
             unawaited(startShopPushTokens().catchError((_) {}));
           }
         });
+  }
+
+  void _startPresenceHeartbeat() {
+    if (_presenceHeartbeatTimer != null) return;
+    _sendPresenceHeartbeat();
+    _presenceHeartbeatTimer = Timer.periodic(
+      const Duration(seconds: 40),
+      (_) => _sendPresenceHeartbeat(),
+    );
+  }
+
+  void _sendPresenceHeartbeat() {
+    if (!_loggedIn) return;
+    unawaited(shopApi.heartbeatPresence().catchError((_) {}));
+  }
+
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    if (state == AppLifecycleState.resumed && _loggedIn) {
+      _sendPresenceHeartbeat();
+    }
   }
 
   Future<void> _checkAppUpdate() async {
@@ -415,8 +438,10 @@ class _ShopShellState extends State<ShopShell> {
 
   @override
   void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
     _wsSubscription?.cancel();
     _connectionSubscription?.cancel();
+    _presenceHeartbeatTimer?.cancel();
     ShopWebSocketService.instance.disconnect();
     super.dispose();
   }
@@ -429,6 +454,7 @@ class _ShopShellState extends State<ShopShell> {
         _checking = false;
       });
       if (_loggedIn) {
+        _startPresenceHeartbeat();
         _loadNotifications();
         _loadChatBadge();
         ShopWebSocketService.instance.connect();
@@ -438,6 +464,8 @@ class _ShopShellState extends State<ShopShell> {
   }
 
   Future<void> _logout() async {
+    _presenceHeartbeatTimer?.cancel();
+    _presenceHeartbeatTimer = null;
     await shopPushTokens.clear().catchError((_) {});
     ShopWebSocketService.instance.disconnect();
     await shopApi.logout();
@@ -499,6 +527,7 @@ class _ShopShellState extends State<ShopShell> {
       return ShopLoginPage(
         onLoggedIn: () {
           setState(() => _loggedIn = true);
+          _startPresenceHeartbeat();
           _loadNotifications();
           _loadChatBadge();
           ShopWebSocketService.instance.connect(force: true);

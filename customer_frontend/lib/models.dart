@@ -816,7 +816,12 @@ class FamilyGroup {
 }
 
 class ChatMessages {
-  const ChatMessages({required this.conversation, required this.messages});
+  const ChatMessages({
+    required this.conversation,
+    required this.messages,
+    this.hasMore = false,
+    this.nextBeforeId,
+  });
 
   factory ChatMessages.fromJson(Map<String, dynamic> json) {
     final rawMessages = json['messages'];
@@ -830,11 +835,17 @@ class ChatMessages {
                 .map(ChatMessage.fromJson)
                 .toList()
           : const [],
+      hasMore: json['hasMore'] == true,
+      nextBeforeId: json['nextBeforeId'] == null
+          ? null
+          : _asInt(json['nextBeforeId']),
     );
   }
 
   final ChatConversation conversation;
   final List<ChatMessage> messages;
+  final bool hasMore;
+  final int? nextBeforeId;
 }
 
 class ChatUser {

@@ -3,7 +3,7 @@
     <!-- Author header -->
     <div class="mc-header">
       <div class="mc-avatar" @click.stop="$emit('author', moment.author)">
-        <img v-if="moment.author?.avatarUrl" :src="imageUrl(moment.author.avatarUrl)" alt="" />
+        <img v-if="moment.author?.avatarUrl" :src="imageUrl(moment.author.avatarUrl)" alt="" decoding="async" />
         <span v-else>{{ moment.author?.nickname?.charAt(0) || '?' }}</span>
       </div>
       <div class="mc-author-info">
@@ -44,13 +44,13 @@
     <!-- Images grid -->
     <div v-if="moment.imageUrls?.length" class="mc-images" :class="'img-n-' + Math.min(moment.imageUrls.length, 9)">
       <div v-for="(img, i) in moment.imageUrls.slice(0, 9)" :key="i" class="mc-img-wrap" @click.stop="$emit('image', i)">
-        <img :src="imageUrl(img)" alt="" loading="lazy" />
+        <img :src="imageUrl(img)" alt="" loading="lazy" decoding="async" />
       </div>
     </div>
 
     <!-- Reference card -->
     <div v-if="moment.reference?.shopId" class="mc-ref" @click.stop="$emit('reference', moment.reference)">
-      <img v-if="moment.reference.shopImageUrl" :src="imageUrl(moment.reference.shopImageUrl)" class="mc-ref-img" alt="" />
+      <img v-if="moment.reference.shopImageUrl" :src="imageUrl(moment.reference.shopImageUrl)" class="mc-ref-img" alt="" loading="lazy" decoding="async" />
       <div class="mc-ref-info">
         <span class="mc-ref-name">{{ moment.reference.shopName }}</span>
         <span v-if="moment.reference.dishName" class="mc-ref-desc">{{ moment.reference.dishName }}</span>
@@ -77,7 +77,7 @@
       <div v-for="comment in visibleComments" :key="comment.id" class="mc-comment-preview" @click.stop="$emit('comment', moment)">
         <div class="mc-comment-main">
           <div class="mc-comment-avatar">
-            <img v-if="comment.author?.avatarUrl" :src="imageUrl(comment.author.avatarUrl)" alt="" />
+            <img v-if="comment.author?.avatarUrl" :src="imageUrl(comment.author.avatarUrl)" alt="" loading="lazy" decoding="async" />
             <span v-else>{{ comment.author?.nickname?.charAt(0) || '?' }}</span>
           </div>
           <div class="mc-comment-copy">
@@ -89,7 +89,7 @@
             <p><MentionText :content="comment.content || (comment.imageUrls?.length ? '[图片]' : '')" :mentions="comment.mentions" /></p>
             <div v-if="comment.imageUrls?.length" class="mc-comment-images">
               <span v-for="(img, i) in comment.imageUrls.slice(0, 3)" :key="i" class="mc-comment-image">
-                <img :src="imageUrl(img)" alt="" loading="lazy" />
+                <img :src="imageUrl(img)" alt="" loading="lazy" decoding="async" />
                 <i v-if="i === 2 && comment.imageUrls.length > 3">
                   +{{ comment.imageUrls.length - 3 }}
                 </i>

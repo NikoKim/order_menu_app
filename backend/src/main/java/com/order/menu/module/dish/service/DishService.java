@@ -15,6 +15,7 @@ import com.order.menu.module.dish.entity.Dish;
 import com.order.menu.module.dish.mapper.DishMapper;
 import com.order.menu.module.shop.entity.Shop;
 import com.order.menu.module.shop.service.ShopService;
+import com.order.menu.module.shop.service.cache.MenuCacheInvalidator;
 
 import java.util.Collections;
 import java.util.List;
@@ -33,6 +34,7 @@ public class DishService {
     private final MenuCategoryMapper categoryMapper;
     private final ShopService shopService;
     private final DishOptionService dishOptionService;
+    private final MenuCacheInvalidator menuCacheInvalidator;
 
     public DishDtos.DishResponse detail(Long dishId) {
         Dish dish = dishMapper.selectById(dishId);
@@ -60,6 +62,7 @@ public class DishService {
         category.setSortOrder(request.sortOrder() == null ? 0 : request.sortOrder());
         category.setStatus(1);
         categoryMapper.insert(category);
+        menuCacheInvalidator.evictMenuAfterCommit(shop.getId());
         return toCategoryResponse(category);
     }
 
@@ -70,6 +73,7 @@ public class DishService {
         category.setName(name);
         category.setSortOrder(request.sortOrder() == null ? category.getSortOrder() : request.sortOrder());
         categoryMapper.updateById(category);
+        menuCacheInvalidator.evictMenuAfterCommit(category.getShopId());
         return toCategoryResponse(categoryMapper.selectById(categoryId));
     }
 
@@ -84,6 +88,7 @@ public class DishService {
         }
 
         categoryMapper.deleteById(categoryId);
+        menuCacheInvalidator.evictMenuAfterCommit(category.getShopId());
     }
 
     public PageResponse<DishDtos.DishResponse> shopDishes(Long ownerUserId, int page, int pageSize, Long categoryId, String keyword, String status) {
@@ -110,6 +115,7 @@ public class DishService {
         dish.setSalesCount(0);
         dishMapper.insert(dish);
         dishOptionService.replace(dish.getId(), request.optionGroups());
+        menuCacheInvalidator.evictMenuAfterCommit(shop.getId());
         return toResponse(dish);
     }
 
@@ -119,6 +125,7 @@ public class DishService {
         apply(dish.getShopId(), dish, request);
         dishMapper.updateById(dish);
         dishOptionService.replace(dishId, request.optionGroups());
+        menuCacheInvalidator.evictMenuAfterCommit(dish.getShopId());
         return toResponse(dishMapper.selectById(dishId));
     }
 
@@ -126,6 +133,7 @@ public class DishService {
         Dish dish = requireOwnedDish(ownerUserId, dishId);
         dish.setStatus(normalizeDishStatus(status, true));
         dishMapper.updateById(dish);
+        menuCacheInvalidator.evictMenuAfterCommit(dish.getShopId());
         return toResponse(dishMapper.selectById(dishId));
     }
 
@@ -133,6 +141,7 @@ public class DishService {
         Dish dish = requireOwnedDish(ownerUserId, dishId);
         dish.setStatus(StatusConstants.DISH_DELETE);
         dishMapper.updateById(dish);
+        menuCacheInvalidator.evictMenuAfterCommit(dish.getShopId());
     }
 
     public Dish requireOwnedDish(Long ownerUserId, Long dishId) {
@@ -288,6 +297,7 @@ public class DishService {
                     .eq(Dish::getShopId, shop.getId())
                     .set(Dish::getRecommendOrder, order++));
         }
+        menuCacheInvalidator.evictMenuAfterCommit(shop.getId());
     }
 
     private String normalizeCategoryName(String name) {

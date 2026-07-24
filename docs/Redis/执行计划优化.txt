@@ -1,0 +1,879 @@
+## 总体判断
+
+Claude 的计划方向基本正确，和之前的 Redis 改造方案大约 **80% 一致**，可以作为实施骨架。它的优点是文件清单明确、分阶段清楚，并且把消息分页、库存原子扣减放在缓存之前。
+
+但不建议直接照计划开发。里面有几个会导致数据错误、缓存串数据或 Redis 故障后项目不可用的问题，需要先调整：
+
+1. 动态详情和动态流不能按当前 Key 直接缓存。
+2. `NoopMomentCache` 的 Bean 条件判断描述不正确。
+3. Redis 的 `allkeys-lru` 会误删幂等键等重要数据。
+4. 聊天最近消息缓存结构不够明确。
+5. 菜单缓存没有完整处理库存变化。
+6. Redis 序列化方案耦合过重。
+7. “关闭开关即可无 Redis 运行”目前没有真正实现。
+8. WebSocket Pub/Sub 需要避免重复推送和消息丢失误解。
+
+---
+
+# 一、与之前方案的对比
+
+| 项目         | Claude 计划           | 之前方案               | 建议              |
+| ---------- | ------------------- | ------------------ | --------------- |
+| 消息分页       | 已包含                 | 已包含                | 保留，优先实施         |
+| 最后已读消息     | 已包含                 | 已包含                | 保留              |
+| 库存原子扣减     | 已包含                 | 已包含                | 补充原子归还库存        |
+| 动态缓存       | 缓存完整 DTO 和 Feed     | 建议区分公共数据和用户状态      | 采用之前方案并进一步细化    |
+| 菜单缓存       | `@Cacheable`        | 中央失效服务             | 两者结合            |
+| 聊天缓存       | Redis List/JSON，较模糊 | 最近消息 ID + 单条消息     | 采用后者            |
+| 订单幂等       | Redis NX + DB 唯一约束  | Redis 快速拦截，DB 最终兜底 | 保留，但返回原订单而非报错   |
+| WebSocket  | Redis Pub/Sub       | Pub/Sub 或 Streams  | Pub/Sub 仅作为实时提醒 |
+| Redis 故障降级 | 仅有开关                | 强调 Redis 不可阻塞业务    | 补齐异常降级          |
+| 上线测试       | 基础手工测试              | 并发、故障、回滚测试         | 采用更完整方案         |
+
+---
+
+# 二、必须修改的问题
+
+## 1. 动态缓存设计存在用户数据串用风险
+
+计划中的动态详情 Key 是：
+
+```text
+oma:{env}:moment:detail:v1:{momentId}
+```
+
+但当前项目的动态详情调用：
+
+```java
+toResponse(viewer, moment)
+```
+
+响应中会包含当前查看用户相关的数据，例如是否点赞、是否回应、是否有权限查看等。动态流还根据用户关系、屏蔽关系、动态可见性生成，并且读取动态流时会写入曝光记录。也就是说，同一个动态对不同用户返回的内容不一定相同。([GitHub][1])
+
+因此，不能把完整 `MomentResponse` 仅按 `momentId` 缓存，否则可能出现：
+
+* 用户 A 点过赞，用户 B 也显示已点赞；
+* 用户关系变化后仍看到不该看到的动态；
+* 屏蔽用户后动态仍出现在缓存中；
+* 读取缓存后没有正确记录曝光。
+
+### 建议改造
+
+动态缓存拆成两层：
+
+```text
+oma:dev:moment:base:v1:{momentId}
+```
+
+缓存与用户无关的数据：
+
+* 标题和正文；
+* 作者基础信息；
+* 图片；
+* 发布时间；
+* 引用对象；
+* 店铺和菜品快照；
+* 总点赞数、总评论数。
+
+每次返回时，仍从数据库或短期状态缓存补充：
+
+* 当前用户是否点赞；
+* 当前用户的回应；
+* 当前用户是否收藏；
+* 当前用户是否有权限查看。
+
+动态流建议只缓存动态 ID：
+
+```text
+oma:dev:moment:feed-ids:v1:{userId}:{type}:{page}:{size}
+```
+
+或者第一阶段暂时**不缓存个性化动态流**，只缓存动态基础详情和热门话题。当前动态流还存在曝光写入逻辑，因此直接缓存整个 Feed 风险较高。([GitHub][1])
+
+---
+
+## 2. `NoopMomentCache` 不是“已经有条件 Bean”
+
+Claude 计划中写的是：
+
+> `@ConditionalOnMissingBean(MomentCachePort.class) (already present but verify)`
+
+实际上当前 `NoopMomentCache` 只是普通的 `@Component`，没有 `@ConditionalOnMissingBean`。如果再增加一个 `RedisMomentCacheAdapter`，Spring 会发现两个 `MomentCachePort` 实现，可能出现 Bean 注入冲突。([GitHub][2])
+
+应该明确改为：
+
+```java
+@Component
+@ConditionalOnMissingBean(MomentCachePort.class)
+public class NoopMomentCache implements MomentCachePort {
+}
+```
+
+Redis 实现使用：
+
+```java
+@Component
+@ConditionalOnProperty(
+    prefix = "order-menu.redis",
+    name = {"enabled", "moment-cache-enabled"},
+    havingValue = "true"
+)
+public class RedisMomentCacheAdapter implements MomentCachePort {
+}
+```
+
+更稳妥的方式是放进独立配置类，用 `@Bean` 明确选择实现。
+
+另外，当前接口使用：
+
+```java
+Optional<Object> get(String key);
+void put(String key, Object value);
+```
+
+类型太弱，后续很容易发生错误强转。建议改成明确方法：
+
+```java
+Optional<MomentBaseCacheDto> getMoment(Long momentId);
+
+void putMoment(Long momentId, MomentBaseCacheDto value);
+
+Optional<List<Long>> getFeedIds(FeedCacheKey key);
+
+void putFeedIds(FeedCacheKey key, List<Long> ids);
+```
+
+---
+
+## 3. `allkeys-lru` 不适合同时保存缓存和幂等数据
+
+计划将以下内容全部放在同一个 Redis：
+
+* 菜单缓存；
+* 动态缓存；
+* 聊天消息；
+* 订单幂等键；
+* 未读数量；
+* WebSocket 事件。
+
+同时配置：
+
+```text
+maxmemory-policy allkeys-lru
+```
+
+`allkeys-lru` 在内存达到上限后，会从所有 Key 中淘汰最近较少使用的 Key。Redis 官方也说明，`allkeys-lru` 会从整个 Key 空间中进行淘汰。([Redis][3])
+
+这意味着订单幂等 Key 也可能被淘汰。被淘汰后，相同请求可能再次穿透到数据库。
+
+### 推荐方案
+
+开发环境：
+
+```text
+单个 Redis
+不设置很小的 maxmemory
+所有缓存设置 TTL
+```
+
+生产环境初期：
+
+```text
+maxmemory-policy noeviction
+Redis 写入失败时缓存模块降级到数据库
+数据库唯一约束保证订单幂等
+```
+
+生产环境规模扩大以后拆成两个 Redis：
+
+```text
+Redis Cache
+├── 菜单
+├── 动态
+└── 最近消息
+策略：allkeys-lfu 或 allkeys-lru
+
+Redis Coordination
+├── 幂等状态
+├── 分布式事件
+├── Streams
+└── 必要状态
+策略：noeviction
+```
+
+Redis 的逻辑数据库 `database=0/1` 不能实现内存和淘汰策略隔离，真正隔离需要不同实例。
+
+---
+
+## 4. Key 中不要使用 `{env}`
+
+计划中的 Key：
+
+```text
+oma:{env}:moment:detail:v1:{momentId}
+```
+
+在 Redis Cluster 中，花括号是 Hash Tag。相同花括号内容的 Key 会被固定映射到同一个槽位。
+
+如果所有 Key 都包含：
+
+```text
+{prod}
+```
+
+就可能导致所有生产 Key 集中到同一个 Redis Cluster Slot，失去集群分片作用。
+
+建议改成：
+
+```text
+oma:prod:moment:detail:v1:123
+oma:prod:shop:menu:v1:10
+```
+
+只有确实需要多 Key 原子操作时，才使用业务 Hash Tag，例如：
+
+```text
+oma:prod:chat:{conversationId}:recent
+oma:prod:chat:{conversationId}:message:100
+```
+
+---
+
+## 5. 聊天分页 SQL 需要补充索引和分支查询
+
+当前聊天接口确实会一次性加载会话中的全部消息，并在内存中过滤和标记已读，所以 Phase 1 的分页改造是必要的。([GitHub][4])
+
+但计划中的 SQL：
+
+```sql
+AND (#{beforeId} IS NULL OR m.id < #{beforeId})
+```
+
+可能影响索引使用。建议拆成两个查询。
+
+第一页：
+
+```sql
+SELECT m.*
+FROM chat_messages m
+WHERE m.conversation_id = #{conversationId}
+  AND NOT EXISTS (
+      SELECT 1
+      FROM chat_message_deletions d
+      WHERE d.message_id = m.id
+        AND d.user_id = #{userId}
+  )
+ORDER BY m.id DESC
+LIMIT #{limitPlusOne};
+```
+
+历史页：
+
+```sql
+SELECT m.*
+FROM chat_messages m
+WHERE m.conversation_id = #{conversationId}
+  AND m.id < #{beforeId}
+  AND NOT EXISTS (
+      SELECT 1
+      FROM chat_message_deletions d
+      WHERE d.message_id = m.id
+        AND d.user_id = #{userId}
+  )
+ORDER BY m.id DESC
+LIMIT #{limitPlusOne};
+```
+
+需要至少增加：
+
+```sql
+CREATE INDEX idx_chat_messages_conversation_id_id
+ON chat_messages (conversation_id, id);
+
+CREATE UNIQUE INDEX uk_chat_message_deletion_user_message
+ON chat_message_deletions (user_id, message_id);
+```
+
+返回时：
+
+```json
+{
+  "messages": [],
+  "hasMore": true,
+  "nextBeforeId": 851
+}
+```
+
+其中 `nextBeforeId` 应该是本次返回消息中最小的 ID。
+
+还需要同步修改 Flutter 和网页前端。否则后端只返回 50 条以后，现有页面可能只显示最新 50 条，却没有上滑加载历史消息的逻辑。
+
+---
+
+## 6. 已读操作不应该绑定在 GET 消息接口中
+
+当前 `messages()` 读取全部消息以后立即调用：
+
+```java
+markConversationRead(userId, conversationId, allEntities);
+```
+
+也就是只要请求接口，就默认所有消息已读。([GitHub][4])
+
+Claude 计划增加独立的已读接口，这一点正确，但应该明确删除 GET 接口中的自动已读逻辑。
+
+建议接口：
+
+```http
+PUT /api/messages/conversations/{conversationId}/read
+```
+
+请求：
+
+```json
+{
+  "lastReadMessageId": 1053
+}
+```
+
+SQL：
+
+```sql
+UPDATE conversation_members
+SET last_read_message_id =
+    GREATEST(COALESCE(last_read_message_id, 0), #{lastReadMessageId})
+WHERE conversation_id = #{conversationId}
+  AND user_id = #{userId};
+```
+
+同时需要：
+
+```sql
+ALTER TABLE conversation_members
+ADD COLUMN last_read_message_id BIGINT NULL;
+```
+
+必须验证 `lastReadMessageId` 确实属于这个会话，不能直接相信前端参数。
+
+---
+
+## 7. 聊天最近消息不能简单保存为一个 JSON 数组
+
+计划只写了：
+
+> Redis List/JSON，保存最近 N 条
+
+如果把整个会话最近消息保存为一个 JSON 数组，每发送一条消息都需要：
+
+1. 读取整个数组；
+2. 反序列化；
+3. 添加消息；
+4. 再序列化；
+5. 覆盖写入。
+
+并发发送时还可能出现后写覆盖先写。
+
+建议沿用之前方案：
+
+```text
+ZSET:
+oma:dev:chat:{conversationId}:recent-ids
+
+STRING:
+oma:dev:chat:message:v1:{messageId}
+```
+
+发送消息后：
+
+```text
+SET message JSON
+ZADD recent-ids messageId messageId
+ZREMRANGEBYRANK recent-ids 0 -201
+EXPIRE recent-ids 30min
+```
+
+读取最新 50 条：
+
+```text
+1. 从 ZSET 获取最新 50 个消息 ID
+2. MGET 批量获取消息 DTO
+3. 有任意缺失时回退 MySQL
+4. 回填完整缓存
+```
+
+历史消息：
+
+```text
+beforeId != null
+直接查询 MySQL
+```
+
+每个用户自己删除的消息不要直接修改公共消息缓存。获取最近消息后，再批量查询当前用户删除了哪些消息并过滤。
+
+---
+
+## 8. 菜单缓存必须处理订单造成的库存变化
+
+Claude 计划只列出了：
+
+* 店铺更新；
+* 菜品 CRUD；
+* 分类 CRUD。
+
+但是当前菜单响应中包含 `stock`。订单创建时会修改菜品库存，取消订单时又会恢复库存。当前实现还是读取库存后在 Java 中计算，再调用 `updateById`。([GitHub][5])
+
+原子扣减应该改成：
+
+```sql
+UPDATE dishes
+SET stock = stock - #{quantity}
+WHERE id = #{dishId}
+  AND stock IS NOT NULL
+  AND stock >= #{quantity};
+```
+
+影响行数为 0 时抛出库存不足，事务回滚。
+
+归还库存也应该是原子 SQL：
+
+```sql
+UPDATE dishes
+SET stock = stock + #{quantity}
+WHERE id = #{dishId}
+  AND stock IS NOT NULL;
+```
+
+还需要考虑菜单缓存：
+
+```text
+订单创建成功后：
+afterCommit → evict shop menu
+
+订单取消并恢复库存后：
+afterCommit → evict shop menu
+```
+
+否则页面可能在 10 分钟内继续显示旧库存。
+
+如果以后下单频繁，可以把菜单拆成：
+
+```text
+菜单静态结构缓存
++
+库存单独读取
+```
+
+当前规模下先清理整个店铺菜单缓存比较简单可靠。
+
+---
+
+## 9. `@Cacheable` 可能因为同类调用而失效
+
+计划准备直接在 `ShopService` 上加：
+
+```java
+@Cacheable
+```
+
+Spring 默认通过代理实现缓存，只有从 Bean 外部调用缓存方法时才会生效。同一个类内部调用自己的缓存方法，不会经过代理，因此缓存不会执行。Spring 官方文档明确说明了 self-invocation 不会触发 `@Cacheable`。([Home][6])
+
+建议单独拆出：
+
+```text
+ShopQueryService
+├── queryShopDetail()
+└── queryMenu()
+
+ShopMutationService
+├── updateShop()
+├── updateDish()
+└── updateCategory()
+
+MenuCacheInvalidator
+└── evictShopMenu()
+```
+
+或者对菜单使用显式的 Cache-Aside Adapter，而不是到处添加注解。
+
+另外，菜单失效调用要放在：
+
+* `ShopService`
+* `DishService`
+* `DishOptionService`
+* 分类 Service
+* `OrderService`
+
+而不只是 `ShopService`。
+
+---
+
+## 10. Redis 序列化不要开启通用默认类型信息
+
+计划准备使用：
+
+```text
+GenericJackson2JsonRedisSerializer
++
+ObjectMapper type info
+```
+
+这种方式通常会把 Java 类名写进缓存 JSON。类改包名、DTO 改名或版本升级后，旧缓存可能无法反序列化；通用类型反序列化也比明确 DTO 类型更难控制。Spring Data Redis 支持自定义 Key、Value Serializer 和每个缓存的配置。([Home][7])
+
+建议：
+
+```java
+Jackson2JsonRedisSerializer<MomentBaseCacheDto>
+Jackson2JsonRedisSerializer<ShopMenuCacheDto>
+Jackson2JsonRedisSerializer<ChatMessageCacheDto>
+```
+
+或者统一使用：
+
+```text
+StringRedisTemplate
++
+ObjectMapper.writeValueAsString()
++
+ObjectMapper.readValue(json, 明确DTO.class)
+```
+
+缓存 DTO 自己带版本：
+
+```json
+{
+  "schemaVersion": 1,
+  "data": {}
+}
+```
+
+不要缓存 MyBatis Entity，这一点 Claude 的计划是正确的。
+
+---
+
+# 三、订单幂等还需要调整
+
+Claude 的验证描述是：
+
+> 重复的 clientRequestId，第二次应该失败。
+
+真正的幂等通常应该是：
+
+> 相同请求重复提交，返回第一次创建的订单结果。
+
+建议状态模型：
+
+```text
+order:idempotency:{userId}:{clientRequestId}
+```
+
+值：
+
+```json
+{
+  "status": "SUCCESS",
+  "orderId": 12345
+}
+```
+
+流程：
+
+```text
+1. SET NX PENDING，TTL 120 秒
+2. 创建订单
+3. 数据库事务提交
+4. 将 Redis 状态改为 SUCCESS，TTL 10～30 分钟
+5. 相同请求再次到达时返回原 orderId
+6. 事务失败则删除 PENDING
+```
+
+数据库必须增加：
+
+```sql
+ALTER TABLE orders
+ADD COLUMN client_request_id VARCHAR(64) NULL;
+
+CREATE UNIQUE INDEX uk_orders_customer_request
+ON orders (customer_user_id, client_request_id);
+```
+
+即使 Redis Key 被删除或 Redis 宕机，数据库唯一索引仍能防止重复订单。
+
+---
+
+# 四、Redis 故障降级没有真正设计完整
+
+配置：
+
+```yaml
+order-menu:
+  redis:
+    enabled: false
+```
+
+只是配置开关。它并不自动保证：
+
+* Redis 宕机时查询不报错；
+* Redis Bean 不被创建；
+* Pub/Sub Listener 不启动；
+* 缓存异常自动回退 MySQL；
+* Actuator 不把应用判为不可用。
+
+Spring Boot 在加入 Redis Starter 后会自动配置连接工厂、模板和 RedisCacheManager；连接池只有在 `commons-pool2` 位于 classpath 时才会自动启用。([Home][8])
+
+因此 Maven 依赖还应补充：
+
+```xml
+<dependency>
+    <groupId>org.apache.commons</groupId>
+    <artifactId>commons-pool2</artifactId>
+</dependency>
+```
+
+所有 Redis Adapter 都应使用：
+
+```java
+@ConditionalOnProperty(...)
+```
+
+还需要统一降级策略：
+
+| 模块            | Redis 故障时   |
+| ------------- | ----------- |
+| 动态缓存          | 查 MySQL     |
+| 菜单缓存          | 查 MySQL     |
+| 聊天最近消息        | 查 MySQL     |
+| 未读数量          | MySQL 重新统计  |
+| 订单幂等          | 依靠数据库唯一约束   |
+| WebSocket Bus | 单实例本地推送     |
+| Redis Streams | 不能静默降级，需要告警 |
+
+另外，“配置修改后立即关闭缓存”这句话不准确。当前项目没有配置中心和动态刷新能力，修改 `application.yml` 后通常仍然需要重启应用。
+
+---
+
+# 五、WebSocket Pub/Sub 方案需要明确投递语义
+
+当前 WebSocket Session 全部保存在本机 JVM 的 `ConcurrentHashMap` 中，`WsPushService` 也是直接调用本地 Registry，所以多实例确实需要事件总线。([GitHub][9])
+
+Pub/Sub 可以用于：
+
+* 通知客户端刷新；
+* 新消息实时提示；
+* 订单状态变化；
+* 店铺状态变化；
+* 缓存失效广播。
+
+但 Redis Pub/Sub 是即时投递，订阅端断线期间的消息不会补发。Redis 官方将其描述为 fire-and-forget。([Redis][10])
+
+因此架构必须明确：
+
+```text
+MySQL = 最终状态
+Pub/Sub = 实时提醒
+客户端重连 = 查询 MySQL 恢复状态
+```
+
+客户端重连后应该重新请求：
+
+```text
+最新会话
+最新消息
+未读数量
+订单状态
+通知列表
+```
+
+同时不要同时执行：
+
+```text
+本地发送
++
+Redis 发布
+```
+
+否则当前实例可能收到两次。
+
+统一流程应该是：
+
+```text
+Redis 开启：
+业务层只 publish
+所有实例（包括发送实例）订阅并向本地 Session 推送
+
+Redis 关闭：
+直接调用本地 WsSessionRegistry
+```
+
+`eventId` 也应由前端用于短时间去重。
+
+WebSocket Redis 化只有在后端部署两个以上实例时才需要进入实际开发，单实例阶段可以保留接口和开关，不必立即完成。
+
+---
+
+# 六、Docker 配置建议调整
+
+Claude 的 Docker 方案可以保留，但建议改为：
+
+```yaml
+ports:
+  - "127.0.0.1:6379:6379"
+```
+
+避免 Redis 暴露给整个局域网。
+
+不要使用模糊镜像：
+
+```yaml
+image: redis:7
+image: redis:latest
+```
+
+应固定到具体版本，例如：
+
+```yaml
+image: redis:7.4-alpine
+```
+
+ACL 推荐放入挂载文件：
+
+```text
+redis.conf
+users.acl
+```
+
+而不是把完整密码和 ACL 命令直接写在 Compose 中。生产密码通过环境变量或 Secret 提供。
+
+RDB 每 5 分钟对普通缓存意义不大。建议按 Redis 用途决定：
+
+```text
+纯缓存 Redis：
+可以不持久化
+
+包含 Streams 或需要恢复的协调状态：
+AOF everysec
+
+本地开发：
+AOF 可开启，方便重启后保留调试数据
+```
+
+Redis 官方说明 AOF 和 RDB 的恢复能力及写入成本不同；如果两者同时开启，重启通常优先使用更完整的 AOF。([Redis][11])
+
+---
+
+# 七、推荐的最终实施顺序
+
+## Phase 0：基线和基础设施
+
+* 记录菜单、动态、聊天接口当前耗时和 SQL 数量；
+* Docker Redis；
+* `spring-boot-starter-data-redis`；
+* `spring-boot-starter-cache`；
+* `commons-pool2`；
+* Redis 配置和模块开关；
+* Noop Adapter；
+* Redis 异常降级；
+* 固定 Key 命名和 DTO 序列化规范。
+
+Actuator 和 Prometheus可以放到后面的可观测性阶段，不必阻塞第一步。
+
+## Phase 1：先修数据库和接口
+
+* 聊天游标分页；
+* 删除 GET 自动已读；
+* 增加 `last_read_message_id`；
+* 聊天相关索引；
+* 库存原子扣减；
+* 库存原子归还；
+* `client_request_id` 字段和唯一索引。
+
+这一阶段即使没有 Redis，也会产生明显收益。
+
+## Phase 2：低风险缓存
+
+优先做：
+
+```text
+店铺详情
+菜单
+动态基础详情
+热门话题
+```
+
+暂不直接缓存完整个性化动态流。
+
+## Phase 3：聊天 Redis
+
+* 最近消息 ID；
+* 单条消息 DTO；
+* 最新一页 Redis；
+* 历史页 MySQL；
+* 通知未读数量；
+* 聊天未读数量；
+* 撤回、删除、图片过期的失效处理。
+
+## Phase 4：订单幂等
+
+* Redis 快速拦截；
+* 数据库唯一约束兜底；
+* 重复请求返回原订单结果；
+* Redis 异常时仍可正常下单。
+
+## Phase 5：多实例 WebSocket
+
+仅在后端准备多实例部署时实施：
+
+* Pub/Sub；
+* 本地 Session Registry；
+* 重连补偿；
+* 客户端事件去重；
+* Redis 不可用时单实例降级。
+
+## Phase 6：监控和生产强化
+
+* Redis 命中率；
+* Redis 命令延迟；
+* 内存使用；
+* 淘汰数量；
+* 连接池状态；
+* Redis 降级次数；
+* DB 回源次数；
+* 缓存穿透和热点 Key；
+* Prometheus；
+* 生产环境按用途拆分 Redis。
+
+---
+
+# 最终结论
+
+Claude 的计划可以保留主体，但必须重点修正以下五项后再执行：
+
+1. **动态不能缓存完整用户化 DTO。**
+2. **聊天采用 ZSET 消息 ID + 单条消息 DTO，而不是整个 JSON 数组。**
+3. **缓存和幂等数据不能长期共用 `allkeys-lru`。**
+4. **菜单缓存必须处理订单库存扣减和恢复。**
+5. **所有 Redis 功能都必须具备真实的 MySQL 降级路径。**
+
+与之前方案合并后，最合理的核心原则仍然是：
+
+```text
+先优化 SQL 和分页
+再接 Redis
+
+MySQL 保证正确性
+Redis 提高读取速度
+
+Redis 可关闭
+Redis 宕机不影响核心业务
+```
+
+[1]: https://github.com/NikoKim/order_menu_app/blob/feature/20260717_%E7%BD%91%E9%A1%B5%E7%89%88%E5%89%8D%E7%AB%AF_W/backend/src/main/java/com/order/menu/module/moment/service/MomentService.java "order_menu_app/backend/src/main/java/com/order/menu/module/moment/service/MomentService.java at feature/20260717_网页版前端_W · NikoKim/order_menu_app · GitHub"
+[2]: https://github.com/NikoKim/order_menu_app/blob/feature/20260717_%E7%BD%91%E9%A1%B5%E7%89%88%E5%89%8D%E7%AB%AF_W/backend/src/main/java/com/order/menu/module/moment/service/NoopMomentCache.java "order_menu_app/backend/src/main/java/com/order/menu/module/moment/service/NoopMomentCache.java at feature/20260717_网页版前端_W · NikoKim/order_menu_app · GitHub"
+[3]: https://redis.io/docs/latest/develop/reference/eviction/?utm_source=chatgpt.com "Key eviction | Docs"
+[4]: https://github.com/NikoKim/order_menu_app/blob/feature/20260717_%E7%BD%91%E9%A1%B5%E7%89%88%E5%89%8D%E7%AB%AF_W/backend/src/main/java/com/order/menu/module/message/service/MessageService.java "order_menu_app/backend/src/main/java/com/order/menu/module/message/service/MessageService.java at feature/20260717_网页版前端_W · NikoKim/order_menu_app · GitHub"
+[5]: https://github.com/NikoKim/order_menu_app/blob/feature/20260717_%E7%BD%91%E9%A1%B5%E7%89%88%E5%89%8D%E7%AB%AF_W/backend/src/main/java/com/order/menu/module/order/service/OrderService.java "order_menu_app/backend/src/main/java/com/order/menu/module/order/service/OrderService.java at feature/20260717_网页版前端_W · NikoKim/order_menu_app · GitHub"
+[6]: https://docs.spring.io/spring-framework/reference/integration/cache/annotations.html "Declarative Annotation-based Caching :: Spring Framework"
+[7]: https://docs.spring.io/spring-data/redis/reference/redis/redis-cache.html "Redis Cache :: Spring Data Redis"
+[8]: https://docs.spring.io/spring-boot/reference/data/nosql.html "Working with NoSQL Technologies :: Spring Boot"
+[9]: https://github.com/NikoKim/order_menu_app/blob/feature/20260717_%E7%BD%91%E9%A1%B5%E7%89%88%E5%89%8D%E7%AB%AF_W/backend/src/main/java/com/order/menu/websocket/WsSessionRegistry.java "order_menu_app/backend/src/main/java/com/order/menu/websocket/WsSessionRegistry.java at feature/20260717_网页版前端_W · NikoKim/order_menu_app · GitHub"
+[10]: https://redis.io/docs/latest/develop/pubsub/keyspace-notifications/?utm_source=chatgpt.com "Redis keyspace notifications | Docs"
+[11]: https://redis.io/docs/latest/operate/oss_and_stack/management/persistence/?utm_source=chatgpt.com "Redis persistence | Docs"

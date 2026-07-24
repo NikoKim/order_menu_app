@@ -64,6 +64,11 @@ public class MessageController {
         return ApiResponse.success(messageService.conversations(UserContext.get().userId()));
     }
 
+    @GetMapping("/conversations/unread-count")
+    public ApiResponse<Long> conversationUnreadCount() {
+        return ApiResponse.success(messageService.chatUnreadTotal(UserContext.get().userId()));
+    }
+
     @GetMapping("/conversations/{conversationId}/preferences")
     public ApiResponse<MessageDtos.ConversationPreferenceResponse> conversationPreferences(
             @PathVariable Long conversationId) {

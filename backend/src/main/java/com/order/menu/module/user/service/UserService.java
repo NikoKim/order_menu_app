@@ -6,7 +6,10 @@ import com.order.menu.common.exception.ErrorCode;
 import com.order.menu.module.user.dto.UserDtos;
 import com.order.menu.module.user.entity.User;
 import com.order.menu.module.user.mapper.UserMapper;
+import com.order.menu.module.moment.service.MomentCachePort;
+import com.order.menu.module.moment.service.cache.MomentAuxiliaryCachePort;
 import lombok.RequiredArgsConstructor;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Service;
 import org.springframework.util.StringUtils;
 
@@ -14,6 +17,15 @@ import org.springframework.util.StringUtils;
 @RequiredArgsConstructor
 public class UserService {
     private final UserMapper userMapper;
+    private MomentCachePort momentCache;
+    private MomentAuxiliaryCachePort momentAuxiliaryCache;
+
+    @Autowired(required = false)
+    void setMomentCaches(MomentCachePort momentCache,
+                         MomentAuxiliaryCachePort momentAuxiliaryCache) {
+        this.momentCache = momentCache;
+        this.momentAuxiliaryCache = momentAuxiliaryCache;
+    }
 
     public User requireEnabled(Long userId) {
         User user = userMapper.selectById(userId);
@@ -68,6 +80,13 @@ public class UserService {
             user.setMomentProfileVisibility(request.momentProfileVisibility());
         }
         userMapper.updateById(user);
+        if (momentAuxiliaryCache != null) {
+            momentAuxiliaryCache.evictAuthor(userId);
+            momentAuxiliaryCache.evictMentionSearches();
+        }
+        if (momentCache != null) {
+            momentCache.evictUserMoments(userId);
+        }
         return toResponse(userMapper.selectById(user.getId()));
     }
 

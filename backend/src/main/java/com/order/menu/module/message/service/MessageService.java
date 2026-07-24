@@ -9,6 +9,7 @@ import com.order.menu.module.dish.entity.Dish;
 import com.order.menu.module.dish.mapper.DishMapper;
 import com.order.menu.module.family.entity.FamilyMember;
 import com.order.menu.module.family.mapper.FamilyMemberMapper;
+import com.order.menu.module.message.dto.ChatMessageCacheDto;
 import com.order.menu.module.message.dto.MessageDtos;
 import com.order.menu.module.message.entity.ChatMessage;
 import com.order.menu.module.message.entity.ChatBlock;
@@ -36,6 +37,11 @@ import com.order.menu.module.user.entity.User;
 import com.order.menu.module.user.mapper.UserMapper;
 import com.order.menu.module.moment.entity.Moment;
 import com.order.menu.module.moment.entity.MomentComment;
+import com.order.menu.module.moment.service.MomentAccessCacheService;
+import com.order.menu.module.moment.service.MomentCachePort;
+import com.order.menu.module.message.service.cache.ChatCachePort;
+import com.order.menu.module.message.service.cache.UnreadCountCache;
+import com.order.menu.common.transaction.AfterCommitExecutor;
 import com.order.menu.websocket.WsPushService;
 import java.time.LocalDateTime;
 import java.time.ZoneId;
@@ -53,8 +59,6 @@ import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Service;
 import org.springframework.dao.DuplicateKeyException;
 import org.springframework.transaction.annotation.Transactional;
-import org.springframework.transaction.support.TransactionSynchronization;
-import org.springframework.transaction.support.TransactionSynchronizationManager;
 import org.springframework.util.StringUtils;
 
 @Service
@@ -85,6 +89,11 @@ public class MessageService {
     private MobilePushService mobilePushService;
     private MessageEssenceMapper messageEssenceMapper;
     private MessageEssenceLikeMapper messageEssenceLikeMapper;
+    private ChatCachePort chatCachePort;
+    private AfterCommitExecutor afterCommitExecutor;
+    private UnreadCountCache unreadCountCache;
+    private MomentAccessCacheService momentAccessCacheService;
+    private MomentCachePort momentCachePort;
 
     @Autowired(required = false)
     void setMobilePushService(MobilePushService mobilePushService) {
@@ -96,6 +105,27 @@ public class MessageService {
                                   MessageEssenceLikeMapper messageEssenceLikeMapper) {
         this.messageEssenceMapper = messageEssenceMapper;
         this.messageEssenceLikeMapper = messageEssenceLikeMapper;
+    }
+
+    @Autowired(required = false)
+    void setChatCache(ChatCachePort chatCachePort, AfterCommitExecutor afterCommitExecutor) {
+        this.chatCachePort = chatCachePort;
+        this.afterCommitExecutor = afterCommitExecutor;
+    }
+
+    @Autowired(required = false)
+    void setMomentAccessCacheService(MomentAccessCacheService momentAccessCacheService) {
+        this.momentAccessCacheService = momentAccessCacheService;
+    }
+
+    @Autowired(required = false)
+    void setMomentCachePort(MomentCachePort momentCachePort) {
+        this.momentCachePort = momentCachePort;
+    }
+
+    @Autowired(required = false)
+    void setUnreadCountCache(UnreadCountCache unreadCountCache) {
+        this.unreadCountCache = unreadCountCache;
     }
 
     public MessageService(ConversationMapper conversationMapper,
@@ -122,7 +152,8 @@ public class MessageService {
         notification.setPayload(payload);
         notification.setCreatedAt(LocalDateTime.now());
         userNotificationMapper.insert(notification);
-        long unreadCount = unreadCount(userId);
+        long unreadCount = loadNotificationUnreadCountFromDatabase(userId);
+        evictNotificationUnreadAfterCommit(userId);
         Map<String, Object> pushData = new java.util.HashMap<>();
         if (notification.getId() != null) pushData.put("notificationId", notification.getId());
         pushData.put("unreadCount", unreadCount);
@@ -161,9 +192,10 @@ public class MessageService {
             userNotificationMapper.updateById(notification);
         }
         if (created) {
+            evictNotificationUnreadAfterCommit(userId);
             Map<String, Object> pushData = new java.util.HashMap<>();
             if (notification.getId() != null) pushData.put("notificationId", notification.getId());
-            pushData.put("unreadCount", unreadCount(userId));
+            pushData.put("unreadCount", loadNotificationUnreadCountFromDatabase(userId));
             afterCommit(() -> wsPushService.pushToUser(userId, "NOTIFICATION", "CREATED", pushData));
             if (mobilePushService != null) {
                 UserNotification pushed = notification;
@@ -220,10 +252,13 @@ public class MessageService {
     }
 
     public long unreadCount(Long userId) {
-        Long count = userNotificationMapper.selectCount(new LambdaQueryWrapper<UserNotification>()
-                .eq(UserNotification::getUserId, userId)
-                .isNull(UserNotification::getReadAt));
-        return count == null ? 0L : count;
+        if (unreadCountCache != null) {
+            var cached = unreadCountCache.getNotificationUnread(userId);
+            if (cached.isPresent()) return cached.get();
+        }
+        long result = loadNotificationUnreadCountFromDatabase(userId);
+        if (unreadCountCache != null) unreadCountCache.putNotificationUnread(userId, result);
+        return result;
     }
 
     @Transactional
@@ -236,7 +271,9 @@ public class MessageService {
             notification.setReadAt(LocalDateTime.now());
             userNotificationMapper.updateById(notification);
         }
-        pushNotificationReadChanged(userId);
+        long unreadCount = loadNotificationUnreadCountFromDatabase(userId);
+        evictNotificationUnreadAfterCommit(userId);
+        pushNotificationReadChanged(userId, unreadCount);
     }
 
     @Transactional
@@ -246,7 +283,9 @@ public class MessageService {
         userNotificationMapper.update(values, new LambdaQueryWrapper<UserNotification>()
                 .eq(UserNotification::getUserId, userId)
                 .isNull(UserNotification::getReadAt));
-        pushNotificationReadChanged(userId);
+        long unreadCount = loadNotificationUnreadCountFromDatabase(userId);
+        evictNotificationUnreadAfterCommit(userId);
+        pushNotificationReadChanged(userId, unreadCount);
     }
 
     @Transactional
@@ -796,7 +835,7 @@ public class MessageService {
             return List.of();
         }
         List<Long> conversationIds = memberships.stream().map(ConversationMember::getConversationId).toList();
-        return conversationMapper.selectBatchIds(conversationIds).stream()
+        List<MessageDtos.ConversationResponse> responses = conversationMapper.selectBatchIds(conversationIds).stream()
                 .filter(conversation -> ACTIVE.equals(conversation.getStatus())
                         || (FAMILY_GROUP.equals(conversation.getType()) && "DISSOLVED".equals(conversation.getStatus())))
                 .map(conversation -> toConversationResponse(conversation, userId))
@@ -805,6 +844,27 @@ public class MessageService {
                         .thenComparing(MessageDtos.ConversationResponse::lastMessageAt,
                                 Comparator.nullsLast(Comparator.reverseOrder())))
                 .toList();
+        if (unreadCountCache != null && unreadCountCache.getChatUnreadTotal(userId).isEmpty()) {
+            long total = responses.stream().mapToLong(MessageDtos.ConversationResponse::unreadCount).sum();
+            unreadCountCache.putChatUnreadTotal(userId, total);
+        }
+        return responses;
+    }
+
+    public long chatUnreadTotal(Long userId) {
+        if (unreadCountCache != null) {
+            var cached = unreadCountCache.getChatUnreadTotal(userId);
+            if (cached.isPresent()) {
+                return cached.get();
+            }
+        }
+        long total = conversations(userId).stream()
+                .mapToLong(MessageDtos.ConversationResponse::unreadCount)
+                .sum();
+        if (unreadCountCache != null) {
+            unreadCountCache.putChatUnreadTotal(userId, total);
+        }
+        return total;
     }
 
     public MessageDtos.ConversationPreferenceResponse conversationPreferences(Long userId, Long conversationId) {
@@ -912,6 +972,42 @@ public class MessageService {
         int safeLimit = limit == null ? 50 : Math.max(1, Math.min(limit, 100));
         int queryLimit = safeLimit + 1;
 
+        // Try Redis cache for the latest page only.
+        if (beforeId == null && chatCachePort != null) {
+            var cached = chatCachePort.getRecentMessages(conversationId, queryLimit);
+            if (cached.isPresent()) {
+                List<ChatMessageCacheDto> cacheDtos = cached.get();
+                Set<Long> deletedIds = chatMessageDeletionMapper.selectList(
+                        new LambdaQueryWrapper<ChatMessageDeletion>()
+                                .eq(ChatMessageDeletion::getUserId, userId)
+                                .in(ChatMessageDeletion::getMessageId,
+                                        cacheDtos.stream().map(ChatMessageCacheDto::id).toList()))
+                        .stream().map(ChatMessageDeletion::getMessageId)
+                        .collect(java.util.stream.Collectors.toSet());
+                List<ChatMessage> visibleEntities = cacheDtos.stream()
+                        .filter(d -> !deletedIds.contains(d.id()))
+                        .map(ChatMessageCacheDto::toEntity)
+                        .toList();
+                if (visibleEntities.size() >= queryLimit) {
+                    boolean hasMore = visibleEntities.size() > safeLimit;
+                    List<ChatMessage> page = new java.util.ArrayList<>(hasMore
+                            ? visibleEntities.subList(0, safeLimit)
+                            : visibleEntities);
+                    java.util.Collections.reverse(page);
+                    List<ChatMessage> visible = page.stream()
+                            .filter(message -> !FAILED_BLOCKED.equals(message.getDeliveryStatus())
+                                    || userId.equals(message.getSenderUserId()))
+                            .toList();
+                    List<MessageDtos.ChatMessageResponse> responses = visible.stream()
+                            .map(this::toMessageResponse)
+                            .toList();
+                    Long nextBeforeId = page.isEmpty() ? null : page.get(0).getId();
+                    return new MessageDtos.ConversationMessagesResponse(
+                            toConversationResponse(conversation, userId), responses, hasMore, nextBeforeId);
+                }
+            }
+        }
+
         List<ChatMessage> entities;
 
         if (beforeId == null) {
@@ -929,6 +1025,9 @@ public class MessageService {
             );
         }
 
+        List<ChatMessage> cacheCandidates = beforeId == null
+                ? new java.util.ArrayList<>(entities)
+                : List.of();
         boolean hasMore = entities.size() > safeLimit;
 
         if (hasMore) {
@@ -955,6 +1054,14 @@ public class MessageService {
         Long nextBeforeId = entities.isEmpty()
                 ? null
                 : entities.get(0).getId();
+
+        // Backfill cache for latest page.
+        if (beforeId == null && chatCachePort != null && !cacheCandidates.isEmpty()) {
+            List<ChatMessageCacheDto> dtos = cacheCandidates.stream()
+                    .map(ChatMessageCacheDto::from)
+                    .toList();
+            chatCachePort.cacheRecentMessages(conversationId, dtos);
+        }
 
         return new MessageDtos.ConversationMessagesResponse(
                 toConversationResponse(conversation, userId),
@@ -1003,7 +1110,8 @@ public class MessageService {
             );
         }
 
-        afterCommit(() -> pushConversationUpdated(conversationId));
+        evictChatUnreadAfterCommit(userId, conversationId);
+        pushConversationUpdatedToUser(userId, conversationId);
     }
 
     public void assertCanAccessChatImage(Long userId, Long conversationId, String filename) {
@@ -1090,13 +1198,17 @@ public class MessageService {
         message.setCreatedAt(LocalDateTime.now());
         chatMessageMapper.insert(message);
 
+        if (chatCachePort != null && afterCommitExecutor != null) {
+            afterCommitExecutor.execute(() -> chatCachePort.appendMessage(ChatMessageCacheDto.from(message)));
+        }
+
         finishCreatedMessage(conversation, message, userId, deliveryFailed);
         return toMessageResponse(message);
     }
 
     @Transactional
     public MessageDtos.ChatMessageResponse recallMessage(Long userId, Long conversationId, Long messageId) {
-        requireConversationMember(userId, conversationId);
+        Conversation conversation = requireConversationMember(userId, conversationId);
         ChatMessage message = chatMessageMapper.selectById(messageId);
         if (message == null || !conversationId.equals(message.getConversationId())) {
             throw new BusinessException(ErrorCode.NOT_FOUND, "消息不存在");
@@ -1112,7 +1224,13 @@ public class MessageService {
         }
         message.setRecalledAt(LocalDateTime.now());
         chatMessageMapper.updateById(message);
+        if (DELIVERED.equals(message.getDeliveryStatus())) {
+            invalidateDirectMomentRelationship(conversation);
+        }
         removeEssenceForRecalledMessage(messageId);
+        if (chatCachePort != null && afterCommitExecutor != null) {
+            afterCommitExecutor.execute(() -> chatCachePort.evictMessage(conversationId, messageId));
+        }
         pushMessageChanged(conversationId, messageId, "MESSAGE_UPDATED", null);
         pushConversationUpdated(conversationId);
         return toMessageResponse(message);
@@ -1135,6 +1253,7 @@ public class MessageService {
             deletion.setCreatedAt(LocalDateTime.now());
             chatMessageDeletionMapper.insert(deletion);
         }
+        evictChatUnreadAfterCommit(userId, conversationId);
         pushMessageChanged(conversationId, messageId, "MESSAGE_DELETED", userId);
     }
 
@@ -1607,6 +1726,7 @@ public class MessageService {
         message.setCreatedAt(LocalDateTime.now());
         chatMessageMapper.insert(message);
         advanceConversationMessageVersion(conversation, message.getCreatedAt());
+        evictChatUnreadForRecipientsAfterCommit(conversation.getId(), actorUserId);
         pushChatMessageCreated(conversation.getId(), message.getId());
         pushConversationUpdated(conversation.getId());
     }
@@ -1637,8 +1757,33 @@ public class MessageService {
             return;
         }
         advanceConversationMessageVersion(conversation, message.getCreatedAt());
+        evictChatUnreadForRecipientsAfterCommit(conversation.getId(), senderUserId);
+        invalidateDirectMomentRelationship(conversation);
         pushChatMessageCreated(conversation.getId(), message.getId());
         pushConversationUpdated(conversation.getId());
+    }
+
+    private void invalidateDirectMomentRelationship(Conversation conversation) {
+        if ((momentAccessCacheService == null && momentCachePort == null)
+                || !DIRECT.equals(conversation.getType())) {
+            return;
+        }
+        List<Long> memberIds = conversationMemberMapper.selectList(
+                        new LambdaQueryWrapper<ConversationMember>()
+                                .eq(ConversationMember::getConversationId, conversation.getId())
+                                .eq(ConversationMember::getMemberStatus, ACTIVE))
+                .stream()
+                .map(ConversationMember::getUserId)
+                .filter(Objects::nonNull)
+                .distinct()
+                .toList();
+        if (momentAccessCacheService != null) {
+            momentAccessCacheService.invalidateRelationship(memberIds);
+        }
+        if (momentCachePort != null) {
+            momentCachePort.evictViewerFeeds(memberIds);
+            momentCachePort.evictUnread(memberIds);
+        }
     }
 
     private Conversation prepareCreatedMessage(Conversation conversation, Long senderUserId,
@@ -1807,18 +1952,11 @@ public class MessageService {
 
     private MessageDtos.ConversationResponse toConversationResponse(Conversation conversation, Long viewerUserId) {
         ConversationMember viewer = member(conversation.getId(), viewerUserId);
-        List<ChatMessage> conversationMessages = visibleMessages(viewerUserId,
-                chatMessageMapper.selectList(new LambdaQueryWrapper<ChatMessage>()
-                        .eq(ChatMessage::getConversationId, conversation.getId())
-                        .orderByDesc(ChatMessage::getCreatedAt)
-                        .orderByDesc(ChatMessage::getId)));
+        List<ChatMessage> conversationMessages = chatMessageMapper.selectVisibleLatest(
+                conversation.getId(), viewerUserId, 1);
         ChatMessage latest = conversationMessages.isEmpty() ? null : conversationMessages.get(0);
         LocalDateTime visibleLastMessageAt = latest == null ? null : latest.getCreatedAt();
-        long unread = conversationMessages.stream()
-                .filter(message -> !viewerUserId.equals(message.getSenderUserId()))
-                .filter(message -> viewer == null || viewer.getLastReadMessageId() == null
-                        || (message.getId() != null && message.getId() > viewer.getLastReadMessageId()))
-                .count();
+        long unread = chatUnreadCount(viewerUserId, conversation.getId(), viewer);
         String lastContent = latest == null ? null : (latest.getRecalledAt() != null
                 ? "撤回了一条消息" : messagePreview(latest));
         boolean muted = viewer != null && Boolean.TRUE.equals(viewer.getMuted());
@@ -1907,9 +2045,53 @@ public class MessageService {
                 notification.getCreatedAt());
     }
 
-    private void pushNotificationReadChanged(Long userId) {
-        long count = unreadCount(userId);
+    private long loadNotificationUnreadCountFromDatabase(Long userId) {
+        Long count = userNotificationMapper.selectCount(new LambdaQueryWrapper<UserNotification>()
+                .eq(UserNotification::getUserId, userId)
+                .isNull(UserNotification::getReadAt));
+        return count == null ? 0L : count;
+    }
+
+    private void evictNotificationUnreadAfterCommit(Long userId) {
+        if (unreadCountCache != null) {
+            afterCommit(() -> unreadCountCache.evictNotificationUnread(userId));
+        }
+    }
+
+    private void pushNotificationReadChanged(Long userId, long count) {
         afterCommit(() -> wsPushService.pushToUser(userId, "NOTIFICATION", "READ_CHANGED", Map.of("unreadCount", count)));
+    }
+
+    private long chatUnreadCount(Long userId, Long conversationId, ConversationMember membership) {
+        if (unreadCountCache != null) {
+            var cached = unreadCountCache.getChatUnread(userId, conversationId);
+            if (cached.isPresent()) return cached.get();
+        }
+        long count = chatMessageMapper.countVisibleUnread(conversationId, userId,
+                membership == null ? null : membership.getLastReadMessageId());
+        if (unreadCountCache != null) unreadCountCache.putChatUnread(userId, conversationId, count);
+        return count;
+    }
+
+    private void evictChatUnreadAfterCommit(Long userId, Long conversationId) {
+        if (unreadCountCache == null) return;
+        afterCommit(() -> {
+            unreadCountCache.evictChatUnread(userId, conversationId);
+            unreadCountCache.evictChatUnreadTotal(userId);
+        });
+    }
+
+    private void evictChatUnreadForRecipientsAfterCommit(Long conversationId, Long senderUserId) {
+        if (unreadCountCache == null) return;
+        afterCommit(() -> conversationMemberMapper.selectList(new LambdaQueryWrapper<ConversationMember>()
+                        .eq(ConversationMember::getConversationId, conversationId)
+                        .eq(ConversationMember::getMemberStatus, ACTIVE))
+                .stream()
+                .filter(member -> !senderUserId.equals(member.getUserId()))
+                .forEach(member -> {
+                    unreadCountCache.evictChatUnread(member.getUserId(), conversationId);
+                    unreadCountCache.evictChatUnreadTotal(member.getUserId());
+                }));
     }
 
     private void pushChatMessageCreated(Long conversationId, Long messageId) {
@@ -2005,13 +2187,11 @@ public class MessageService {
     }
 
     private void afterCommit(Runnable action) {
-        if (!TransactionSynchronizationManager.isSynchronizationActive()) {
+        if (afterCommitExecutor == null) {
             action.run();
             return;
         }
-        TransactionSynchronizationManager.registerSynchronization(new TransactionSynchronization() {
-            @Override public void afterCommit() { action.run(); }
-        });
+        afterCommitExecutor.execute(action);
     }
 
     private String directKey(Long firstUserId, Long secondUserId) {

@@ -3,6 +3,7 @@ import 'package:flutter/material.dart';
 import '../app_mock_data.dart';
 import '../models.dart';
 import '../services/api_client.dart';
+import '../services/pending_order_request_store.dart';
 import '../widgets/app_footer.dart';
 import '../widgets/app_notice.dart';
 
@@ -24,6 +25,7 @@ class CheckoutPage extends StatefulWidget {
 
 class _CheckoutPageState extends State<CheckoutPage> {
   final _remarkController = TextEditingController();
+  final _pendingRequestStore = PendingOrderRequestStore();
   bool _submitting = false;
 
   double get _total => widget.items.fold(0, (sum, item) => sum + item.subtotal);
@@ -37,11 +39,22 @@ class _CheckoutPageState extends State<CheckoutPage> {
   Future<void> _submit() async {
     setState(() => _submitting = true);
     try {
-      final result = await widget.api.createOrder(
+      final remark = _remarkController.text.trim();
+      final payloadFingerprint = PendingOrderRequestStore.fingerprint(
         shopId: widget.shop.id,
         items: widget.items,
-        remark: _remarkController.text.trim(),
+        remark: remark,
       );
+      final clientRequestId = await _pendingRequestStore.resolve(
+        payloadFingerprint,
+      );
+      final result = await widget.api.createOrder(
+        clientRequestId: clientRequestId,
+        shopId: widget.shop.id,
+        items: widget.items,
+        remark: remark,
+      );
+      await _pendingRequestStore.clear(clientRequestId);
       if (!mounted) return;
       AppNotice.show(context, '订单已提交：${result['orderNo'] ?? ''}');
       Navigator.of(context).pop(true);

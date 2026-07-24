@@ -15,7 +15,8 @@ spring:
     redis:
       host: ${REDIS_HOST:127.0.0.1}
       port: ${REDIS_PORT:6379}
-      password: ${REDIS_PASSWORD}
+      username: ${REDIS_USERNAME:default}
+      password: ${REDIS_PASSWORD:}
       database: ${REDIS_DATABASE:0}
       connect-timeout: 2s
       timeout: 2s
@@ -66,7 +67,7 @@ app:
 order-menu:
   redis:
     enabled: ${ORDER_MENU_REDIS_ENABLED:false}
-    environment: ${ORDER_MENU_REDIS_ENV:dev}
+    environment: ${ORDER_MENU_REDIS_ENV:${SPRING_PROFILES_ACTIVE:dev}}
 
     menu-cache-enabled: ${ORDER_MENU_MENU_CACHE_ENABLED:false}
     moment-cache-enabled: ${ORDER_MENU_MOMENT_CACHE_ENABLED:false}
@@ -78,8 +79,43 @@ order-menu:
     shop-detail-ttl-seconds: 300
     shop-menu-ttl-seconds: 120
     moment-base-ttl-seconds: 300
+    moment-list-ttl-seconds: ${ORDER_MENU_MOMENT_LIST_TTL_SECONDS:120}
+    moment-unread-ttl-seconds: ${ORDER_MENU_MOMENT_UNREAD_TTL_SECONDS:60}
+    moment-topic-ttl-seconds: ${ORDER_MENU_MOMENT_TOPIC_TTL_SECONDS:300}
+    moment-comment-ttl-seconds: ${ORDER_MENU_MOMENT_COMMENT_TTL_SECONDS:120}
+    moment-stats-ttl-seconds: ${ORDER_MENU_MOMENT_STATS_TTL_SECONDS:120}
+    moment-viewer-state-ttl-seconds: ${ORDER_MENU_MOMENT_VIEWER_STATE_TTL_SECONDS:180}
     chat-message-ttl-seconds: 1800
     chat-recent-ttl-seconds: 1800
     unread-count-ttl-seconds: 300
     idempotency-pending-ttl-seconds: 120
     idempotency-success-ttl-seconds: 600
+
+    realtime:
+      presence-enabled: ${ORDER_MENU_PRESENCE_ENABLED:false}
+      rate-limit-enabled: ${ORDER_MENU_RATE_LIMIT_ENABLED:false}
+      online-ttl-seconds: ${ORDER_MENU_ONLINE_TTL_SECONDS:90}
+      typing-ttl-seconds: ${ORDER_MENU_TYPING_TTL_SECONDS:8}
+      login-limit: ${ORDER_MENU_LOGIN_LIMIT:10}
+      login-window-seconds: ${ORDER_MENU_LOGIN_WINDOW_SECONDS:60}
+      login-account-limit: ${ORDER_MENU_LOGIN_ACCOUNT_LIMIT:20}
+      login-account-window-seconds: ${ORDER_MENU_LOGIN_ACCOUNT_WINDOW_SECONDS:300}
+      order-create-limit: ${ORDER_MENU_ORDER_CREATE_LIMIT:5}
+      order-create-window-seconds: ${ORDER_MENU_ORDER_CREATE_WINDOW_SECONDS:60}
+      message-send-limit: ${ORDER_MENU_MESSAGE_SEND_LIMIT:60}
+      message-send-window-seconds: ${ORDER_MENU_MESSAGE_SEND_WINDOW_SECONDS:60}
+      moment-comment-limit: ${ORDER_MENU_MOMENT_COMMENT_LIMIT:30}
+      moment-comment-window-seconds: ${ORDER_MENU_MOMENT_COMMENT_WINDOW_SECONDS:60}
+
+management:
+  health:
+    redis:
+      enabled: false
+  endpoint:
+    health:
+      probes:
+        enabled: true
+  endpoints:
+    web:
+      exposure:
+        include: health,info,prometheus

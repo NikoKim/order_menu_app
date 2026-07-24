@@ -14,6 +14,8 @@ import com.order.menu.module.dish.mapper.DishMapper;
 import com.order.menu.module.dish.service.DishOptionService;
 import com.order.menu.module.shop.entity.Shop;
 import com.order.menu.module.shop.mapper.ShopMapper;
+import com.order.menu.module.shop.service.cache.MenuCacheInvalidator;
+import com.order.menu.module.shop.service.cache.ShopCachePort;
 import java.util.List;
 
 import com.order.menu.websocket.WsPushService;
@@ -37,6 +39,10 @@ class ShopServiceTest {
     private DishOptionService dishOptionService;
     @Mock
     private WsPushService wsPushService;
+    @Mock
+    private ShopCachePort shopCachePort;
+    @Mock
+    private MenuCacheInvalidator menuCacheInvalidator;
 
     private ShopService service;
 
@@ -46,7 +52,7 @@ class ShopServiceTest {
                 new MapperBuilderAssistant(new MybatisConfiguration(), ""),
                 Shop.class
         );
-        service = new ShopService(shopMapper, categoryMapper, dishMapper, dishOptionService, wsPushService);
+        service = new ShopService(shopMapper, categoryMapper, dishMapper, dishOptionService, wsPushService, shopCachePort, menuCacheInvalidator);
     }
 
     @Test

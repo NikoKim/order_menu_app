@@ -1,8 +1,8 @@
 package com.order.menu.module.moment.service;
 
 import static org.junit.jupiter.api.Assertions.*; import static org.mockito.ArgumentMatchers.*; import static org.mockito.Mockito.*;
-import com.order.menu.common.exception.BusinessException; import com.order.menu.module.dish.mapper.DishMapper; import com.order.menu.module.family.mapper.FamilyMemberMapper; import com.order.menu.module.message.entity.*; import com.order.menu.module.message.mapper.*; import com.order.menu.module.message.service.MessageService; import com.order.menu.module.moment.dto.MomentDtos; import com.order.menu.module.moment.entity.*; import com.order.menu.module.moment.mapper.*; import com.order.menu.module.shop.mapper.ShopMapper; import com.order.menu.module.user.entity.User; import com.order.menu.module.user.mapper.UserMapper;
-import java.util.*; import java.util.concurrent.atomic.AtomicReference; import org.junit.jupiter.api.Test; import org.junit.jupiter.api.extension.ExtendWith; import org.mockito.*;
+import com.order.menu.common.exception.BusinessException; import com.order.menu.module.dish.mapper.DishMapper; import com.order.menu.module.family.mapper.FamilyMemberMapper; import com.order.menu.module.message.entity.*; import com.order.menu.module.message.mapper.*; import com.order.menu.module.message.service.MessageService; import com.order.menu.module.moment.dto.MomentBaseCacheDto; import com.order.menu.module.moment.dto.MomentDtos; import com.order.menu.module.moment.dto.MomentViewerStateCacheDto; import com.order.menu.module.moment.entity.*; import com.order.menu.module.moment.mapper.*; import com.order.menu.module.moment.service.cache.MomentAuxiliaryCachePort; import com.order.menu.module.moment.service.cache.MomentCacheRebuildGuard; import com.order.menu.module.shop.mapper.ShopMapper; import com.order.menu.module.user.entity.User; import com.order.menu.module.user.mapper.UserMapper;
+import java.util.*; import java.util.concurrent.atomic.AtomicReference; import org.junit.jupiter.api.BeforeEach; import org.junit.jupiter.api.Test; import org.junit.jupiter.api.extension.ExtendWith; import org.mockito.*;
 
 @ExtendWith(org.mockito.junit.jupiter.MockitoExtension.class)
 class MomentServiceTest {
@@ -13,7 +13,14 @@ class MomentServiceTest {
   @Mock MomentQuoteMapper quotes; @Mock MomentMentionMapper mentions; @Mock MomentCommentMentionMapper commentMentions;
   @Mock UserMapper users; @Mock ShopMapper shops; @Mock DishMapper dishes; @Mock ConversationMemberMapper members;
   @Mock FamilyMemberMapper families; @Mock ChatMessageMapper chatMessages; @Mock MessageService messages; @Mock MomentCachePort cache;
+  @Mock MomentAccessCacheService accessCache; @Mock MomentFeedExposureService exposureService; @Mock MomentAuxiliaryCachePort auxiliaryCache; @Mock MomentCacheRebuildGuard rebuildGuard;
   @InjectMocks MomentService service;
+
+  @BeforeEach void cacheDefaults() {
+    lenient().when(accessCache.accessFor(anyLong())).thenReturn(new MomentAccessSnapshot(Set.of(),Set.of()));
+    lenient().when(exposureService.findExposed(anyLong(),anyString(),anyCollection())).thenReturn(Set.of());
+    lenient().when(rebuildGuard.tryAcquire(anyString(),anyString(),any())).thenReturn(MomentCacheRebuildGuard.Lease.bypass());
+  }
 
   @Test void incompleteDraftCanBeSaved() {
     AtomicReference<Moment> saved=new AtomicReference<>();
@@ -40,10 +47,54 @@ class MomentServiceTest {
   }
 
   @Test void unreadRelatedFeedUsesOnlyEstablishedTwoWayChats() {
-    when(chatMessages.selectEstablishedDirectChatUserIds(1L)).thenReturn(List.of(3L));
+    when(accessCache.accessFor(1L)).thenReturn(new MomentAccessSnapshot(Set.of(),Set.of(3L)));
     when(moments.selectCount(any())).thenReturn(2L);
     assertEquals(2L,service.unread(1L).relatedUnreadCount());
-    verify(chatMessages).selectEstablishedDirectChatUserIds(1L);
+    verify(accessCache,times(2)).accessFor(1L);
+    verifyNoInteractions(chatMessages);
+  }
+
+  @Test void unreadCountUsesRedisCacheWithoutDatabaseFallback() {
+    when(cache.getUnread(1L)).thenReturn(Optional.of(7L));
+
+    assertEquals(7L,service.unread(1L).relatedUnreadCount());
+
+    verifyNoInteractions(chatMessages,reads,moments);
+  }
+
+  @Test void markReadLoadsMomentsAndExistingStatesInBatches() {
+    Moment first=published(41L,2L);Moment second=published(42L,3L);
+    when(accessCache.accessFor(1L)).thenReturn(new MomentAccessSnapshot(Set.of(),Set.of(2L,3L)));
+    when(moments.selectByIds(anyCollection())).thenReturn(List.of(first,second));
+    MomentRead existing=new MomentRead();existing.setMomentId(41L);existing.setUserId(1L);
+    when(reads.selectList(any())).thenReturn(List.of(existing));
+    when(moments.selectCount(any())).thenReturn(0L);
+
+    service.markRead(1L,List.of(41L,42L,42L));
+
+    verify(moments).selectByIds(List.of(41L,42L));
+    verify(moments,never()).selectById(anyLong());
+    verify(reads,never()).selectCount(any());
+    verify(reads,times(2)).selectList(any());
+    verify(reads,times(1)).insert(argThat((MomentRead row)->Long.valueOf(42L).equals(row.getMomentId())));
+    verify(cache).evictViewerStates(1L,List.of(41L,42L));
+  }
+
+  @Test void hotFeedFiltersPrivateCandidatesBeforeReturningTopTen() {
+    Moment privateMoment=published(10L,2L);privateMoment.setVisibility("PRIVATE");
+    Moment publicMoment=published(11L,3L);
+    when(cache.getHotMomentIds()).thenReturn(Optional.of(List.of(10L,11L)));
+    when(moments.selectByIds(any())).thenReturn(List.of(privateMoment,publicMoment));
+    when(cache.getMoments(any())).thenReturn(Map.of());
+    when(cache.getStats(11L)).thenReturn(Optional.empty());
+    when(cache.getHotCommentId(11L)).thenReturn(Optional.of(0L));
+    User author=new User();author.setId(3L);author.setNickname("public-author");author.setRole("CUSTOMER");
+    when(users.selectById(3L)).thenReturn(author);
+
+    List<MomentDtos.MomentResponse> result=service.hot(1L,10);
+
+    assertEquals(List.of(11L),result.stream().map(MomentDtos.MomentResponse::id).toList());
+    verify(moments,never()).selectHotCandidateIds(anyInt());
   }
 
   @Test void commentReplyPreviewUsesOldestFirstOrdering() {
@@ -126,14 +177,44 @@ class MomentServiceTest {
   @Test void firstPagePinsOnlyDisplayedOwnPostsWithoutChangingPageMembership() {
     Moment peerOne=published(1L,2L);Moment ownOne=published(2L,1L);Moment peerTwo=published(3L,3L);Moment ownTwo=published(4L,1L);
     com.baomidou.mybatisplus.extension.plugins.pagination.Page<Moment> raw=new com.baomidou.mybatisplus.extension.plugins.pagination.Page<>(1,4);raw.setRecords(List.of(peerOne,ownOne,peerTwo,ownTwo));raw.setTotal(4);
-    when(moments.selectPage(any(),any())).thenReturn(raw);when(exposures.selectList(any())).thenReturn(List.of());
+    when(moments.selectPage(any(),any())).thenReturn(raw);
     when(users.selectById(anyLong())).thenAnswer(inv->{Long id=inv.getArgument(0);User u=new User();u.setId(id);u.setNickname("u"+id);u.setRole("CUSTOMER");return u;});
 
     MomentDtos.PageResponse<MomentDtos.MomentResponse> result=service.feed(1L,"RECOMMENDED",1,4,true);
 
     assertEquals(List.of(2L,4L,1L,3L),result.records().stream().map(MomentDtos.MomentResponse::id).toList());
     assertEquals(Set.of(1L,2L,3L,4L),new HashSet<>(result.records().stream().map(MomentDtos.MomentResponse::id).toList()));
-    verify(exposures,times(2)).insert(any(com.order.menu.module.moment.entity.MomentFeedExposure.class));
+    verify(exposureService).recordExposures(eq(1L),eq("RECOMMENDED"),eq(List.of(2L,4L)),any());
+  }
+
+  @Test void viewerStateCacheMissLoadsWholePageWithOneQueryPerInteractionType() {
+    Moment first=published(41L,2L);Moment second=published(42L,3L);
+    when(cache.getHotMomentIds()).thenReturn(Optional.of(List.of(41L,42L)));
+    when(moments.selectByIds(any())).thenReturn(List.of(first,second));
+    when(cache.getMoments(any())).thenReturn(Map.of(41L,base(first,"HEART"),42L,base(second,"HEART")));
+    when(cache.getViewerStates(eq(1L),anyCollection())).thenReturn(Map.of());
+    MomentLike liked=new MomentLike();liked.setMomentId(41L);liked.setUserId(1L);
+    MomentRead read=new MomentRead();read.setMomentId(42L);read.setUserId(1L);
+    MomentReaction reacted=new MomentReaction();reacted.setMomentId(41L);reacted.setUserId(1L);reacted.setEmoji("HEART");
+    when(likes.selectList(any())).thenReturn(List.of(liked));
+    when(reads.selectList(any())).thenReturn(List.of(read));
+    when(reactions.selectList(any())).thenReturn(List.of(reacted));
+
+    List<MomentDtos.MomentResponse> result=service.hot(1L,10);
+
+    assertTrue(result.get(0).likedByMe());
+    assertTrue(result.get(0).reactions().get(0).reactedByMe());
+    assertTrue(result.get(1).readByMe());
+    verify(likes,times(1)).selectList(any());
+    verify(reads,times(1)).selectList(any());
+    verify(reactions,times(1)).selectList(any());
+    verify(likes,never()).selectCount(any());
+    verify(reads,never()).selectCount(any());
+    verify(cache).putViewerStates(eq(1L),argThat(states->
+        states.size()==2
+            && states.get(41L).liked()
+            && states.get(41L).reactionEmojis().contains("HEART")
+            && states.get(42L).read()));
   }
 
   @Test void cancellingLikesAndReactionsDoesNotTouchNotifications() {
@@ -146,6 +227,20 @@ class MomentServiceTest {
     service.react(1L,7L,"FIRE",false);
 
     verify(likes).deleteById(10L);verify(reactions).deleteById(11L);verifyNoInteractions(messages);
+  }
+
+  @Test void commentLikeResponseUsesCommittedIntentInsteadOfStaleViewerCache() {
+    Moment moment=published(7L,1L);when(moments.selectById(7L)).thenReturn(moment);
+    MomentComment comment=new MomentComment();comment.setId(5L);comment.setMomentId(7L);comment.setAuthorUserId(1L);
+    when(comments.selectById(5L)).thenReturn(comment);
+    User author=new User();author.setId(1L);author.setNickname("author");author.setRole("CUSTOMER");
+    when(users.selectById(1L)).thenReturn(author);
+
+    MomentDtos.CommentResponse result=service.likeComment(1L,5L,true);
+
+    assertTrue(result.likedByMe());
+    verify(auxiliaryCache).evictCommentLike(1L,5L);
+    verify(auxiliaryCache,never()).getCommentLikes(anyLong(),anyCollection());
   }
 
   @Test void reactionLocksMomentBeforeMutatingAndAggregatingAllCurrentEmojis() throws Exception {
@@ -219,4 +314,11 @@ class MomentServiceTest {
   }
 
   private Moment published(Long id,Long author){Moment m=new Moment();m.setId(id);m.setAuthorUserId(author);m.setTitle("title");m.setContent("content");m.setStatus("PUBLISHED");m.setVisibility("PUBLIC");m.setPublishedAt(java.time.LocalDateTime.now());m.setCreatedAt(m.getPublishedAt());return m;}
+  private MomentBaseCacheDto base(Moment moment,String emoji){return new MomentBaseCacheDto(
+      1,moment.getId(),moment.getAuthorUserId(),"author-"+moment.getAuthorUserId(),null,"CUSTOMER",
+      moment.getTitle(),moment.getContent(),moment.getVisibility(),moment.getStatus(),List.of(),
+      1,0,0,0,0,0,List.of(new MomentBaseCacheDto.ReactionSummary(emoji,1)),
+      null,null,null,null,null,null,null,null,null,List.of(),
+      null,null,null,null,null,null,null,null,null,null,
+      null,List.of(),null,moment.getPublishedAt(),moment.getCreatedAt());}
 }

@@ -47,6 +47,8 @@ public interface ChatMessageMapper extends BaseMapper<ChatMessage> {
               WHERE d.message_id = m.id
                 AND d.user_id = #{userId}
           )
+          AND (m.delivery_status IS NULL OR m.delivery_status <> 'FAILED_BLOCKED'
+               OR m.sender_user_id = #{userId})
         ORDER BY m.id DESC
         LIMIT #{limit}
         """)
@@ -67,6 +69,8 @@ public interface ChatMessageMapper extends BaseMapper<ChatMessage> {
               WHERE d.message_id = m.id
                 AND d.user_id = #{userId}
           )
+          AND (m.delivery_status IS NULL OR m.delivery_status <> 'FAILED_BLOCKED'
+               OR m.sender_user_id = #{userId})
         ORDER BY m.id DESC
         LIMIT #{limit}
         """)
@@ -75,6 +79,26 @@ public interface ChatMessageMapper extends BaseMapper<ChatMessage> {
             @Param("userId") Long userId,
             @Param("beforeId") Long beforeId,
             @Param("limit") int limit
+    );
+
+    @Select("""
+        SELECT COUNT(*)
+        FROM chat_messages m
+        WHERE m.conversation_id = #{conversationId}
+          AND m.sender_user_id <> #{userId}
+          AND (#{lastReadMessageId} IS NULL OR m.id > #{lastReadMessageId})
+          AND (m.delivery_status IS NULL OR m.delivery_status <> 'FAILED_BLOCKED')
+          AND NOT EXISTS (
+              SELECT 1
+              FROM chat_message_deletions d
+              WHERE d.message_id = m.id
+                AND d.user_id = #{userId}
+          )
+        """)
+    long countVisibleUnread(
+            @Param("conversationId") Long conversationId,
+            @Param("userId") Long userId,
+            @Param("lastReadMessageId") Long lastReadMessageId
     );
 
     @Select("""

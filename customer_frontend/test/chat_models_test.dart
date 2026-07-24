@@ -46,6 +46,18 @@ void main() {
     expect(conversation.showUnreadBadge, isTrue);
   });
 
+  test('message page parses its history cursor', () {
+    final page = ChatMessages.fromJson({
+      'conversation': {'id': 7, 'type': 'DIRECT', 'status': 'ACTIVE'},
+      'messages': const <Object?>[],
+      'hasMore': true,
+      'nextBeforeId': 45,
+    });
+
+    expect(page.hasMore, isTrue);
+    expect(page.nextBeforeId, 45);
+  });
+
   test('muted conversation hides unread badge', () {
     final conversation = ChatConversation.fromJson({
       'id': 8,

@@ -442,6 +442,7 @@ class CustomerApi {
   }
 
   Future<Map<String, dynamic>> createOrder({
+    required String clientRequestId,
     required int shopId,
     required List<CartItem> items,
     String? remark,
@@ -450,6 +451,7 @@ class CustomerApi {
       '/orders',
       (json) => json as Map<String, dynamic>,
       body: {
+        'clientRequestId': clientRequestId,
         'shopId': shopId,
         'remark': remark,
         'items': [
@@ -572,10 +574,43 @@ class CustomerApi {
   Future<void> unblockChatUser(int userId) =>
       api.delete('/messages/blocks/users/$userId', (_) {});
 
-  Future<ChatMessages> chatMessages(int conversationId) => api.get(
+  Future<ChatMessages> chatMessages(
+    int conversationId, {
+    int? beforeId,
+    int limit = 50,
+  }) => api.get(
     '/messages/conversations/$conversationId/messages',
     (json) => ChatMessages.fromJson(json as Map<String, dynamic>),
+    query: {'beforeId': beforeId?.toString(), 'limit': limit.toString()},
   );
+
+  Future<void> markConversationRead(
+    int conversationId,
+    int lastReadMessageId,
+  ) => api.put(
+    '/messages/conversations/$conversationId/read',
+    (_) {},
+    body: {'lastReadMessageId': lastReadMessageId},
+  );
+
+  Future<void> heartbeatPresence() =>
+      api.put('/messages/presence/online', (_) {});
+
+  Future<void> setConversationTyping(int conversationId, bool active) =>
+      api.put(
+        '/messages/conversations/$conversationId/typing',
+        (_) {},
+        body: {'active': active},
+      );
+
+  Future<Set<int>> typingUsers(int conversationId) =>
+      api.get('/messages/conversations/$conversationId/typing', (json) {
+        final data = json as Map<String, dynamic>? ?? const {};
+        return (data['userIds'] as List? ?? const [])
+            .map((value) => int.tryParse('$value'))
+            .whereType<int>()
+            .toSet();
+      });
 
   Future<ChatUserProfile> chatUserProfile(int userId, {int? conversationId}) =>
       api.get(

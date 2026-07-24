@@ -11,7 +11,9 @@ import com.order.menu.module.shop.entity.Shop;
 import com.order.menu.module.shop.mapper.ShopMapper;
 import com.order.menu.module.user.entity.User;
 import com.order.menu.module.user.mapper.UserMapper;
+import com.order.menu.module.moment.service.cache.MomentAuxiliaryCachePort;
 import lombok.RequiredArgsConstructor;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -23,6 +25,12 @@ public class AdminUserService {
     private final UserMapper userMapper;
     private final ShopMapper shopMapper;
     private final PasswordEncoder passwordEncoder;
+    private MomentAuxiliaryCachePort momentAuxiliaryCache;
+
+    @Autowired(required = false)
+    void setMomentAuxiliaryCache(MomentAuxiliaryCachePort momentAuxiliaryCache) {
+        this.momentAuxiliaryCache = momentAuxiliaryCache;
+    }
 
     public PageResponse<AdminDtos.UserAccountResponse> list(String role, int page, int pageSize, String keyword) {
         String safeRole = StringUtils.hasText(role) ? role.trim() : null;
@@ -77,6 +85,10 @@ public class AdminUserService {
         }
         user.setStatus(status);
         userMapper.updateById(user);
+        if (momentAuxiliaryCache != null) {
+            momentAuxiliaryCache.evictAuthor(userId);
+            momentAuxiliaryCache.evictMentionSearches();
+        }
         return toResponse(userMapper.selectById(userId));
     }
 

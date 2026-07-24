@@ -4,6 +4,7 @@ import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.when;
+import static org.mockito.Mockito.verify;
 
 import com.order.menu.module.moment.dto.MomentDtos;
 import com.order.menu.module.moment.service.MomentMediaService;
@@ -12,6 +13,17 @@ import java.util.List;
 import org.junit.jupiter.api.Test;
 
 class MomentControllerTest {
+  @Test
+  void hotEndpointCapsItsDefaultRequestAtTen() {
+    MomentService service = mock(MomentService.class);
+    when(service.hot(-1L, 10L)).thenReturn(List.of());
+
+    var response = new MomentController(service, mock(MomentMediaService.class)).hot(10L);
+
+    assertTrue(response.getData().isEmpty());
+    verify(service).hot(-1L, 10L);
+  }
+
   @Test
   void shareMetadataKeepsItsOwnUrlAndOpensTheMomentWithoutALandingPage() {
     String target = "https://moment.zsj-unknown.top/customer/moments/7";

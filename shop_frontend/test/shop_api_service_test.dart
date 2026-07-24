@@ -123,6 +123,100 @@ void main() {
     await service.updateConversationPreferences(9, muted: true, pinned: true);
   });
 
+  test(
+    'chat history sends the cursor and parses pagination metadata',
+    () async {
+      final service = ShopApiService(
+        baseUrl: 'http://example.test/api',
+        token: 'token-1',
+        client: MockClient((request) async {
+          expect(request.method, 'GET');
+          expect(request.url.path, '/api/messages/conversations/9/messages');
+          expect(request.url.queryParameters, {
+            'beforeId': '81',
+            'limit': '25',
+          });
+          return http.Response(
+            jsonEncode({
+              'code': 0,
+              'data': {
+                'conversation': {'id': 9, 'type': 'DIRECT', 'status': 'ACTIVE'},
+                'messages': [
+                  {
+                    'id': 56,
+                    'conversationId': 9,
+                    'senderUserId': 3,
+                    'type': 'TEXT',
+                    'content': 'older',
+                    'createdAt': '2026-07-22T12:00:00',
+                  },
+                ],
+                'hasMore': true,
+                'nextBeforeId': 56,
+              },
+            }),
+            200,
+          );
+        }),
+      );
+
+      final result = await service.fetchChatMessages(
+        9,
+        beforeId: 81,
+        limit: 25,
+      );
+
+      expect(result.messages.single.id, 56);
+      expect(result.hasMore, isTrue);
+      expect(result.nextBeforeId, 56);
+    },
+  );
+
+  test('marking a conversation read sends the latest displayed id', () async {
+    final service = ShopApiService(
+      baseUrl: 'http://example.test/api',
+      token: 'token-1',
+      client: MockClient((request) async {
+        expect(request.method, 'PUT');
+        expect(request.url.path, '/api/messages/conversations/9/read');
+        expect(jsonDecode(request.body), {'lastReadMessageId': 108});
+        return http.Response(jsonEncode({'code': 0, 'data': null}), 200);
+      }),
+    );
+
+    await service.markConversationRead(9, 108);
+  });
+
+  test('presence and typing APIs use the realtime chat contracts', () async {
+    final requests = <http.Request>[];
+    final service = ShopApiService(
+      baseUrl: 'http://example.test/api',
+      token: 'token-1',
+      client: MockClient((request) async {
+        requests.add(request);
+        final data = request.method == 'GET'
+            ? {
+                'userIds': [4, '8'],
+              }
+            : null;
+        return http.Response(jsonEncode({'code': 0, 'data': data}), 200);
+      }),
+    );
+
+    await service.heartbeatPresence();
+    await service.setConversationTyping(9, true);
+    final users = await service.fetchTypingUsers(9);
+
+    expect(requests[0].method, 'PUT');
+    expect(requests[0].url.path, '/api/messages/presence/online');
+    expect(requests[1].method, 'PUT');
+    expect(requests[1].url.path, '/api/messages/conversations/9/typing');
+    expect(jsonDecode(requests[1].body), {'active': true});
+    expect(requests[2].method, 'GET');
+    expect(requests[2].url.path, '/api/messages/conversations/9/typing');
+    expect(users, {4, 8});
+  });
+
   test('guarded conversation deletion includes the message version', () async {
     final service = ShopApiService(
       baseUrl: 'http://example.test/api',

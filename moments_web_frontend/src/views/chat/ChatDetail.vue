@@ -10,7 +10,8 @@
         </div>
         <div>
           <div class="chat-header-name">{{ convName }}</div>
-          <div v-if="isGroup" class="chat-header-sub">家庭群聊</div>
+          <div v-if="typingLabel" class="chat-header-sub typing-status">{{ typingLabel }}</div>
+          <div v-else-if="isGroup" class="chat-header-sub">家庭群聊</div>
         </div>
       </div>
       <button class="chat-settings-btn" :title="isGroup ? '群聊信息' : '用户资料'" @click="conversationInfoRoute && $router.push(conversationInfoRoute)">
@@ -22,12 +23,17 @@
     </button>
 
     <!-- Messages area -->
-    <div class="chat-messages" ref="msgContainer">
+    <div class="chat-messages" ref="msgContainer" @scroll.passive="handleMessagesScroll">
       <LoadingSpinner v-if="loading" variant="chat-detail" />
       <div v-else-if="error" class="error-wrap">
         <EmptyState icon="warning" :title="error" action-text="重试" @action="loadMessages" />
       </div>
       <template v-else>
+        <div class="history-loader">
+          <button v-if="hasMore && !isLoadingMore" type="button" @click="loadMoreMessages">加载更早消息</button>
+          <span v-else-if="isLoadingMore">正在加载...</span>
+          <span v-else-if="messages.length">没有更早消息了</span>
+        </div>
         <div v-for="(msg, index) in messages" :key="msg.id" class="chat-message-block">
           <div v-if="shouldShowTimestamp(index)" class="msg-center-notice msg-timestamp">{{ formatMessageTime(msg.createdAt) }}</div>
         <div :id="'msg-' + msg.id" class="chat-msg-wrapper" :class="{ mine: msg.senderUserId === myUserId, system: msg.type === 'SYSTEM', 'menu-open': msgMenuId === msg.id, 'quote-highlight': highlightedMessageId === msg.id }">
@@ -142,7 +148,7 @@
           <input type="file" accept="image/*" hidden @change="handleImageSelect" />
         </label>
         <textarea ref="textInputEl" v-model="textInput" class="chat-text-input" rows="1" placeholder="输入消息"
-          @input="resizeInput" @focus="emojiOpen = false" @keydown.enter.exact.prevent="handleSend"></textarea>
+          @input="handleTypingInput" @focus="emojiOpen = false" @blur="stopTyping()" @keydown.enter.exact.prevent="handleSend"></textarea>
         <button class="chat-emoji-btn" type="button" :title="emojiOpen ? '收起表情' : '表情'" :aria-label="emojiOpen ? '收起表情' : '表情'" @click="toggleEmojiPanel">
           <Keyboard v-if="emojiOpen" :size="22" /><Smile v-else :size="22" />
         </button>
@@ -160,10 +166,10 @@
 </template>
 
 <script setup>
-import { ref, computed, onMounted, onUnmounted, nextTick } from 'vue'
+import { ref, computed, onMounted, onUnmounted, nextTick, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { ArrowLeft, ChevronRight, Copy, ImagePlus, Keyboard, MoreVertical, Reply, RotateCcw, Send, Smile, Sparkles, Star, Trash2, UserRound, UsersRound, X } from 'lucide-vue-next'
-import { addEssence, deleteMessage, getChatImageUrl, getLatestUnreadEssence, getMessages, markEssenceRead, recallMessage, removeEssence, sendMessage as apiSendMessage } from '../../api/messages'
+import { addEssence, deleteMessage, getChatImageUrl, getConversationTyping, getLatestUnreadEssence, getMessages, markConversationRead, markEssenceRead, recallMessage, removeEssence, sendMessage as apiSendMessage, setConversationTyping } from '../../api/messages'
 import { imageUrl } from '../../composables/useImage'
 import { apiUrl } from '../../config/endpoints'
 import LoadingSpinner from '../../components/LoadingSpinner.vue'
@@ -184,7 +190,13 @@ const basePath = role === 'SHOP' ? '/shop' : '/customer'
 
 const conversation = ref({})
 const messages = ref([])
-const loading = ref(true)
+const isLoadingInitial = ref(true)
+const loading = isLoadingInitial
+const isLoadingMore = ref(false)
+const isRefreshing = ref(false)
+const hasMore = ref(true)
+const nextBeforeId = ref(null)
+const loadedMessageIds = new Set()
 const error = ref('')
 const textInput = ref('')
 const textInputEl = ref(null)
@@ -193,6 +205,7 @@ const replyingTo = ref(null)
 const msgMenuId = ref(null)
 const messageMenuAnchor = ref(null)
 const latestEssence = ref(null)
+const typingUserIds = ref([])
 const highlightedMessageId = ref(null)
 let longPressTimer = null
 let highlightTimer = null
@@ -213,6 +226,14 @@ const profileRoute = computed(() => {
   return userId ? `${basePath}/chat/user/${userId}?conversationId=${conversationId.value}` : ''
 })
 const conversationInfoRoute = computed(() => isGroup.value ? `${basePath}/chat/${conversationId.value}/group-info` : profileRoute.value)
+const typingLabel = computed(() => {
+  if (!typingUserIds.value.length) return ''
+  if (!isGroup.value) return `${conversation.value?.directUserNickname || '对方'}正在输入...`
+  if (typingUserIds.value.length > 1) return `${typingUserIds.value.length}位群成员正在输入...`
+  const userId = typingUserIds.value[0]
+  const message = [...messages.value].reverse().find(item => Number(item.senderUserId) === Number(userId))
+  return `${message?.senderNickname || '群成员'}正在输入...`
+})
 
 function messageAvatarUrl(msg) {
   const fallback = msg.senderUserId === myUserId.value
@@ -258,23 +279,156 @@ function openSenderProfile(msg) {
   })
 }
 
+const PAGE_SIZE = 50
+let requestGeneration = 0
+let lastMarkedReadMessageId = null
+let typingStopTimer = null
+let typingActive = false
+let lastTypingSentAt = 0
+
+async function sendTypingState(active, id = conversationId.value) {
+  if (!Number.isFinite(Number(id)) || !localStorage.getItem('token')) return
+  typingActive = active
+  if (active) lastTypingSentAt = Date.now()
+  try { await setConversationTyping(id, active) } catch { }
+}
+
+function handleTypingInput() {
+  resizeInput()
+  window.clearTimeout(typingStopTimer)
+  if (!textInput.value.trim()) {
+    stopTyping()
+    return
+  }
+  if (!typingActive || Date.now() - lastTypingSentAt >= 3_000) sendTypingState(true)
+  typingStopTimer = window.setTimeout(() => stopTyping(), 1_500)
+}
+
+function stopTyping(id = conversationId.value) {
+  window.clearTimeout(typingStopTimer)
+  typingStopTimer = null
+  if (typingActive) sendTypingState(false, id)
+}
+
+async function pollTypingUsers(id = conversationId.value, generation = requestGeneration) {
+  if (!localStorage.getItem('token')) return
+  try {
+    const data = await getConversationTyping(id)
+    if (requestIsCurrent(id, generation)) typingUserIds.value = data?.userIds || []
+  } catch { }
+}
+
+function compareMessages(a, b) {
+  const aId = Number(a.id)
+  const bId = Number(b.id)
+  if (Number.isFinite(aId) && Number.isFinite(bId) && aId !== bId) return aId - bId
+  return new Date(a.createdAt || 0) - new Date(b.createdAt || 0)
+}
+
+function replaceMessages(nextMessages) {
+  const unique = new Map()
+  nextMessages.forEach(message => {
+    if (message?.id != null) unique.set(String(message.id), message)
+  })
+  messages.value = [...unique.values()].sort(compareMessages)
+  loadedMessageIds.clear()
+  messages.value.forEach(message => loadedMessageIds.add(String(message.id)))
+}
+
+function mergeMessages(nextMessages) {
+  replaceMessages([...messages.value, ...nextMessages])
+}
+
+function requestIsCurrent(id, generation) {
+  return conversationId.value === id && requestGeneration === generation
+}
+
+async function reportLatestRead(id, generation, latestMessages) {
+  const latestId = latestMessages.at(-1)?.id
+  if (latestId == null || String(latestId) === String(lastMarkedReadMessageId)) return
+  await nextTick()
+  if (!requestIsCurrent(id, generation)) return
+  try {
+    await markConversationRead(id, latestId)
+    if (requestIsCurrent(id, generation)) lastMarkedReadMessageId = latestId
+  } catch { }
+}
+
 async function loadMessages({ silent = false } = {}) {
+  if (isRefreshing.value) return
+  const id = conversationId.value
+  const generation = requestGeneration
   const wasEmpty = messages.value.length === 0
   const previousLastId = messages.value.at(-1)?.id
   const nearBottom = !msgContainer.value || msgContainer.value.scrollHeight - msgContainer.value.scrollTop - msgContainer.value.clientHeight < 140
-  if (!silent && wasEmpty) loading.value = true
+  isRefreshing.value = true
+  if (!silent && wasEmpty) isLoadingInitial.value = true
   if (!silent) error.value = ''
   try {
-    const data = await getMessages(conversationId.value)
+    const data = await getMessages(id, { limit: PAGE_SIZE })
+    if (!requestIsCurrent(id, generation)) return
     conversation.value = data.conversation || {}
-    messages.value = data.messages || []
-    messages.value.forEach(m => {
+    const latestMessages = data.messages || []
+    if (wasEmpty) {
+      replaceMessages(latestMessages)
+      hasMore.value = Boolean(data.hasMore)
+      nextBeforeId.value = data.nextBeforeId ?? null
+    } else {
+      mergeMessages(latestMessages)
+    }
+    latestMessages.forEach(m => {
       if (m.type === 'IMAGE_SHARE' && m.imageUrl && !m.imageExpired) loadChatImage(m)
     })
     const hasNewMessage = messages.value.at(-1)?.id !== previousLastId
-    if (wasEmpty || (hasNewMessage && nearBottom)) scrollToBottom(wasEmpty ? 'auto' : 'smooth')
-  } catch (e) { if (!silent) error.value = e.message }
-  finally { if (!silent) loading.value = false }
+    if (wasEmpty || (hasNewMessage && nearBottom)) {
+      scrollToBottom(wasEmpty ? 'auto' : 'smooth')
+      reportLatestRead(id, generation, latestMessages)
+    }
+  } catch (e) { if (!silent && requestIsCurrent(id, generation)) error.value = e.message }
+  finally {
+    if (requestIsCurrent(id, generation)) {
+      isRefreshing.value = false
+      if (!silent) isLoadingInitial.value = false
+    }
+  }
+}
+
+async function loadMoreMessages() {
+  if (isLoadingInitial.value || isLoadingMore.value || !hasMore.value || nextBeforeId.value == null) return
+  const id = conversationId.value
+  const generation = requestGeneration
+  const container = msgContainer.value
+  const previousHeight = container?.scrollHeight || 0
+  const previousTop = container?.scrollTop || 0
+  isLoadingMore.value = true
+  try {
+    const data = await getMessages(id, { beforeId: nextBeforeId.value, limit: PAGE_SIZE })
+    if (!requestIsCurrent(id, generation)) return
+    const historicalMessages = data.messages || []
+    mergeMessages(historicalMessages)
+    hasMore.value = Boolean(data.hasMore)
+    nextBeforeId.value = data.nextBeforeId ?? null
+    historicalMessages.forEach(m => {
+      if (m.type === 'IMAGE_SHARE' && m.imageUrl && !m.imageExpired) loadChatImage(m)
+    })
+    await nextTick()
+    if (container && requestIsCurrent(id, generation)) {
+      container.scrollTop = previousTop + container.scrollHeight - previousHeight
+    }
+  } catch (e) {
+    if (requestIsCurrent(id, generation)) notifyError(e.message)
+  } finally {
+    if (requestIsCurrent(id, generation)) isLoadingMore.value = false
+  }
+}
+
+function handleMessagesScroll() {
+  const container = msgContainer.value
+  if (!container) return
+  if (container.scrollTop <= 80) loadMoreMessages()
+  if (container.scrollHeight - container.scrollTop - container.clientHeight < 80) {
+    reportLatestRead(conversationId.value, requestGeneration, messages.value.slice(-1))
+  }
 }
 
 async function loadChatImage(msg) {
@@ -350,14 +504,14 @@ function scrollToMessage(msgId) {
 async function handleSend() {
   if (!textInput.value.trim()) return
   const content = textInput.value.trim()
+  stopTyping()
   try {
     const sent = await apiSendMessage(conversationId.value, { content, quotedMessageId: replyingTo.value?.id || null })
     textInput.value = ''
     resizeInput()
     replyingTo.value = null
     if (sent?.id) {
-      messages.value = [...messages.value.filter(item => item.id !== sent.id), sent]
-        .sort((a, b) => new Date(a.createdAt) - new Date(b.createdAt))
+      mergeMessages([sent])
       scrollToBottom()
     } else {
       loadMessages({ silent: true })
@@ -385,6 +539,7 @@ function insertEmoji(emoji) {
   const start = input?.selectionStart ?? textInput.value.length
   const end = input?.selectionEnd ?? textInput.value.length
   textInput.value = textInput.value.slice(0, start) + emoji + textInput.value.slice(end)
+  handleTypingInput()
   nextTick(() => {
     if (input) input.setSelectionRange(start + emoji.length, start + emoji.length)
     resizeInput()
@@ -417,23 +572,70 @@ async function handleRecall(msg) {
 }
 
 async function handleDeleteMsg(msg) {
-  try { await deleteMessage(conversationId.value, msg.id); messages.value = messages.value.filter(m => m.id !== msg.id) } catch (e) { notifyError(e.message) }
+  try {
+    await deleteMessage(conversationId.value, msg.id)
+    loadedMessageIds.delete(String(msg.id))
+    messages.value = messages.value.filter(m => m.id !== msg.id)
+  } catch (e) { notifyError(e.message) }
   msgMenuId.value = null
 }
 
 let pollTimer = null
+let typingPollTimer = null
 let unsubscribeWs
+async function initializeConversation() {
+  requestGeneration += 1
+  const id = conversationId.value
+  const generation = requestGeneration
+  conversation.value = {}
+  messages.value = []
+  loadedMessageIds.clear()
+  hasMore.value = true
+  nextBeforeId.value = null
+  isLoadingMore.value = false
+  isRefreshing.value = false
+  isLoadingInitial.value = true
+  lastMarkedReadMessageId = null
+  latestEssence.value = null
+  typingUserIds.value = []
+  error.value = ''
+  await loadMessages()
+  if (!requestIsCurrent(id, generation)) return
+  if (isGroup.value) {
+    try {
+      const essence = await getLatestUnreadEssence(id)
+      if (requestIsCurrent(id, generation)) latestEssence.value = essence
+    } catch { }
+  }
+}
+
+watch(conversationId, (id, previousId) => {
+  if (id !== previousId) {
+    stopTyping(previousId)
+    initializeConversation()
+  }
+})
+
 onMounted(async () => {
   try { myUserId.value = JSON.parse(localStorage.getItem('user') || '{}')?.id || 0 } catch { }
-  await loadMessages()
-  if (isGroup.value) { try { latestEssence.value = await getLatestUnreadEssence(conversationId.value) } catch { } }
+  await initializeConversation()
   connectCustomerWebSocket()
   unsubscribeWs = subscribeCustomerWebSocket('CHAT', message => {
     if (Number(message?.data?.conversationId) === conversationId.value) loadMessages({ silent: true })
   })
   pollTimer = setInterval(() => loadMessages({ silent: true }), 60000)
+  typingPollTimer = setInterval(() => pollTypingUsers(), 2500)
+  pollTypingUsers()
 })
-onUnmounted(() => { clearInterval(pollTimer); unsubscribeWs?.(); clearTimeout(longPressTimer); clearTimeout(highlightTimer) })
+onUnmounted(() => {
+  stopTyping()
+  requestGeneration += 1
+  clearInterval(pollTimer)
+  clearInterval(typingPollTimer)
+  unsubscribeWs?.()
+  clearTimeout(longPressTimer)
+  clearTimeout(highlightTimer)
+})
 
 const imageViewer = ref({ visible: false, src: '' })
 function viewImage(msg) {
@@ -489,6 +691,7 @@ function openShare(msg) {
 .chat-header-avatar img { width: 100%; height: 100%; object-fit: cover; }
 .chat-header-name { font-size: 16px; font-weight: 700; }
 .chat-header-sub { font-size: 12px; color: var(--color-text-muted); }
+.typing-status { color: var(--color-primary); }
 .chat-settings-btn {
   border: none; background: none; cursor: pointer; width: 40px; height: 40px;
   display: inline-flex; align-items: center; justify-content: center; border-radius: var(--radius); color: var(--color-text-muted);
@@ -513,6 +716,8 @@ function openShare(msg) {
   display: flex; flex-direction: column; gap: 0;
 }
 .error-wrap { min-height: 20vh; display: flex; align-items: center; justify-content: center; }
+.history-loader { min-height: 28px; display: flex; align-items: center; justify-content: center; color: var(--color-text-light); font-size: 12px; }
+.history-loader button { border: none; background: transparent; color: var(--color-primary); cursor: pointer; font-size: 12px; }
 
 .chat-message-block { width: 100%; margin-bottom: 12px; }
 .msg-center-notice { width: 100%; display: flex; align-items: center; justify-content: center; text-align: center; }

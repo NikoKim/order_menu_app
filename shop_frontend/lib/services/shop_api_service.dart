@@ -121,12 +121,50 @@ class ShopApiService {
         .toList();
   }
 
-  Future<ChatMessages> fetchChatMessages(int conversationId) async {
+  Future<ChatMessages> fetchChatMessages(
+    int conversationId, {
+    int? beforeId,
+    int limit = 50,
+  }) async {
     final data = await _request<Map<String, dynamic>>(
       'GET',
       '/messages/conversations/$conversationId/messages',
+      query: {
+        if (beforeId != null) 'beforeId': '$beforeId',
+        'limit': '${limit.clamp(1, 100)}',
+      },
     );
     return ChatMessages.fromJson(data);
+  }
+
+  Future<void> markConversationRead(
+    int conversationId,
+    int lastReadMessageId,
+  ) => _request<void>(
+    'PUT',
+    '/messages/conversations/$conversationId/read',
+    body: {'lastReadMessageId': lastReadMessageId},
+  );
+
+  Future<void> heartbeatPresence() =>
+      _request<void>('PUT', '/messages/presence/online');
+
+  Future<void> setConversationTyping(int conversationId, bool active) =>
+      _request<void>(
+        'PUT',
+        '/messages/conversations/$conversationId/typing',
+        body: {'active': active},
+      );
+
+  Future<Set<int>> fetchTypingUsers(int conversationId) async {
+    final data = await _request<Map<String, dynamic>>(
+      'GET',
+      '/messages/conversations/$conversationId/typing',
+    );
+    return (data['userIds'] as List? ?? const [])
+        .map((value) => int.tryParse('$value'))
+        .whereType<int>()
+        .toSet();
   }
 
   Future<ChatMessage> sendChatMessage(

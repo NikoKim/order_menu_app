@@ -595,7 +595,12 @@ String familyMemberStatusLabel(String status) => switch (status) {
 };
 
 class ChatMessages {
-  const ChatMessages({required this.conversation, required this.messages});
+  const ChatMessages({
+    required this.conversation,
+    required this.messages,
+    this.hasMore = false,
+    this.nextBeforeId,
+  });
   factory ChatMessages.fromJson(Map<String, dynamic> json) => ChatMessages(
     conversation: ChatConversation.fromJson(
       json['conversation'] as Map<String, dynamic>? ?? const {},
@@ -604,9 +609,15 @@ class ChatMessages {
         .whereType<Map<String, dynamic>>()
         .map(ChatMessage.fromJson)
         .toList(),
+    hasMore: json['hasMore'] == true,
+    nextBeforeId: json['nextBeforeId'] == null
+        ? null
+        : _asInt(json['nextBeforeId']),
   );
   final ChatConversation conversation;
   final List<ChatMessage> messages;
+  final bool hasMore;
+  final int? nextBeforeId;
 }
 
 class FamilyGroupMember {

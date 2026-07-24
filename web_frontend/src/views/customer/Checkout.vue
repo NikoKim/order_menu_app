@@ -57,12 +57,39 @@ const cart = useCartStore()
 const remark = ref('')
 const submitting = ref(false)
 const error = ref('')
+const pendingOrderKey = 'order-menu:pending-order-request'
+const pendingOrderTtlMs = 30 * 60 * 1000
+
+function newClientRequestId() {
+  return globalThis.crypto?.randomUUID?.()
+    ?? `${Date.now()}-${Math.random().toString(16).slice(2)}`
+}
+
+function idempotencyFor(payload) {
+  const fingerprint = JSON.stringify(payload)
+  try {
+    const pending = JSON.parse(localStorage.getItem(pendingOrderKey) || 'null')
+    if (pending?.fingerprint === fingerprint
+      && Date.now() - Number(pending.createdAt) < pendingOrderTtlMs) {
+      return { clientRequestId: pending.clientRequestId, fingerprint }
+    }
+  } catch {
+    // Ignore corrupt browser state and replace it with a fresh request.
+  }
+  const clientRequestId = newClientRequestId()
+  try {
+    localStorage.setItem(pendingOrderKey, JSON.stringify({ clientRequestId, fingerprint, createdAt: Date.now() }))
+  } catch {
+    // Browser storage can be unavailable; the in-flight request still remains idempotent.
+  }
+  return { clientRequestId, fingerprint }
+}
 
 async function handleSubmit() {
   error.value = ''
   submitting.value = true
   try {
-    await createOrder({
+    const payload = {
       shopId: cart.shopId,
       remark: remark.value.trim() || undefined,
       items: cart.items.map(i => ({
@@ -70,7 +97,17 @@ async function handleSubmit() {
         quantity: i.quantity,
         optionItemIds: i.optionItemIds || []
       }))
-    })
+    }
+    const pending = idempotencyFor(payload)
+    await createOrder({ ...payload, clientRequestId: pending.clientRequestId })
+    try {
+      const stored = JSON.parse(localStorage.getItem(pendingOrderKey) || 'null')
+      if (stored?.clientRequestId === pending.clientRequestId) {
+        localStorage.removeItem(pendingOrderKey)
+      }
+    } catch {
+      // Order succeeded; stale browser state can expire naturally.
+    }
     cart.clearCart()
     router.push('/customer/orders')
   } catch (e) {

@@ -10,7 +10,8 @@
         </div>
         <div>
           <div class="chat-header-name">{{ convName }}</div>
-          <div v-if="isGroup" class="chat-header-sub">家庭群聊</div>
+          <div v-if="typingLabel" class="chat-header-sub typing-status">{{ typingLabel }}</div>
+          <div v-else-if="isGroup" class="chat-header-sub">家庭群聊</div>
         </div>
       </div>
       <button class="chat-settings-btn" title="聊天设置" @click="showSettings = !showSettings"><SlidersHorizontal :size="20" /></button>
@@ -36,13 +37,18 @@
     </button>
 
     <!-- Messages area -->
-    <div class="chat-messages" ref="msgContainer">
+    <div class="chat-messages" ref="msgContainer" @scroll.passive="handleMessagesScroll">
       <LoadingSpinner v-if="loading" />
       <div v-else-if="error" class="error-wrap">
         <EmptyState icon="warning" :title="error" action-text="重试" @action="loadMessages" />
       </div>
       <template v-else>
-        <div v-for="msg in messages" :key="msg.id" class="chat-msg-wrapper" :class="{ mine: msg.senderUserId === myUserId, system: msg.type === 'SYSTEM' }">
+        <div class="history-loader">
+          <button v-if="hasMore && !isLoadingMore" type="button" @click="loadMoreMessages">加载更早消息</button>
+          <span v-else-if="isLoadingMore">正在加载...</span>
+          <span v-else-if="messages.length">没有更早消息了</span>
+        </div>
+        <div v-for="msg in messages" :id="'msg-' + msg.id" :key="msg.id" class="chat-msg-wrapper" :class="{ mine: msg.senderUserId === myUserId, system: msg.type === 'SYSTEM' }">
           <!-- System / recalled -->
           <div v-if="msg.recalledAt" class="msg-recalled">
             {{ msg.senderUserId === myUserId ? '你' : msg.senderNickname }}撤回了一条消息
@@ -136,7 +142,7 @@
           <ImagePlus :size="23" aria-label="发送图片" />
           <input type="file" accept="image/*" hidden @change="handleImageSelect" />
         </label>
-        <input v-model="textInput" class="chat-text-input" placeholder="输入消息..." @keyup.enter="handleSend" />
+        <input v-model="textInput" class="chat-text-input" placeholder="输入消息..." @input="handleTypingInput" @blur="stopTyping()" @keyup.enter="handleSend" />
         <button class="chat-send-btn" :disabled="!textInput.trim()" @click="handleSend">发送</button>
       </div>
     </div>
@@ -147,10 +153,10 @@
 </template>
 
 <script setup>
-import { ref, computed, onMounted, onUnmounted, nextTick } from 'vue'
+import { ref, computed, onMounted, onUnmounted, nextTick, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { ArrowLeft, ChevronRight, ImagePlus, MoreVertical, Settings2, SlidersHorizontal, Sparkles, Star, UserRound, UsersRound, X } from 'lucide-vue-next'
-import { addEssence, blockUser, deleteMessage, getBlockStatus, getChatImageUrl, getConversationPreferences, getLatestUnreadEssence, getMessages, markEssenceRead, recallMessage, removeEssence, sendMessage as apiSendMessage, setConversationMute, unblockUser } from '../../api/messages'
+import { addEssence, blockUser, deleteMessage, getBlockStatus, getChatImageUrl, getConversationPreferences, getConversationTyping, getLatestUnreadEssence, getMessages, markConversationRead, markEssenceRead, recallMessage, removeEssence, sendMessage as apiSendMessage, setConversationMute, setConversationTyping, unblockUser } from '../../api/messages'
 import { imageUrl } from '../../composables/useImage'
 import LoadingSpinner from '../../components/LoadingSpinner.vue'
 import EmptyState from '../../components/EmptyState.vue'
@@ -165,7 +171,13 @@ const basePath = role === 'SHOP' ? '/shop' : '/customer'
 
 const conversation = ref({})
 const messages = ref([])
-const loading = ref(true)
+const isLoadingInitial = ref(true)
+const loading = isLoadingInitial
+const isLoadingMore = ref(false)
+const isRefreshing = ref(false)
+const hasMore = ref(true)
+const nextBeforeId = ref(null)
+const loadedMessageIds = new Set()
 const error = ref('')
 const textInput = ref('')
 const replyingTo = ref(null)
@@ -174,6 +186,7 @@ const isMuted = ref(false)
 const blocked = ref(false)
 const showSettings = ref(false)
 const latestEssence = ref(null)
+const typingUserIds = ref([])
 
 const msgContainer = ref(null)
 const msgEnd = ref(null)
@@ -189,19 +202,165 @@ const profileRoute = computed(() => {
   return userId ? `${basePath}/chat/user/${userId}?conversationId=${conversationId.value}` : ''
 })
 const conversationInfoRoute = computed(() => isGroup.value ? `${basePath}/chat/${conversationId.value}/group-info` : profileRoute.value)
+const typingLabel = computed(() => {
+  if (!typingUserIds.value.length) return ''
+  if (!isGroup.value) return `${conversation.value?.directUserNickname || '对方'}正在输入...`
+  if (typingUserIds.value.length > 1) return `${typingUserIds.value.length}位群成员正在输入...`
+  const userId = typingUserIds.value[0]
+  const message = [...messages.value].reverse().find(item => Number(item.senderUserId) === Number(userId))
+  return `${message?.senderNickname || '群成员'}正在输入...`
+})
 
-async function loadMessages() {
-  loading.value = true; error.value = ''
+const PAGE_SIZE = 50
+let requestGeneration = 0
+let lastMarkedReadMessageId = null
+let typingStopTimer = null
+let typingActive = false
+let lastTypingSentAt = 0
+
+async function sendTypingState(active, id = conversationId.value) {
+  if (!Number.isFinite(Number(id)) || !localStorage.getItem('token')) return
+  typingActive = active
+  if (active) lastTypingSentAt = Date.now()
+  try { await setConversationTyping(id, active) } catch { }
+}
+
+function handleTypingInput() {
+  window.clearTimeout(typingStopTimer)
+  if (!textInput.value.trim()) {
+    stopTyping()
+    return
+  }
+  if (!typingActive || Date.now() - lastTypingSentAt >= 3_000) sendTypingState(true)
+  typingStopTimer = window.setTimeout(() => stopTyping(), 1_500)
+}
+
+function stopTyping(id = conversationId.value) {
+  window.clearTimeout(typingStopTimer)
+  typingStopTimer = null
+  if (typingActive) sendTypingState(false, id)
+}
+
+async function pollTypingUsers(id = conversationId.value, generation = requestGeneration) {
+  if (!localStorage.getItem('token')) return
   try {
-    const data = await getMessages(conversationId.value)
+    const data = await getConversationTyping(id)
+    if (requestIsCurrent(id, generation)) typingUserIds.value = data?.userIds || []
+  } catch { }
+}
+
+function compareMessages(a, b) {
+  const aId = Number(a.id)
+  const bId = Number(b.id)
+  if (Number.isFinite(aId) && Number.isFinite(bId) && aId !== bId) return aId - bId
+  return new Date(a.createdAt || 0) - new Date(b.createdAt || 0)
+}
+
+function replaceMessages(nextMessages) {
+  const unique = new Map()
+  nextMessages.forEach(message => {
+    if (message?.id != null) unique.set(String(message.id), message)
+  })
+  messages.value = [...unique.values()].sort(compareMessages)
+  loadedMessageIds.clear()
+  messages.value.forEach(message => loadedMessageIds.add(String(message.id)))
+}
+
+function mergeMessages(nextMessages) {
+  replaceMessages([...messages.value, ...nextMessages])
+}
+
+function requestIsCurrent(id, generation) {
+  return conversationId.value === id && requestGeneration === generation
+}
+
+async function reportLatestRead(id, generation, latestMessages) {
+  const latestId = latestMessages.at(-1)?.id
+  if (latestId == null || String(latestId) === String(lastMarkedReadMessageId)) return
+  await nextTick()
+  if (!requestIsCurrent(id, generation)) return
+  try {
+    await markConversationRead(id, latestId)
+    if (requestIsCurrent(id, generation)) lastMarkedReadMessageId = latestId
+  } catch { }
+}
+
+async function loadMessages({ silent = false } = {}) {
+  if (isRefreshing.value) return
+  const id = conversationId.value
+  const generation = requestGeneration
+  const isInitial = messages.value.length === 0
+  const container = msgContainer.value
+  const nearBottom = !container || container.scrollHeight - container.scrollTop - container.clientHeight < 140
+  isRefreshing.value = true
+  if (!silent && isInitial) isLoadingInitial.value = true
+  if (!silent) error.value = ''
+  try {
+    const data = await getMessages(id, { limit: PAGE_SIZE })
+    if (!requestIsCurrent(id, generation)) return
     conversation.value = data.conversation || {}
-    messages.value = data.messages || []
-    messages.value.forEach(m => {
+    const latestMessages = data.messages || []
+    const previousLastId = messages.value.at(-1)?.id
+    if (isInitial) {
+      replaceMessages(latestMessages)
+      hasMore.value = Boolean(data.hasMore)
+      nextBeforeId.value = data.nextBeforeId ?? null
+    } else {
+      mergeMessages(latestMessages)
+    }
+    latestMessages.forEach(m => {
       if (m.type === 'IMAGE_SHARE' && m.imageUrl && !m.imageExpired) loadChatImage(m)
     })
-    scrollToBottom()
-  } catch (e) { error.value = e.message }
-  finally { loading.value = false }
+    const hasNewMessage = messages.value.at(-1)?.id !== previousLastId
+    if (isInitial || (hasNewMessage && nearBottom)) {
+      scrollToBottom(isInitial ? 'auto' : 'smooth')
+      reportLatestRead(id, generation, latestMessages)
+    }
+  } catch (e) { if (!silent && requestIsCurrent(id, generation)) error.value = e.message }
+  finally {
+    if (requestIsCurrent(id, generation)) {
+      isRefreshing.value = false
+      if (!silent) isLoadingInitial.value = false
+    }
+  }
+}
+
+async function loadMoreMessages() {
+  if (isLoadingInitial.value || isLoadingMore.value || !hasMore.value || nextBeforeId.value == null) return
+  const id = conversationId.value
+  const generation = requestGeneration
+  const container = msgContainer.value
+  const previousHeight = container?.scrollHeight || 0
+  const previousTop = container?.scrollTop || 0
+  isLoadingMore.value = true
+  try {
+    const data = await getMessages(id, { beforeId: nextBeforeId.value, limit: PAGE_SIZE })
+    if (!requestIsCurrent(id, generation)) return
+    const historicalMessages = data.messages || []
+    mergeMessages(historicalMessages)
+    hasMore.value = Boolean(data.hasMore)
+    nextBeforeId.value = data.nextBeforeId ?? null
+    historicalMessages.forEach(m => {
+      if (m.type === 'IMAGE_SHARE' && m.imageUrl && !m.imageExpired) loadChatImage(m)
+    })
+    await nextTick()
+    if (container && requestIsCurrent(id, generation)) {
+      container.scrollTop = previousTop + container.scrollHeight - previousHeight
+    }
+  } catch (e) {
+    if (requestIsCurrent(id, generation)) error.value = e.message
+  } finally {
+    if (requestIsCurrent(id, generation)) isLoadingMore.value = false
+  }
+}
+
+function handleMessagesScroll() {
+  const container = msgContainer.value
+  if (!container) return
+  if (container.scrollTop <= 80) loadMoreMessages()
+  if (container.scrollHeight - container.scrollTop - container.clientHeight < 80) {
+    reportLatestRead(conversationId.value, requestGeneration, messages.value.slice(-1))
+  }
 }
 
 async function loadChatImage(msg) {
@@ -211,8 +370,8 @@ async function loadChatImage(msg) {
   } catch { }
 }
 
-function scrollToBottom() {
-  nextTick(() => msgEnd.value?.scrollIntoView({ behavior: 'smooth' }))
+function scrollToBottom(behavior = 'smooth') {
+  nextTick(() => msgEnd.value?.scrollIntoView({ behavior }))
 }
 
 function scrollToMessage(msgId) {
@@ -224,10 +383,11 @@ async function handleSend() {
   if (!textInput.value.trim()) return
   const content = textInput.value.trim()
   textInput.value = ''
+  stopTyping()
   try {
     await apiSendMessage(conversationId.value, { content, quotedMessageId: replyingTo.value?.id || null })
     replyingTo.value = null
-    loadMessages()
+    loadMessages({ silent: true })
   } catch (e) { alert(e.message) }
 }
 
@@ -245,19 +405,23 @@ async function handleImageSelect(e) {
     })
     const json = await res.json()
     if (json.code !== 0) throw new Error(json.message)
-    loadMessages()
+    loadMessages({ silent: true })
   } catch (e) { alert(e.message) }
   e.target.value = ''
 }
 
 async function handleRecall(msg) {
   if (!confirm('确认撤回此消息？')) return
-  try { await recallMessage(conversationId.value, msg.id); loadMessages() } catch (e) { alert(e.message) }
+  try { await recallMessage(conversationId.value, msg.id); loadMessages({ silent: true }) } catch (e) { alert(e.message) }
   msgMenuId.value = null
 }
 
 async function handleDeleteMsg(msg) {
-  try { await deleteMessage(conversationId.value, msg.id); messages.value = messages.value.filter(m => m.id !== msg.id) } catch (e) { alert(e.message) }
+  try {
+    await deleteMessage(conversationId.value, msg.id)
+    loadedMessageIds.delete(String(msg.id))
+    messages.value = messages.value.filter(m => m.id !== msg.id)
+  } catch (e) { alert(e.message) }
   msgMenuId.value = null
 }
 
@@ -276,18 +440,64 @@ async function handleBlockToggle() {
 }
 
 let pollTimer = null
-onMounted(async () => {
-  try { myUserId.value = JSON.parse(localStorage.getItem('user') || '{}')?.id || 0 } catch { }
+let typingPollTimer = null
+async function initializeConversation() {
+  requestGeneration += 1
+  const id = conversationId.value
+  const generation = requestGeneration
+  conversation.value = {}
+  messages.value = []
+  loadedMessageIds.clear()
+  hasMore.value = true
+  nextBeforeId.value = null
+  isLoadingMore.value = false
+  isRefreshing.value = false
+  isLoadingInitial.value = true
+  lastMarkedReadMessageId = null
+  isMuted.value = false
+  blocked.value = false
+  latestEssence.value = null
+  typingUserIds.value = []
+  error.value = ''
   await loadMessages()
-  if (isGroup.value) { try { latestEssence.value = await getLatestUnreadEssence(conversationId.value) } catch { } }
-  pollTimer = setInterval(loadMessages, 3000)
-  try { const prefs = await getConversationPreferences(conversationId.value); isMuted.value = prefs.muted || false } catch { }
+  if (!requestIsCurrent(id, generation)) return
+  if (isGroup.value) {
+    try {
+      const essence = await getLatestUnreadEssence(id)
+      if (requestIsCurrent(id, generation)) latestEssence.value = essence
+    } catch { }
+  }
+  if (!requestIsCurrent(id, generation)) return
+  try { const prefs = await getConversationPreferences(id); if (requestIsCurrent(id, generation)) isMuted.value = prefs.muted || false } catch { }
   try {
     const conv = conversation.value
-    if (conv?.directUserId) { const b = await getBlockStatus(conv.directUserId); blocked.value = b.blockedByMe || false }
+    if (conv?.directUserId) {
+      const b = await getBlockStatus(conv.directUserId)
+      if (requestIsCurrent(id, generation)) blocked.value = b.blockedByMe || false
+    }
   } catch { }
+}
+
+watch(conversationId, (id, previousId) => {
+  if (id !== previousId) {
+    stopTyping(previousId)
+    initializeConversation()
+  }
 })
-onUnmounted(() => clearInterval(pollTimer))
+
+onMounted(async () => {
+  try { myUserId.value = JSON.parse(localStorage.getItem('user') || '{}')?.id || 0 } catch { }
+  await initializeConversation()
+  pollTimer = setInterval(() => loadMessages({ silent: true }), 3000)
+  typingPollTimer = setInterval(() => pollTypingUsers(), 2500)
+  pollTypingUsers()
+})
+onUnmounted(() => {
+  stopTyping()
+  requestGeneration += 1
+  clearInterval(pollTimer)
+  clearInterval(typingPollTimer)
+})
 
 const imageViewer = ref({ visible: false, src: '' })
 function viewImage(msg) {
@@ -343,6 +553,7 @@ function openShare(msg) {
 .chat-header-avatar img { width: 100%; height: 100%; object-fit: cover; }
 .chat-header-name { font-size: 16px; font-weight: 700; }
 .chat-header-sub { font-size: 12px; color: var(--color-text-muted); }
+.typing-status { color: var(--color-primary); }
 .chat-settings-btn {
   border: none; background: none; cursor: pointer; width: 40px; height: 40px;
   display: inline-flex; align-items: center; justify-content: center; border-radius: var(--radius); color: var(--color-text-muted);
@@ -367,6 +578,8 @@ function openShare(msg) {
   display: flex; flex-direction: column; gap: 12px;
 }
 .error-wrap { min-height: 20vh; display: flex; align-items: center; justify-content: center; }
+.history-loader { min-height: 28px; display: flex; align-items: center; justify-content: center; color: var(--color-text-light); font-size: 12px; }
+.history-loader button { border: none; background: transparent; color: var(--color-primary); cursor: pointer; font-size: 12px; }
 
 .chat-msg-wrapper { display: flex; align-items: flex-end; gap: 8px; }
 .chat-msg-wrapper.mine { flex-direction: row-reverse; }

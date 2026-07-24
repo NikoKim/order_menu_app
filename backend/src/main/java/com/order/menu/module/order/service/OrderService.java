@@ -31,11 +31,15 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
 import java.util.stream.Collectors;
+import java.util.concurrent.atomic.AtomicReference;
 
+import com.order.menu.module.shop.service.cache.MenuCacheInvalidator;
 import com.order.menu.websocket.WsPushService;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
+import org.springframework.transaction.support.TransactionSynchronization;
+import org.springframework.transaction.support.TransactionSynchronizationManager;
 import org.springframework.util.StringUtils;
 
 @Service
@@ -52,6 +56,10 @@ public class OrderService {
     private final FamilyService familyService;
     private final WsPushService wsPushService;
     private final MessageService messageService;
+    private final MenuCacheInvalidator menuCacheInvalidator;
+
+    @org.springframework.beans.factory.annotation.Autowired(required = false)
+    private IdempotencyService idempotencyService;
 
     @Transactional
     public OrderDtos.OrderSubmitResponse create(Long customerUserId, OrderDtos.CreateOrderRequest request) {
@@ -81,14 +89,52 @@ public class OrderService {
         order.setStatus(StatusConstants.ORDER_SUBMITTED);
         order.setClientRequestId(request.clientRequestId());
 
+        // Redis idempotency check before DB insert.
+        IdempotencyService.AcquireResult acquireResult = null;
+        AtomicReference<Long> idempotencyOrderId = new AtomicReference<>();
+        boolean idempotencyCompletionRegistered = false;
+        if (idempotencyService != null) {
+            acquireResult = idempotencyService.acquire(customerUserId, request.clientRequestId());
+            if (acquireResult.type() == IdempotencyService.AcquireResult.Type.EXISTING) {
+                Order existing = orderMapper.selectById(acquireResult.existingOrderId());
+                if (existing != null) {
+                    return new OrderDtos.OrderSubmitResponse(existing.getId(), existing.getOrderNo(),
+                            existing.getStatus(), existing.getTotalAmount());
+                }
+            } else if (acquireResult.type() == IdempotencyService.AcquireResult.Type.PENDING) {
+                Order existing = orderMapper.selectByCustomerAndClientRequestId(
+                        customerUserId, request.clientRequestId());
+                if (existing != null) {
+                    idempotencyService.markSuccess(customerUserId, request.clientRequestId(), existing.getId());
+                    return new OrderDtos.OrderSubmitResponse(existing.getId(), existing.getOrderNo(),
+                            existing.getStatus(), existing.getTotalAmount());
+                }
+                throw new BusinessException(ErrorCode.CONFLICT, "ORDER_CREATING");
+            } else if (acquireResult.type() == IdempotencyService.AcquireResult.Type.ACQUIRED) {
+                idempotencyCompletionRegistered = registerIdempotencyCompletion(
+                        customerUserId, request.clientRequestId(), acquireResult.pendingToken(), idempotencyOrderId);
+            }
+        }
+
         try {
             orderMapper.insert(order);
         } catch (org.springframework.dao.DuplicateKeyException exception) {
             Order existing = orderMapper.selectByCustomerAndClientRequestId(
                     customerUserId, request.clientRequestId());
             if (existing != null) {
+                if (acquireResult != null && acquireResult.type() == IdempotencyService.AcquireResult.Type.ACQUIRED) {
+                    idempotencyOrderId.set(existing.getId());
+                } else if (idempotencyService != null) {
+                    idempotencyService.markSuccess(customerUserId, request.clientRequestId(), existing.getId());
+                }
                 return new OrderDtos.OrderSubmitResponse(existing.getId(), existing.getOrderNo(),
                         existing.getStatus(), existing.getTotalAmount());
+            }
+            if (idempotencyService != null && acquireResult != null
+                    && acquireResult.type() == IdempotencyService.AcquireResult.Type.ACQUIRED
+                    && !idempotencyCompletionRegistered) {
+                idempotencyService.releasePending(
+                        customerUserId, request.clientRequestId(), acquireResult.pendingToken());
             }
             throw exception;
         }
@@ -117,7 +163,40 @@ public class OrderService {
         messageService.createShopNotification(order.getShopId(), "ORDER", "收到新订单",
                 "订单 " + order.getOrderNo() + " 已提交", orderPayload(order));
 
+        menuCacheInvalidator.evictMenuAfterCommit(order.getShopId());
+
+        if (idempotencyService != null && acquireResult != null
+                && acquireResult.type() == IdempotencyService.AcquireResult.Type.ACQUIRED) {
+            idempotencyOrderId.set(order.getId());
+            if (!idempotencyCompletionRegistered) {
+                idempotencyService.markSuccess(customerUserId, request.clientRequestId(), order.getId(),
+                        acquireResult.pendingToken());
+            }
+        }
+
         return new OrderDtos.OrderSubmitResponse(order.getId(), order.getOrderNo(), order.getStatus(), order.getTotalAmount());
+    }
+
+    private boolean registerIdempotencyCompletion(Long userId, String clientRequestId, String pendingToken,
+                                                   AtomicReference<Long> orderId) {
+        if (!TransactionSynchronizationManager.isActualTransactionActive()) return false;
+        TransactionSynchronizationManager.registerSynchronization(new TransactionSynchronization() {
+            @Override
+            public void afterCommit() {
+                Long committedOrderId = orderId.get();
+                if (committedOrderId != null) {
+                    idempotencyService.markSuccess(userId, clientRequestId, committedOrderId, pendingToken);
+                }
+            }
+
+            @Override
+            public void afterCompletion(int status) {
+                if (status != TransactionSynchronization.STATUS_COMMITTED) {
+                    idempotencyService.releasePending(userId, clientRequestId, pendingToken);
+                }
+            }
+        });
+        return true;
     }
 
     public PageResponse<OrderDtos.OrderSummaryResponse> myOrders(Long customerUserId, int page, int pageSize, String status) {
@@ -151,6 +230,8 @@ public class OrderService {
         }
 
         restoreStock(order);
+
+        menuCacheInvalidator.evictMenuAfterCommit(order.getShopId());
 
         wsPushService.pushOrderCancelled(order);
     }
@@ -196,6 +277,8 @@ public class OrderService {
         }
 
         restoreStock(order);
+
+        menuCacheInvalidator.evictMenuAfterCommit(order.getShopId());
 
         wsPushService.pushOrderRejected(order);
         notifyCustomerOrderStatus(order, "订单已拒绝");

@@ -2,6 +2,8 @@ server:
   port: 8081
 
 spring:
+  config:
+    import: file:/www/server/SpringBoot/.env.redis[.properties]
   datasource:
     driver-class-name: com.mysql.cj.jdbc.Driver
     url: ${ORDER_MENU_DB_URL:jdbc:mysql://127.0.0.1:3307/order_menu?useUnicode=true&characterEncoding=utf8&useSSL=false&serverTimezone=Asia/Shanghai&allowPublicKeyRetrieval=true}
@@ -26,3 +28,7 @@ app:
   cors:
     allowed-origins:
       - ${ORDER_MENU_FRONTEND_ORIGIN:https://moment.zsj-unknown.top}
+
+order-menu:
+  redis:
+    environment: ${ORDER_MENU_REDIS_ENV:prod}

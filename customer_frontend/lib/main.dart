@@ -164,7 +164,8 @@ class CustomerShell extends StatefulWidget {
   State<CustomerShell> createState() => _CustomerShellState();
 }
 
-class _CustomerShellState extends State<CustomerShell> {
+class _CustomerShellState extends State<CustomerShell>
+    with WidgetsBindingObserver {
   int _currentIndex = 0;
   bool _autoSelectedLogin = false;
   bool _hasCheckedUpdate = false;
@@ -174,9 +175,16 @@ class _CustomerShellState extends State<CustomerShell> {
   StreamSubscription<CustomerWsMessage>? _chatBadgeSubscription;
   StreamSubscription<CustomerWsMessage>? _notificationBadgeSubscription;
   StreamSubscription<bool>? _connectionSubscription;
+  Timer? _presenceHeartbeatTimer;
   int _unreadChats = 0;
   int _unreadNotifications = 0;
   final _chatBadgeRequests = LatestRequest();
+
+  @override
+  void initState() {
+    super.initState();
+    WidgetsBinding.instance.addObserver(this);
+  }
 
   @override
   void didChangeDependencies() {
@@ -230,6 +238,7 @@ class _CustomerShellState extends State<CustomerShell> {
   void _syncWebSocket(AuthController auth) {
     final token = auth.api.token;
     if (auth.isReady && auth.isLoggedIn && token != null && token.isNotEmpty) {
+      _startPresenceHeartbeat();
       if (_webSocketToken != token) {
         _webSocketToken = token;
         CustomerWebSocketService.instance.connect(token, force: true);
@@ -240,6 +249,9 @@ class _CustomerShellState extends State<CustomerShell> {
       return;
     }
 
+    _presenceHeartbeatTimer?.cancel();
+    _presenceHeartbeatTimer = null;
+
     if (_webSocketToken != null) {
       _webSocketToken = null;
       CustomerWebSocketService.instance.disconnect();
@@ -248,6 +260,27 @@ class _CustomerShellState extends State<CustomerShell> {
           _unreadChats = 0;
           _unreadNotifications = 0;
         });
+    }
+  }
+
+  void _startPresenceHeartbeat() {
+    if (_presenceHeartbeatTimer != null) return;
+    _sendPresenceHeartbeat();
+    _presenceHeartbeatTimer = Timer.periodic(
+      const Duration(seconds: 40),
+      (_) => _sendPresenceHeartbeat(),
+    );
+  }
+
+  void _sendPresenceHeartbeat() {
+    if (!_auth.isLoggedIn) return;
+    unawaited(_customerApi.heartbeatPresence().catchError((_) {}));
+  }
+
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    if (state == AppLifecycleState.resumed && _auth.isLoggedIn) {
+      _sendPresenceHeartbeat();
     }
   }
 
@@ -275,10 +308,12 @@ class _CustomerShellState extends State<CustomerShell> {
 
   @override
   void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
     _auth.beforeLogout = null;
     _chatBadgeSubscription?.cancel();
     _notificationBadgeSubscription?.cancel();
     _connectionSubscription?.cancel();
+    _presenceHeartbeatTimer?.cancel();
     CustomerWebSocketService.instance.disconnect();
     super.dispose();
   }

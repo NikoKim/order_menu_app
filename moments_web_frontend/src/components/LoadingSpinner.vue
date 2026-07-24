@@ -1,5 +1,7 @@
 <template>
   <div class="skeleton-loader" :class="[variant, { fullscreen }]" role="status" aria-label="正在加载">
+    <span v-if="text" class="loading-caption">{{ text }}</span>
+    <span v-else class="sr-only">加载中</span>
     <template v-if="variant === 'chat-list'">
       <div v-for="i in 6" :key="i" class="sk-chat-row">
         <i class="sk-circle"></i><span><i class="sk-line wide"></i><i class="sk-line short"></i></span>
@@ -44,7 +46,6 @@
     <template v-else>
       <div class="sk-generic"><i class="sk-line title"></i><i class="sk-line wide"></i><i class="sk-line medium"></i></div>
     </template>
-    <span class="sr-only">{{ text || '加载中' }}</span>
   </div>
 </template>
 
@@ -59,8 +60,8 @@ defineProps({
 <style scoped>
 .skeleton-loader { width: 100%; padding: 12px; }
 .skeleton-loader.fullscreen { position: fixed; inset: 0; z-index: 1000; overflow: hidden; background: rgba(255,255,255,.94); }
-.sk-line, .sk-circle, .sk-bubble, .sk-media, .sk-topic { display: block; overflow: hidden; position: relative; background: #eceef1; }
-.sk-line::after, .sk-circle::after, .sk-bubble::after, .sk-media::after, .sk-topic::after { content: ''; position: absolute; inset: 0; transform: translateX(-100%); background: linear-gradient(90deg, transparent, rgba(255,255,255,.72), transparent); animation: shimmer 1.25s infinite; }
+.sk-line, .sk-circle, .sk-bubble, .sk-media, .sk-topic { display: block; overflow: hidden; position: relative; background: #eef0f2; }
+.sk-line::after, .sk-circle::after, .sk-bubble::after, .sk-media::after, .sk-topic::after { content: ''; position: absolute; inset: 0; transform: translateX(-100%); background: linear-gradient(90deg, transparent, rgba(255,255,255,.65), transparent); animation: shimmer 1.1s infinite; }
 .sk-line { width: 100%; height: 11px; border-radius: 4px; }
 .sk-line + .sk-line { margin-top: 9px; }
 .sk-line.title { width: 68%; height: 17px; }
@@ -96,7 +97,14 @@ defineProps({
 .sk-topic-list { display: flex; flex-wrap: wrap; gap: 7px; }
 .sk-topic { width: 92px; height: 30px; border-radius: 16px; }
 .sk-topic.wide { width: 114px; }
+.loading-caption {
+  min-height: 32px; display: flex; align-items: center; justify-content: center;
+  margin-bottom: 4px; color: #555b63; font-size: 13px; font-weight: 600;
+}
 .sr-only { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0, 0, 0, 0); }
 @keyframes shimmer { to { transform: translateX(100%); } }
+@media (prefers-reduced-motion: reduce) {
+  .sk-line::after, .sk-circle::after, .sk-bubble::after, .sk-media::after, .sk-topic::after { animation-duration: 2.4s; }
+}
 @media (max-width: 480px) { .skeleton-loader { padding: 8px 0; } .sk-moment { border-radius: 0; } }
 </style>

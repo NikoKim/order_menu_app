@@ -75,6 +75,13 @@ class ChatScrollCoordinator {
     _pendingBottom = false;
     return shouldScroll;
   }
+
+  void reset() {
+    _hasObservedLatest = false;
+    _latestMessageId = null;
+    _navigatingToQuote = false;
+    _pendingBottom = false;
+  }
 }
 
 class ChatKeyboardInsetSettler {
@@ -104,6 +111,8 @@ class ChatDetailPage extends StatefulWidget {
 
 class _ChatDetailPageState extends State<ChatDetailPage>
     with WidgetsBindingObserver {
+  static const _messagePageSize = 50;
+
   late CustomerApi _api;
   late Future<ChatMessages> _messagesFuture;
   final _input = TextEditingController();
@@ -114,6 +123,8 @@ class _ChatDetailPageState extends State<ChatDetailPage>
   StreamSubscription<CustomerWsMessage>? _wsSubscription;
   StreamSubscription<bool>? _connectionSubscription;
   bool _sending = false;
+  bool _isLoadingMore = false;
+  bool _hasLoadedHistory = false;
   bool _initialized = false;
   ChatMessages? _cachedMessages;
   int _renderedMessageCount = -1;
@@ -125,6 +136,15 @@ class _ChatDetailPageState extends State<ChatDetailPage>
   bool _showEmoji = false;
   ChatMessage? _latestUnreadEssence;
   int _bottomScrollRequest = 0;
+  int? _lastMarkedReadMessageId;
+  int? _markingReadMessageId;
+  Timer? _presenceHeartbeatTimer;
+  Timer? _typingPollTimer;
+  Timer? _typingDebounceTimer;
+  Timer? _typingIdleTimer;
+  Timer? _typingRefreshTimer;
+  bool _typingPublished = false;
+  Set<int> _remoteTypingUserIds = const {};
   final _scrollCoordinator = ChatScrollCoordinator();
   late final ChatKeyboardInsetSettler _keyboardInsetSettler;
 
@@ -139,6 +159,39 @@ class _ChatDetailPageState extends State<ChatDetailPage>
         }
       },
     );
+    _itemPositionsListener.itemPositions.addListener(
+      _handleItemPositionsChanged,
+    );
+    _input.addListener(_handleTypingInputChanged);
+  }
+
+  @override
+  void didUpdateWidget(covariant ChatDetailPage oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (!_initialized || oldWidget.conversation.id == widget.conversation.id) {
+      return;
+    }
+    _stopTyping(conversationId: oldWidget.conversation.id);
+    _remoteTypingUserIds = const {};
+    _messageRequests.begin();
+    _cachedMessages = null;
+    _renderedMessageCount = -1;
+    _isLoadingMore = false;
+    _hasLoadedHistory = false;
+    _lastMarkedReadMessageId = null;
+    _markingReadMessageId = null;
+    _quotedMessage = null;
+    _highlightedMessageId = null;
+    _blockState = null;
+    _latestUnreadEssence = null;
+    _scrollCoordinator.reset();
+    _messagesFuture = _loadMessages();
+    if (!widget.conversation.isDirect) _loadLatestEssence();
+    if (widget.conversation.isDirect &&
+        widget.conversation.directUserId != null) {
+      _loadBlockState();
+    }
+    _pollTypingUsers();
   }
 
   @override
@@ -147,11 +200,24 @@ class _ChatDetailPageState extends State<ChatDetailPage>
   }
 
   @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    if (state == AppLifecycleState.resumed) {
+      _sendPresenceHeartbeat();
+      _pollTypingUsers();
+    } else if (state == AppLifecycleState.inactive ||
+        state == AppLifecycleState.paused ||
+        state == AppLifecycleState.detached) {
+      _stopTyping();
+    }
+  }
+
+  @override
   void didChangeDependencies() {
     super.didChangeDependencies();
     if (_initialized) return;
     _initialized = true;
     _api = CustomerApi(AppScope.of(context).api);
+    _startPresenceTracking();
     _messagesFuture = _loadMessages();
     if (!widget.conversation.isDirect) _loadLatestEssence();
     if (widget.conversation.isDirect &&
@@ -183,6 +249,117 @@ class _ChatDetailPageState extends State<ChatDetailPage>
         });
   }
 
+  void _startPresenceTracking() {
+    _sendPresenceHeartbeat();
+    _pollTypingUsers();
+    _presenceHeartbeatTimer?.cancel();
+    _presenceHeartbeatTimer = Timer.periodic(
+      const Duration(seconds: 40),
+      (_) => _sendPresenceHeartbeat(),
+    );
+    _typingPollTimer?.cancel();
+    _typingPollTimer = Timer.periodic(
+      const Duration(seconds: 3),
+      (_) => _pollTypingUsers(),
+    );
+  }
+
+  void _sendPresenceHeartbeat() {
+    unawaited(_api.heartbeatPresence().catchError((_) {}));
+  }
+
+  Future<void> _pollTypingUsers() async {
+    final conversationId = widget.conversation.id;
+    try {
+      final users = await _api.typingUsers(conversationId);
+      if (!mounted || widget.conversation.id != conversationId) return;
+      if (_sameUserIds(users, _remoteTypingUserIds)) return;
+      setState(() => _remoteTypingUserIds = users);
+    } catch (_) {
+      if (mounted &&
+          widget.conversation.id == conversationId &&
+          _remoteTypingUserIds.isNotEmpty) {
+        setState(() => _remoteTypingUserIds = const {});
+      }
+    }
+  }
+
+  bool _sameUserIds(Set<int> left, Set<int> right) =>
+      left.length == right.length && left.every(right.contains);
+
+  void _handleTypingInputChanged() {
+    if (_input.text.trim().isEmpty ||
+        !widget.conversation.isActive ||
+        _blockState?.blockedByMe == true) {
+      _stopTyping();
+      return;
+    }
+    _typingIdleTimer?.cancel();
+    _typingIdleTimer = Timer(const Duration(seconds: 2), () => _stopTyping());
+    if (!_typingPublished && _typingDebounceTimer == null) {
+      _typingDebounceTimer = Timer(const Duration(milliseconds: 250), () {
+        _typingDebounceTimer = null;
+        if (_input.text.trim().isNotEmpty && mounted) {
+          _publishTyping();
+        }
+      });
+    }
+  }
+
+  void _publishTyping() {
+    _typingPublished = true;
+    final conversationId = widget.conversation.id;
+    unawaited(
+      _api.setConversationTyping(conversationId, true).catchError((_) {}),
+    );
+    _typingRefreshTimer ??= Timer.periodic(const Duration(seconds: 4), (_) {
+      if (!_typingPublished || _input.text.trim().isEmpty) return;
+      unawaited(
+        _api.setConversationTyping(conversationId, true).catchError((_) {}),
+      );
+    });
+  }
+
+  void _stopTyping({int? conversationId}) {
+    _typingDebounceTimer?.cancel();
+    _typingDebounceTimer = null;
+    _typingIdleTimer?.cancel();
+    _typingIdleTimer = null;
+    _typingRefreshTimer?.cancel();
+    _typingRefreshTimer = null;
+    if (!_typingPublished || !_initialized) return;
+    _typingPublished = false;
+    unawaited(
+      _api
+          .setConversationTyping(
+            conversationId ?? widget.conversation.id,
+            false,
+          )
+          .catchError((_) {}),
+    );
+  }
+
+  String get _typingLabel {
+    if (_remoteTypingUserIds.isEmpty) return '';
+    if (widget.conversation.isDirect) {
+      return '${widget.conversation.directUserNickname ?? '对方'}正在输入...';
+    }
+    final names = <String>[];
+    for (final userId in _remoteTypingUserIds) {
+      final messages = _cachedMessages?.messages ?? const <ChatMessage>[];
+      final match = messages.reversed.where(
+        (message) => message.senderUserId == userId,
+      );
+      final name = match.isEmpty ? null : match.first.senderNickname;
+      if (name != null && name.trim().isNotEmpty) names.add(name.trim());
+    }
+    if (names.isEmpty) return '有人正在输入...';
+    final visible = names.take(2).join('、');
+    return _remoteTypingUserIds.length > 2
+        ? '$visible 等人正在输入...'
+        : '$visible 正在输入...';
+  }
+
   Future<void> _loadLatestEssence() async {
     try {
       final message = await _api.latestUnreadEssence(widget.conversation.id);
@@ -191,13 +368,138 @@ class _ChatDetailPageState extends State<ChatDetailPage>
   }
 
   Future<ChatMessages> _loadMessages() async {
+    final conversationId = widget.conversation.id;
     final generation = _messageRequests.begin();
-    final result = await _api.chatMessages(widget.conversation.id);
-    if (_messageRequests.isLatest(generation)) {
-      _cachedMessages = result;
-      return result;
+    final result = await _api.chatMessages(
+      conversationId,
+      limit: _messagePageSize,
+    );
+    if (_messageRequests.isLatest(generation) &&
+        widget.conversation.id == conversationId) {
+      final merged = _mergeLatestPage(result);
+      _cachedMessages = merged;
+      _scheduleMarkLatestRead(merged);
+      return merged;
     }
     return _cachedMessages ?? result;
+  }
+
+  ChatMessages _mergeLatestPage(ChatMessages latest) {
+    final cached = _cachedMessages;
+    if (cached == null || !_hasLoadedHistory) return latest;
+    return ChatMessages(
+      conversation: latest.conversation,
+      messages: _mergeMessages(cached.messages, latest.messages),
+      hasMore: cached.hasMore,
+      nextBeforeId: cached.nextBeforeId,
+    );
+  }
+
+  List<ChatMessage> _mergeMessages(
+    Iterable<ChatMessage> older,
+    Iterable<ChatMessage> newer,
+  ) {
+    final byId = <int, ChatMessage>{};
+    for (final message in older) {
+      byId[message.id] = message;
+    }
+    for (final message in newer) {
+      byId[message.id] = message;
+    }
+    final merged = byId.values.toList()
+      ..sort((left, right) => left.id.compareTo(right.id));
+    return merged;
+  }
+
+  Future<void> _loadMoreMessages() async {
+    final cached = _cachedMessages;
+    final beforeId = cached?.nextBeforeId;
+    if (_isLoadingMore ||
+        cached == null ||
+        !cached.hasMore ||
+        beforeId == null) {
+      return;
+    }
+    final conversationId = widget.conversation.id;
+    setState(() => _isLoadingMore = true);
+    try {
+      final page = await _api.chatMessages(
+        conversationId,
+        beforeId: beforeId,
+        limit: _messagePageSize,
+      );
+      if (!mounted || widget.conversation.id != conversationId) return;
+      final current = _cachedMessages;
+      if (current == null || current.nextBeforeId != beforeId) return;
+      _hasLoadedHistory = true;
+      final nextBeforeId = page.nextBeforeId;
+      final updated = ChatMessages(
+        conversation: current.conversation,
+        messages: _mergeMessages(page.messages, current.messages),
+        hasMore:
+            page.hasMore &&
+            nextBeforeId != null &&
+            nextBeforeId != beforeId &&
+            page.messages.isNotEmpty,
+        nextBeforeId: nextBeforeId,
+      );
+      _cachedMessages = updated;
+      // In a reversed list, prepending chronological history leaves every
+      // existing message at the same visual index, preserving scroll position.
+      setState(() => _messagesFuture = Future.value(updated));
+    } catch (error) {
+      if (mounted && widget.conversation.id == conversationId) {
+        AppNotice.show(context, _friendlyError(error));
+      }
+    } finally {
+      if (mounted && widget.conversation.id == conversationId) {
+        setState(() => _isLoadingMore = false);
+      }
+    }
+  }
+
+  void _handleItemPositionsChanged() {
+    final cached = _cachedMessages;
+    if (cached == null || !cached.hasMore || _isLoadingMore) return;
+    final positions = _itemPositionsListener.itemPositions.value;
+    if (positions.isEmpty || cached.messages.isEmpty) return;
+    final oldestThreshold = cached.messages.length > 3
+        ? cached.messages.length - 3
+        : 0;
+    if (positions.any(
+      (position) =>
+          position.index >= oldestThreshold && position.itemLeadingEdge < 1,
+    )) {
+      _loadMoreMessages();
+    }
+  }
+
+  void _scheduleMarkLatestRead(ChatMessages messages) {
+    if (messages.messages.isEmpty) return;
+    final conversationId = widget.conversation.id;
+    final latestMessageId = messages.messages.last.id;
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted || widget.conversation.id != conversationId) return;
+      _markLatestRead(conversationId, latestMessageId);
+    });
+  }
+
+  Future<void> _markLatestRead(int conversationId, int messageId) async {
+    if ((_lastMarkedReadMessageId ?? -1) >= messageId ||
+        (_markingReadMessageId ?? -1) >= messageId) {
+      return;
+    }
+    _markingReadMessageId = messageId;
+    try {
+      await _api.markConversationRead(conversationId, messageId);
+      if (mounted && widget.conversation.id == conversationId) {
+        _lastMarkedReadMessageId = messageId;
+      }
+    } catch (_) {
+      // A later refresh or WebSocket event retries without blocking the chat.
+    } finally {
+      if (_markingReadMessageId == messageId) _markingReadMessageId = null;
+    }
   }
 
   void _reload() {
@@ -226,6 +528,7 @@ class _ChatDetailPageState extends State<ChatDetailPage>
       AppNotice.show(context, '请先取消拉黑后再发送消息');
       return;
     }
+    _stopTyping();
     setState(() => _sending = true);
     try {
       final sent = imagePath == null
@@ -252,8 +555,11 @@ class _ChatDetailPageState extends State<ChatDetailPage>
             ...cached.messages.where((message) => message.id != sent.id),
             sent,
           ],
+          hasMore: cached.hasMore,
+          nextBeforeId: cached.nextBeforeId,
         );
         _cachedMessages = updated;
+        _scheduleMarkLatestRead(updated);
         setState(() => _messagesFuture = Future.value(updated));
       } else {
         _reload();
@@ -279,10 +585,12 @@ class _ChatDetailPageState extends State<ChatDetailPage>
           _pendingImagePath = null;
           _quotedMessage = null;
           _messageRequests.begin();
-          _cachedMessages = recovered;
+          final merged = _mergeLatestPage(recovered);
+          _cachedMessages = merged;
+          _scheduleMarkLatestRead(merged);
           if (mounted) {
             setState(() {
-              _messagesFuture = Future.value(recovered);
+              _messagesFuture = Future.value(merged);
             });
           }
           return;
@@ -395,6 +703,8 @@ class _ChatDetailPageState extends State<ChatDetailPage>
             messages: cached.messages
                 .where((item) => item.id != message.id)
                 .toList(),
+            hasMore: cached.hasMore,
+            nextBeforeId: cached.nextBeforeId,
           );
           setState(() {
             _cachedMessages = updated;
@@ -476,9 +786,16 @@ class _ChatDetailPageState extends State<ChatDetailPage>
   void dispose() {
     WidgetsBinding.instance.removeObserver(this);
     _keyboardInsetSettler.dispose();
+    _itemPositionsListener.itemPositions.removeListener(
+      _handleItemPositionsChanged,
+    );
     _wsSubscription?.cancel();
     _connectionSubscription?.cancel();
     _highlightTimer?.cancel();
+    _presenceHeartbeatTimer?.cancel();
+    _typingPollTimer?.cancel();
+    _stopTyping();
+    _input.removeListener(_handleTypingInputChanged);
     _input.dispose();
     _inputFocus.dispose();
     super.dispose();
@@ -607,78 +924,101 @@ class _ChatDetailPageState extends State<ChatDetailPage>
               behavior: HitTestBehavior.translucent,
               onPointerDown: (_) => _dismissComposerInput(),
               child: FutureBuilder<ChatMessages>(
-              future: _messagesFuture,
-              builder: (context, snapshot) {
-                if (snapshot.connectionState != ConnectionState.done &&
-                    _cachedMessages == null) {
-                  return ListView.builder(
-                    padding: const EdgeInsets.all(16),
-                    itemCount: 8,
-                    itemBuilder: (context, index) {
-                      final isMine = index % 2 == 0;
-                      return Padding(
-                        padding: const EdgeInsets.only(bottom: 16),
-                        child: Row(
-                          mainAxisAlignment: isMine
-                              ? MainAxisAlignment.end
-                              : MainAxisAlignment.start,
-                          children: [
-                            if (!isMine)
-                              const ShimmerBox(
-                                width: 36,
-                                height: 36,
-                                borderRadius: 18,
+                future: _messagesFuture,
+                builder: (context, snapshot) {
+                  if (snapshot.connectionState != ConnectionState.done &&
+                      _cachedMessages == null) {
+                    return ListView.builder(
+                      padding: const EdgeInsets.all(16),
+                      itemCount: 8,
+                      itemBuilder: (context, index) {
+                        final isMine = index % 2 == 0;
+                        return Padding(
+                          padding: const EdgeInsets.only(bottom: 16),
+                          child: Row(
+                            mainAxisAlignment: isMine
+                                ? MainAxisAlignment.end
+                                : MainAxisAlignment.start,
+                            children: [
+                              if (!isMine)
+                                const ShimmerBox(
+                                  width: 36,
+                                  height: 36,
+                                  borderRadius: 18,
+                                ),
+                              if (!isMine) const SizedBox(width: 8),
+                              ShimmerBox(
+                                width: 150 + (index * 20 % 50).toDouble(),
+                                height: 40,
+                                borderRadius: 8,
                               ),
-                            if (!isMine) const SizedBox(width: 8),
-                            ShimmerBox(
-                              width: 150 + (index * 20 % 50).toDouble(),
-                              height: 40,
-                              borderRadius: 8,
-                            ),
-                            if (isMine) const SizedBox(width: 8),
-                            if (isMine)
-                              const ShimmerBox(
-                                width: 36,
-                                height: 36,
-                                borderRadius: 18,
-                              ),
-                          ],
-                        ),
-                      );
-                    },
-                  );
-                }
-                final messages = (snapshot.data ?? _cachedMessages)!.messages;
-                final initialRender = _renderedMessageCount < 0;
-                _renderedMessageCount = messages.length;
-                final latestMessageId = messages.isEmpty
-                    ? null
-                    : messages.last.id;
-                if (_scrollCoordinator.observeLatestMessage(latestMessageId)) {
-                  _scheduleScrollToBottom(animate: !initialRender);
-                }
-                if (messages.isEmpty) {
-                  return const Center(child: Text('开始聊天吧'));
-                }
-                return Align(
-                  alignment: Alignment.topCenter,
-                  child: SizedBox(
-                    width: double.infinity,
-                    child: ScrollablePositionedList.builder(
+                              if (isMine) const SizedBox(width: 8),
+                              if (isMine)
+                                const ShimmerBox(
+                                  width: 36,
+                                  height: 36,
+                                  borderRadius: 18,
+                                ),
+                            ],
+                          ),
+                        );
+                      },
+                    );
+                  }
+                  final chatMessages = (snapshot.data ?? _cachedMessages)!;
+                  final messages = chatMessages.messages;
+                  final initialRender = _renderedMessageCount < 0;
+                  _renderedMessageCount = messages.length;
+                  final latestMessageId = messages.isEmpty
+                      ? null
+                      : messages.last.id;
+                  if (_scrollCoordinator.observeLatestMessage(
+                    latestMessageId,
+                  )) {
+                    _scheduleScrollToBottom(animate: !initialRender);
+                  }
+                  if (messages.isEmpty) {
+                    return const Center(child: Text('开始聊天吧'));
+                  }
+                  return Align(
+                    alignment: Alignment.topCenter,
+                    child: SizedBox(
+                      width: double.infinity,
+                      child: ScrollablePositionedList.builder(
                         itemScrollController: _itemScrollController,
                         itemPositionsListener: _itemPositionsListener,
                         reverse: true,
                         shrinkWrap: true,
                         padding: const EdgeInsets.fromLTRB(16, 16, 16, 8),
-                        itemCount: messages.length,
+                        itemCount:
+                            messages.length +
+                            (chatMessages.hasMore || _isLoadingMore ? 1 : 0),
                         itemBuilder: (context, index) {
-                          final messageIndex = chatVisualIndexFromChronologicalIndex(
-                            index,
-                            messages.length,
-                          );
+                          if (index >= messages.length) {
+                            return SizedBox(
+                              height: 44,
+                              child: Center(
+                                child: _isLoadingMore
+                                    ? const SizedBox.square(
+                                        dimension: 20,
+                                        child: CircularProgressIndicator(
+                                          strokeWidth: 2,
+                                        ),
+                                      )
+                                    : const SizedBox.shrink(),
+                              ),
+                            );
+                          }
+                          final messageIndex =
+                              chatVisualIndexFromChronologicalIndex(
+                                index,
+                                messages.length,
+                              );
                           final message = messages[messageIndex];
                           final mine = message.senderUserId == user?.id;
-                          final timestamp = DateTime.tryParse(message.createdAt);
+                          final timestamp = DateTime.tryParse(
+                            message.createdAt,
+                          );
                           final previous = messageIndex == 0
                               ? null
                               : DateTime.tryParse(
@@ -690,7 +1030,10 @@ class _ChatDetailPageState extends State<ChatDetailPage>
                               if (timestamp != null &&
                                   shouldShowChatTimestamp(previous, timestamp))
                                 Padding(
-                                  padding: const EdgeInsets.only(bottom: 12, top: 4),
+                                  padding: const EdgeInsets.only(
+                                    bottom: 12,
+                                    top: 4,
+                                  ),
                                   child: Text(
                                     formatChatMessageTime(timestamp),
                                     style: const TextStyle(
@@ -713,7 +1056,9 @@ class _ChatDetailPageState extends State<ChatDetailPage>
                                     _handleMessageAction(message, mine, action),
                                 onQuoteTap: message.quotedMessageId == null
                                     ? null
-                                    : () => _jumpToMessage(message.quotedMessageId!),
+                                    : () => _jumpToMessage(
+                                        message.quotedMessageId!,
+                                      ),
                                 onReEdit:
                                     mine &&
                                         message.isRecalled &&
@@ -723,17 +1068,37 @@ class _ChatDetailPageState extends State<ChatDetailPage>
                                         () => _input.text = message.content,
                                       )
                                     : null,
-                                highlighted: _highlightedMessageId == message.id,
+                                highlighted:
+                                    _highlightedMessageId == message.id,
                               ),
                             ],
                           );
                         },
+                      ),
+                    ),
+                  );
+                },
+              ),
+            ),
+          ),
+          AnimatedSize(
+            duration: const Duration(milliseconds: 160),
+            child: _remoteTypingUserIds.isEmpty
+                ? const SizedBox.shrink()
+                : Container(
+                    width: double.infinity,
+                    color: Colors.white,
+                    padding: const EdgeInsets.fromLTRB(52, 5, 12, 3),
+                    child: Text(
+                      _typingLabel,
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: const TextStyle(
+                        color: Color(0xFF6F6F6F),
+                        fontSize: 12,
+                      ),
                     ),
                   ),
-                );
-              },
-            ),
-            ),
           ),
           if (_quotedMessage != null)
             Material(

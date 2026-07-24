@@ -42,6 +42,8 @@ import com.order.menu.module.user.entity.User;
 import com.order.menu.module.user.mapper.UserMapper;
 import com.order.menu.module.moment.entity.Moment;
 import com.order.menu.module.moment.entity.MomentComment;
+import com.order.menu.module.moment.service.MomentAccessCacheService;
+import com.order.menu.module.moment.service.MomentCachePort;
 import com.order.menu.websocket.WsPushService;
 import java.util.List;
 import java.math.BigDecimal;
@@ -83,6 +85,10 @@ class MessageServiceTest {
     private MessageEssenceMapper messageEssenceMapper;
     @Mock
     private MessageEssenceLikeMapper messageEssenceLikeMapper;
+    @Mock
+    private MomentAccessCacheService momentAccessCacheService;
+    @Mock
+    private MomentCachePort momentCachePort;
 
     @Test
     void shopShareRejectsAnotherShopsFamilyGroup() {
@@ -809,6 +815,9 @@ class MessageServiceTest {
         assertEquals("TEXT", savedMessage.getType());
         assertEquals("hello", savedMessage.getContent());
         verify(conversationMapper).updateById(conversation);
+        verify(momentAccessCacheService).invalidateRelationship(List.of(1L, 2L));
+        verify(momentCachePort).evictViewerFeeds(List.of(1L, 2L));
+        verify(momentCachePort).evictUnread(List.of(1L, 2L));
     }
 
     @Test
@@ -859,7 +868,8 @@ class MessageServiceTest {
         latest.setSenderUserId(2L);
         latest.setType("TEXT");
         latest.setContent("latest hello");
-        when(chatMessageMapper.selectList(any())).thenReturn(List.of(latest));
+        when(chatMessageMapper.selectVisibleLatest(9L, 1L, 1)).thenReturn(List.of(latest));
+        when(chatMessageMapper.countVisibleUnread(9L, 1L, null)).thenReturn(1L);
         User peer = user(2L, true);
         peer.setNickname("Bob");
         when(userMapper.selectById(2L)).thenReturn(peer);
@@ -919,9 +929,11 @@ class MessageServiceTest {
         message.setSenderUserId(1L);
         message.setType("TEXT");
         message.setContent("hello");
+        message.setDeliveryStatus("DELIVERED");
         message.setCreatedAt(LocalDateTime.now().minusMinutes(1));
         when(conversationMapper.selectById(9L)).thenReturn(conversation);
-        when(conversationMemberMapper.selectList(any())).thenReturn(List.of(member(9L, 1L)));
+        when(conversationMemberMapper.selectList(any())).thenReturn(
+                List.of(member(9L, 1L), member(9L, 2L)));
         when(chatMessageMapper.selectById(12L)).thenReturn(message);
         when(userMapper.selectById(1L)).thenReturn(user(1L, true));
 
@@ -929,6 +941,9 @@ class MessageServiceTest {
 
         assertEquals(12L, response.id());
         verify(chatMessageMapper).updateById(message);
+        verify(momentAccessCacheService).invalidateRelationship(List.of(1L, 2L));
+        verify(momentCachePort).evictViewerFeeds(List.of(1L, 2L));
+        verify(momentCachePort).evictUnread(List.of(1L, 2L));
     }
 
     @Test
@@ -994,7 +1009,6 @@ class MessageServiceTest {
         failed.setCreatedAt(LocalDateTime.now());
         when(conversationMapper.selectById(9L)).thenReturn(conversation);
         when(conversationMemberMapper.selectList(any())).thenReturn(List.of(member(9L, 2L)));
-        when(chatMessageMapper.selectList(any())).thenReturn(List.of(failed));
         when(chatMessageMapper.selectVisibleLatest(9L, 2L, 51)).thenReturn(List.of(failed));
         when(userMapper.selectById(1L)).thenReturn(user(1L, true));
 
@@ -1122,9 +1136,13 @@ class MessageServiceTest {
     }
 
     private MessageService service() {
-        return new MessageService(conversationMapper, conversationMemberMapper, chatMessageMapper, null, chatBlockMapper,
+        MessageService service = new MessageService(
+                conversationMapper, conversationMemberMapper, chatMessageMapper, null, chatBlockMapper,
                 userMapper, shopMapper, familyMemberMapper, dishMapper, orderMapper,
                 orderItemMapper, userNotificationMapper, wsPushService);
+        service.setMomentAccessCacheService(momentAccessCacheService);
+        service.setMomentCachePort(momentCachePort);
+        return service;
     }
 
     private User user(Long id, boolean allowPrivateChat) {

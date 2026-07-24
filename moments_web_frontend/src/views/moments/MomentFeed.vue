@@ -5,6 +5,9 @@
       <button class="feed-tab" :class="{ active: tab === 'RECOMMENDED' }" @click="switchTab('RECOMMENDED')">
         推荐
       </button>
+      <button class="feed-tab" :class="{ active: tab === 'HOT' }" @click="switchTab('HOT')">
+        热门
+      </button>
       <button class="feed-tab" :class="{ active: tab === 'RELATED' }" @click="switchTab('RELATED')">
         <span>相关</span>
         <i v-if="relatedUnread" class="feed-tab-badge">{{ badge(relatedUnread) }}</i>
@@ -17,12 +20,17 @@
     </div>
 
     <!-- New moments banner (dark pill) -->
-    <div v-if="newCount > 0" class="new-banner" @click="loadFeed">
+    <div v-if="newCount > 0" class="new-banner" @click="refreshFeed">
       <span>有 {{ newCount }} 条新动态</span>
     </div>
 
+    <div v-if="loading && feed.length" class="feed-refresh-status" role="status">
+      <LoaderCircle :size="16" />
+      <span>正在刷新动态</span>
+    </div>
+
     <LoadingSpinner v-if="loading && !feed.length" variant="moment-feed" />
-    <div v-else-if="error" class="error-wrap">
+    <div v-else-if="error && !feed.length" class="error-wrap">
       <EmptyState icon="warning" :title="error" action-text="重试" @action="loadFeed" />
     </div>
     <template v-else>
@@ -32,14 +40,37 @@
         ref="feedContainer"
         @scroll="handleScroll"
       >
+        <div v-if="error" class="feed-inline-error" role="alert">
+          <AlertCircle :size="18" />
+          <span>{{ error }}</span>
+          <button type="button" @click.stop="refreshFeed">
+            <RotateCcw :size="15" />
+            重试
+          </button>
+        </div>
         <MomentCard v-for="m in feed" :key="m.id" :moment="m" :data-moment-id="m.id"
           @click="goDetail(m)" @like="handleLike(m)" @comment="goDetail(m)" @share="showShareSheet(m)"
           @reaction="showReactionPicker(m)" @topic="goTopic" @author="goAuthor" @image="(idx) => viewImages(m, idx)" @reference="goReference(m)"
           @quote="quoteMoment(m)" @open-quote="openQuoted" @edit="editMoment(m)" @delete="removeMoment(m)" />
-        <LoadingSpinner v-if="loadingMore" variant="compact" />
+        <div v-if="loadingMore" class="feed-more-status" role="status">
+          <LoaderCircle :size="18" />
+          <span>正在加载更多动态</span>
+        </div>
+        <div v-else-if="loadMoreError" class="feed-more-error" role="alert">
+          <span>{{ loadMoreError }}</span>
+          <button type="button" @click.stop="loadMore(true)">
+            <RotateCcw :size="15" />
+            重新加载
+          </button>
+        </div>
         <div v-if="!hasMore && feed.length" class="feed-end">— 没有更多了 —</div>
       </div>
-      <EmptyState v-else icon="document" title="暂无动态" description="发布你的第一条动态" />
+      <EmptyState
+        v-else
+        icon="document"
+        :title="tab === 'HOT' ? '暂无热门动态' : '暂无动态'"
+        :description="tab === 'HOT' ? '暂时没有符合条件的热门内容' : '发布你的第一条动态'"
+      />
     </template>
 
     <!-- Reaction picker -->
@@ -81,8 +112,8 @@
 <script setup>
 import { nextTick, ref, onMounted, onUnmounted, watch } from 'vue'
 import { useRouter } from 'vue-router'
-import { FileText, MessageCircle, Search, Share2, SquarePen } from 'lucide-vue-next'
-import { deleteMoment, getMomentUnreadCount, getMoments, markMomentsRead, setMomentLike, setMomentReaction } from '../../api/moments'
+import { AlertCircle, FileText, LoaderCircle, MessageCircle, RotateCcw, Search, Share2, SquarePen } from 'lucide-vue-next'
+import { deleteMoment, getHotMoments, getMomentUnreadCount, getMoments, markMomentsRead, setMomentLike, setMomentReaction } from '../../api/moments'
 import { getConversations, shareMomentToChat } from '../../api/messages'
 import { imageUrl } from '../../composables/useImage'
 import MomentCard from '../../components/MomentCard.vue'
@@ -98,13 +129,16 @@ import { connectCustomerWebSocket, subscribeCustomerWebSocket } from '../../serv
 
 const router = useRouter()
 const props = defineProps({ active: { type: Boolean, default: true } })
-const tab = ref(sessionStorage.getItem('moment-feed-tab') || 'RECOMMENDED')
+const feedTabs = new Set(['RECOMMENDED', 'HOT', 'RELATED'])
+const storedTab = sessionStorage.getItem('moment-feed-tab')
+const tab = ref(feedTabs.has(storedTab) ? storedTab : 'RECOMMENDED')
 const feed = ref([])
 const loading = ref(true)
 const error = ref('')
 const page = ref(1)
 const hasMore = ref(true)
 const loadingMore = ref(false)
+const loadMoreError = ref('')
 const newCount = ref(0)
 const relatedUnread = ref(0)
 const reportedRead = new Set()
@@ -121,6 +155,7 @@ const emit = defineEmits(['header-visibility', 'related-unread'])
 let lastScrollTop = 0
 let scrollDirection = 0
 let scrollDistance = 0
+const FEED_PAGE_SIZE = 12
 
 function storedScroll(type) {
   const scoped = sessionStorage.getItem(`moment-feed-scroll-${type}`)
@@ -129,8 +164,9 @@ function storedScroll(type) {
 }
 
 const tabStates = {
-  RECOMMENDED: { records: [], page: 1, hasMore: true, newCount: 0, loaded: false, scrollTop: storedScroll('RECOMMENDED') },
-  RELATED: { records: [], page: 1, hasMore: true, newCount: 0, loaded: false, scrollTop: storedScroll('RELATED') }
+  RECOMMENDED: { records: [], page: 1, hasMore: true, newCount: 0, loaded: false, request: null, loadMoreRequest: null, loadMoreError: '', scrollTop: storedScroll('RECOMMENDED') },
+  HOT: { records: [], page: 1, hasMore: false, newCount: 0, loaded: false, request: null, loadMoreRequest: null, loadMoreError: '', scrollTop: storedScroll('HOT') },
+  RELATED: { records: [], page: 1, hasMore: true, newCount: 0, loaded: false, request: null, loadMoreRequest: null, loadMoreError: '', scrollTop: storedScroll('RELATED') }
 }
 
 function saveCurrentTabState(captureScroll = true) {
@@ -140,6 +176,7 @@ function saveCurrentTabState(captureScroll = true) {
   state.page = page.value
   state.hasMore = hasMore.value
   state.newCount = newCount.value
+  state.loadMoreError = loadMoreError.value
   state.loaded = state.loaded || (!loading.value && !error.value)
   if (captureScroll && feedContainer.value) state.scrollTop = feedContainer.value.scrollTop
   sessionStorage.setItem(`moment-feed-scroll-${tab.value}`, String(state.scrollTop))
@@ -148,7 +185,8 @@ function saveCurrentTabState(captureScroll = true) {
 async function restoreTabState(type) {
   const state = tabStates[type]
   error.value = ''
-  loadingMore.value = false
+  loadingMore.value = Boolean(state.loadMoreRequest)
+  loadMoreError.value = state.loadMoreError
   if (state.loaded) {
     feed.value = state.records
     page.value = state.page
@@ -174,19 +212,26 @@ async function restoreTabState(type) {
 async function loadFeed() {
   const requestedTab = tab.value
   const requestedPage = page.value
+  const state = tabStates[requestedTab]
   error.value = ''
+  loadMoreError.value = ''
+  state.loadMoreError = ''
+  loading.value = true
+  let request
   try {
     const role = JSON.parse(localStorage.getItem('user') || '{}')?.role
-    const res = await getMoments({
-      feed: requestedTab,
-      page: requestedPage,
-      pageSize: 20,
-      consumeExposure: role === 'CUSTOMER'
-    })
-    const records = res.records || []
-    const state = tabStates[requestedTab]
+    request = state.request || (state.request = requestedTab === 'HOT'
+      ? getHotMoments(10)
+      : getMoments({
+          feed: requestedTab,
+          page: requestedPage,
+          pageSize: FEED_PAGE_SIZE,
+          consumeExposure: role === 'CUSTOMER'
+        }))
+    const res = await request
+    const records = Array.isArray(res) ? res : (res.records || [])
     state.records = records
-    state.hasMore = res.hasMore !== false
+    state.hasMore = requestedTab !== 'HOT' && res.hasMore !== false
     state.page = requestedPage
     state.newCount = 0
     state.loaded = true
@@ -195,20 +240,43 @@ async function loadFeed() {
     hasMore.value = state.hasMore
     newCount.value = 0
     scheduleVisibleReadCheck()
-  } catch (e) { if (tab.value === requestedTab) error.value = e.message }
-  finally { if (tab.value === requestedTab) loading.value = false }
+  } catch (e) {
+    if (tab.value === requestedTab) error.value = e?.message || '动态加载失败，请稍后重试'
+  }
+  finally {
+    if (state.request === request) state.request = null
+    if (tab.value === requestedTab) loading.value = false
+  }
 }
 
-async function loadMore() {
-  if (!hasMore.value || loadingMore.value) return
+async function refreshFeed() {
+  const state = tabStates[tab.value]
+  page.value = 1
+  state.page = 1
+  await loadFeed()
+  if (error.value) return
+  state.scrollTop = 0
+  await nextTick()
+  if (feedContainer.value) feedContainer.value.scrollTop = 0
+}
+
+async function loadMore(force = false) {
+  if (tab.value === 'HOT' || !hasMore.value || loadingMore.value || error.value || (!force && loadMoreError.value)) return
   const requestedTab = tab.value
+  const state = tabStates[requestedTab]
+  if (state.loadMoreRequest) return
   const nextPage = page.value + 1
+  loadMoreError.value = ''
+  state.loadMoreError = ''
   loadingMore.value = true
+  let request
   try {
-    const res = await getMoments({ feed: requestedTab, page: nextPage, pageSize: 20 })
+    request = getMoments({ feed: requestedTab, page: nextPage, pageSize: FEED_PAGE_SIZE })
+    state.loadMoreRequest = request
+    const res = await request
     const records = res.records || []
-    const state = tabStates[requestedTab]
-    state.records.push(...records)
+    const existingIds = new Set(state.records.map(item => item.id))
+    state.records.push(...records.filter(item => !existingIds.has(item.id)))
     state.hasMore = res.hasMore !== false
     state.page = nextPage
     if (tab.value !== requestedTab) return
@@ -216,8 +284,14 @@ async function loadMore() {
     hasMore.value = state.hasMore
     page.value = nextPage
     scheduleVisibleReadCheck()
-  } catch { }
-  finally { if (tab.value === requestedTab) loadingMore.value = false }
+  } catch (e) {
+    state.loadMoreError = e?.message || '加载更多动态失败'
+    if (tab.value === requestedTab) loadMoreError.value = state.loadMoreError
+  }
+  finally {
+    if (state.loadMoreRequest === request) state.loadMoreRequest = null
+    if (tab.value === requestedTab) loadingMore.value = false
+  }
 }
 
 async function switchTab(t) {
@@ -412,7 +486,7 @@ async function checkForNewRelatedMoments() {
     return
   }
   try {
-    const res = await getMoments({ feed: 'RELATED', page: 1, pageSize: 20, consumeExposure: false })
+    const res = await getMoments({ feed: 'RELATED', page: 1, pageSize: FEED_PAGE_SIZE, consumeExposure: false })
     const visibleIds = new Set(feed.value.map(item => item.id))
     newCount.value = (res.records || []).filter(item => !visibleIds.has(item.id)).length
   } catch { }
@@ -486,8 +560,47 @@ onUnmounted(() => {
 .feed-list { min-height: 0; flex: 1; overflow-y: auto; overscroll-behavior: contain; }
 .error-wrap { min-height: 20vh; display: flex; align-items: center; justify-content: center; }
 
-.feed-loading { text-align: center; padding: 16px; color: var(--color-text-muted); font-size: 13px; }
+.feed-refresh-status {
+  position: absolute; top: 66px; left: 50%; z-index: 9; transform: translateX(-50%);
+  min-height: 34px; display: inline-flex; align-items: center; gap: 7px;
+  padding: 7px 12px; border: 1px solid #e4e6e9; border-radius: 6px;
+  background: rgba(255, 255, 255, .96); box-shadow: 0 3px 12px rgba(32, 33, 36, .12);
+  color: #4c5158; font-size: 13px; font-weight: 600;
+}
+.feed-refresh-status svg,
+.feed-more-status svg { color: var(--color-primary); animation: feed-spin .85s linear infinite; }
+.feed-inline-error {
+  min-height: 48px; display: flex; align-items: center; gap: 8px;
+  margin: 10px 12px; padding: 9px 11px; border: 1px solid #f0c5bd; border-radius: 6px;
+  background: #fff7f5; color: #9a3e31; font-size: 13px;
+}
+.feed-inline-error span { min-width: 0; flex: 1; }
+.feed-inline-error button,
+.feed-more-error button {
+  min-height: 30px; display: inline-flex; flex: 0 0 auto; align-items: center; justify-content: center; gap: 5px;
+  padding: 5px 9px; border: 1px solid currentColor; border-radius: 5px; background: #fff;
+  color: inherit; font-size: 12px; font-weight: 700; cursor: pointer;
+}
+.feed-more-status,
+.feed-more-error {
+  min-height: 58px; display: flex; align-items: center; justify-content: center; gap: 8px;
+  padding: 12px 20px; font-size: 13px;
+}
+.feed-more-status { color: #555b63; font-weight: 600; }
+.feed-more-error { color: #a04436; }
 .feed-end { text-align: center; padding: 20px; color: var(--color-text-light); font-size: 13px; }
+@keyframes feed-spin { to { transform: rotate(360deg); } }
+@media (prefers-reduced-motion: reduce) {
+  .feed-refresh-status svg,
+  .feed-more-status svg { animation-duration: 1.8s; }
+}
+
+@media (max-width: 480px) {
+  .feed-tabs { gap: 2px; padding-inline: 6px; }
+  .feed-tab { min-width: 54px; padding-inline: 8px; }
+  .feed-actions { gap: 0; }
+  .feed-icon-btn { width: 36px; }
+}
 
 /* Modals */
 .modal-overlay {

@@ -8,6 +8,7 @@ public final class ErrorCode {
     public static final int CONFLICT = 409;
     public static final int PAYLOAD_TOO_LARGE = 413;
     public static final int UNSUPPORTED_MEDIA_TYPE = 415;
+    public static final int TOO_MANY_REQUESTS = 429;
     public static final int SERVER_ERROR = 500;
 
     private ErrorCode() {

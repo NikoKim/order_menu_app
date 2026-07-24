@@ -1,5 +1,6 @@
 package com.order.menu.websocket;
 
+import com.order.menu.common.transaction.AfterCommitExecutor;
 import com.order.menu.module.family.entity.FamilyMember;
 import com.order.menu.module.feedback.entity.Feedback;
 import com.order.menu.module.order.entity.Order;
@@ -11,14 +12,16 @@ import java.util.Map;
 @Service
 @RequiredArgsConstructor
 public class WsPushService {
-    private final WsSessionRegistry registry;
+    private final WsEventTransport transport;
+    private final WsInstanceIdentity instanceIdentity;
+    private final AfterCommitExecutor afterCommitExecutor;
 
     public void pushToShop(Long shopId, String module, String action, Map<String, Object> data) {
         if (shopId == null) {
             return;
         }
 
-        registry.sendToShop(shopId, WsMessage.of(module, action, data));
+        publish(WsTargetType.SHOP, shopId, module, action, data);
     }
 
     public void pushToCustomer(Long customerUserId, String module, String action, Map<String, Object> data) {
@@ -26,14 +29,21 @@ public class WsPushService {
             return;
         }
 
-        registry.sendToCustomer(customerUserId, WsMessage.of(module, action, data));
+        publish(WsTargetType.CUSTOMER, customerUserId, module, action, data);
     }
 
     public void pushToUser(Long userId, String module, String action, Map<String, Object> data) {
         if (userId == null) {
             return;
         }
-        registry.sendToUser(userId, WsMessage.of(module, action, data));
+        publish(WsTargetType.USER, userId, module, action, data);
+    }
+
+    private void publish(WsTargetType targetType, Long targetId, String module, String action,
+                         Map<String, Object> data) {
+        WsEvent event = WsEvent.create(targetType, targetId, WsMessage.of(module, action, data),
+                instanceIdentity.value());
+        afterCommitExecutor.execute(() -> transport.publish(event));
     }
 
     public void pushShopBadgeChanged(Long shopId, String reason) {

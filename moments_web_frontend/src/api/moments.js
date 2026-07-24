@@ -8,6 +8,10 @@ export function getMoments(params = {}) {
   return client.get('/moments', { params })
 }
 
+export function getHotMoments(limit = 10) {
+  return client.get('/moments/hot', { params: { limit } })
+}
+
 export function getMomentDetail(id) {
   return client.get(`/moments/${id}`)
 }

@@ -235,7 +235,10 @@ class _ChatDetailPageState extends State<ChatDetailPage>
   StreamSubscription? _subscription;
   StreamSubscription<bool>? _connectionSubscription;
   bool _sending = false;
+  bool _isLoadingMore = false;
+  bool _markingRead = false;
   _ChatDetailData? _cachedData;
+  int? _lastMarkedReadId;
   int _renderedMessageCount = -1;
   ChatMessage? _quotedMessage;
   int? _highlightedMessageId;
@@ -246,8 +249,15 @@ class _ChatDetailPageState extends State<ChatDetailPage>
   ChatMessage? _latestUnreadEssence;
   int? _dismissedEssenceId;
   OverlayEntry? _actionOverlay;
+  Timer? _presenceHeartbeatTimer;
+  Timer? _typingPollTimer;
+  Timer? _typingDebounceTimer;
+  Timer? _typingIdleTimer;
+  Timer? _typingRefreshTimer;
+  bool _typingPublished = false;
+  Set<int> _remoteTypingUserIds = const {};
   int _bottomScrollRequest = 0;
-  final _scrollCoordinator = ChatScrollCoordinator();
+  ChatScrollCoordinator _scrollCoordinator = ChatScrollCoordinator();
   late final ChatKeyboardInsetSettler _keyboardInsetSettler;
 
   @override
@@ -262,7 +272,12 @@ class _ChatDetailPageState extends State<ChatDetailPage>
       },
     );
     _input.addListener(_keepLatestAboveComposer);
+    _input.addListener(_handleTypingInputChanged);
+    _itemPositionsListener.itemPositions.addListener(
+      _onMessagePositionsChanged,
+    );
     _future = _load();
+    _startPresenceTracking();
     if (widget.conversation.isDirect &&
         widget.conversation.directUserId != null) {
       _loadBlockState();
@@ -280,6 +295,12 @@ class _ChatDetailPageState extends State<ChatDetailPage>
                 'MESSAGE_DELETED',
               }.contains(event.action) &&
               id == widget.conversation.id) {
+            if (event.action == 'MESSAGE_DELETED') {
+              final messageId = int.tryParse(
+                '${event.data['messageId'] ?? ''}',
+              );
+              if (messageId != null) _removeCachedMessage(messageId);
+            }
             _reload();
           }
           if (event.action.startsWith('ESSENCE_') &&
@@ -292,6 +313,31 @@ class _ChatDetailPageState extends State<ChatDetailPage>
         .listen((_) => _reload());
   }
 
+  @override
+  void didUpdateWidget(covariant ChatDetailPage oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.conversation.id == widget.conversation.id) return;
+    _stopTyping(conversationId: oldWidget.conversation.id);
+    _remoteTypingUserIds = const {};
+    _messageRequests.begin();
+    _cachedData = null;
+    _renderedMessageCount = -1;
+    _isLoadingMore = false;
+    _lastMarkedReadId = null;
+    _latestUnreadEssence = null;
+    _dismissedEssenceId = null;
+    _scrollCoordinator = ChatScrollCoordinator();
+    _future = _load();
+    if (widget.conversation.isDirect &&
+        widget.conversation.directUserId != null) {
+      _loadBlockState();
+    } else {
+      _blockState = null;
+      _loadLatestEssence();
+    }
+    _pollTypingUsers();
+  }
+
   void _keepLatestAboveComposer() {
     if (_inputFocus.hasFocus && !_scrollCoordinator.isNavigatingToQuote) {
       _scheduleScrollToBottom(animate: false);
@@ -301,6 +347,127 @@ class _ChatDetailPageState extends State<ChatDetailPage>
   @override
   void didChangeMetrics() {
     if (_inputFocus.hasFocus) _keyboardInsetSettler.schedule();
+  }
+
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    if (state == AppLifecycleState.resumed) {
+      _sendPresenceHeartbeat();
+      _pollTypingUsers();
+    } else if (state == AppLifecycleState.inactive ||
+        state == AppLifecycleState.paused ||
+        state == AppLifecycleState.detached) {
+      _stopTyping();
+    }
+  }
+
+  void _startPresenceTracking() {
+    _sendPresenceHeartbeat();
+    _pollTypingUsers();
+    _presenceHeartbeatTimer?.cancel();
+    _presenceHeartbeatTimer = Timer.periodic(
+      const Duration(seconds: 40),
+      (_) => _sendPresenceHeartbeat(),
+    );
+    _typingPollTimer?.cancel();
+    _typingPollTimer = Timer.periodic(
+      const Duration(seconds: 3),
+      (_) => _pollTypingUsers(),
+    );
+  }
+
+  void _sendPresenceHeartbeat() {
+    unawaited(shopApi.heartbeatPresence().catchError((_) {}));
+  }
+
+  Future<void> _pollTypingUsers() async {
+    final conversationId = widget.conversation.id;
+    try {
+      final users = await shopApi.fetchTypingUsers(conversationId);
+      if (!mounted || widget.conversation.id != conversationId) return;
+      if (_sameUserIds(users, _remoteTypingUserIds)) return;
+      setState(() => _remoteTypingUserIds = users);
+    } catch (_) {
+      if (mounted &&
+          widget.conversation.id == conversationId &&
+          _remoteTypingUserIds.isNotEmpty) {
+        setState(() => _remoteTypingUserIds = const {});
+      }
+    }
+  }
+
+  bool _sameUserIds(Set<int> left, Set<int> right) =>
+      left.length == right.length && left.every(right.contains);
+
+  void _handleTypingInputChanged() {
+    if (_input.text.trim().isEmpty ||
+        !widget.conversation.isActive ||
+        _blockState?.blockedByMe == true) {
+      _stopTyping();
+      return;
+    }
+    _typingIdleTimer?.cancel();
+    _typingIdleTimer = Timer(const Duration(seconds: 2), () => _stopTyping());
+    if (!_typingPublished && _typingDebounceTimer == null) {
+      _typingDebounceTimer = Timer(const Duration(milliseconds: 250), () {
+        _typingDebounceTimer = null;
+        if (_input.text.trim().isNotEmpty && mounted) _publishTyping();
+      });
+    }
+  }
+
+  void _publishTyping() {
+    _typingPublished = true;
+    final conversationId = widget.conversation.id;
+    unawaited(
+      shopApi.setConversationTyping(conversationId, true).catchError((_) {}),
+    );
+    _typingRefreshTimer ??= Timer.periodic(const Duration(seconds: 4), (_) {
+      if (!_typingPublished || _input.text.trim().isEmpty) return;
+      unawaited(
+        shopApi.setConversationTyping(conversationId, true).catchError((_) {}),
+      );
+    });
+  }
+
+  void _stopTyping({int? conversationId}) {
+    _typingDebounceTimer?.cancel();
+    _typingDebounceTimer = null;
+    _typingIdleTimer?.cancel();
+    _typingIdleTimer = null;
+    _typingRefreshTimer?.cancel();
+    _typingRefreshTimer = null;
+    if (!_typingPublished) return;
+    _typingPublished = false;
+    unawaited(
+      shopApi
+          .setConversationTyping(
+            conversationId ?? widget.conversation.id,
+            false,
+          )
+          .catchError((_) {}),
+    );
+  }
+
+  String get _typingLabel {
+    if (_remoteTypingUserIds.isEmpty) return '';
+    if (widget.conversation.isDirect) {
+      return '${widget.conversation.directUserNickname ?? '对方'}正在输入...';
+    }
+    final names = <String>[];
+    final messages = _cachedData?.messages.messages ?? const <ChatMessage>[];
+    for (final userId in _remoteTypingUserIds) {
+      final match = messages.reversed.where(
+        (message) => message.senderUserId == userId,
+      );
+      final name = match.isEmpty ? null : match.first.senderNickname;
+      if (name != null && name.trim().isNotEmpty) names.add(name.trim());
+    }
+    if (names.isEmpty) return '有人正在输入...';
+    final visible = names.take(2).join('、');
+    return _remoteTypingUserIds.length > 2
+        ? '$visible 等人正在输入...'
+        : '$visible 正在输入...';
   }
 
   Future<_ChatDetailData> _load() async {
@@ -316,7 +483,7 @@ class _ChatDetailPageState extends State<ChatDetailPage>
               .catchError((_) => null);
     try {
       final data = _ChatDetailData(
-        messages: await messagesFuture,
+        messages: _mergeLatestPage(_cachedData?.messages, await messagesFuture),
         currentUser: await currentUserFuture,
         shop: await shopFuture,
         group: await groupFuture,
@@ -330,6 +497,179 @@ class _ChatDetailPageState extends State<ChatDetailPage>
       final cached = _cachedData;
       if (cached != null) return cached;
       rethrow;
+    }
+  }
+
+  ChatMessages _mergeLatestPage(ChatMessages? current, ChatMessages latest) {
+    if (current == null || !latest.hasMore || latest.nextBeforeId == null) {
+      return latest;
+    }
+    final boundary = latest.nextBeforeId!;
+    final history = current.messages
+        .where((message) => message.id < boundary)
+        .toList();
+    if (history.isEmpty) return latest;
+    return ChatMessages(
+      conversation: latest.conversation,
+      messages: _mergeMessages(history, latest.messages),
+      hasMore: current.hasMore,
+      nextBeforeId: current.nextBeforeId,
+    );
+  }
+
+  List<ChatMessage> _mergeMessages(
+    Iterable<ChatMessage> older,
+    Iterable<ChatMessage> newer,
+  ) {
+    final byId = <int, ChatMessage>{};
+    for (final message in older) {
+      byId[message.id] = message;
+    }
+    for (final message in newer) {
+      byId[message.id] = message;
+    }
+    final merged = byId.values.toList()
+      ..sort((left, right) => left.id.compareTo(right.id));
+    return merged;
+  }
+
+  void _onMessagePositionsChanged() {
+    final cached = _cachedData;
+    if (cached == null ||
+        _isLoadingMore ||
+        !cached.messages.hasMore ||
+        cached.messages.nextBeforeId == null ||
+        cached.messages.messages.isEmpty) {
+      return;
+    }
+    final positions = _itemPositionsListener.itemPositions.value;
+    if (positions.isEmpty) return;
+    final oldestVisibleIndex = positions
+        .map((position) => position.index)
+        .reduce((left, right) => left > right ? left : right);
+    if (oldestVisibleIndex >= cached.messages.messages.length - 3) {
+      unawaited(_loadMore());
+    }
+  }
+
+  Future<void> _loadMore() async {
+    final cached = _cachedData;
+    final beforeId = cached?.messages.nextBeforeId;
+    final conversationId = widget.conversation.id;
+    if (cached == null ||
+        beforeId == null ||
+        !cached.messages.hasMore ||
+        _isLoadingMore) {
+      return;
+    }
+    setState(() => _isLoadingMore = true);
+    try {
+      final page = await shopApi.fetchChatMessages(
+        conversationId,
+        beforeId: beforeId,
+      );
+      if (!mounted ||
+          widget.conversation.id != conversationId ||
+          conversationId != page.conversation.id) {
+        return;
+      }
+      final latestCached = _cachedData;
+      if (latestCached == null) return;
+      final updated = _ChatDetailData(
+        messages: ChatMessages(
+          conversation: latestCached.messages.conversation,
+          messages: _mergeMessages(
+            page.messages,
+            latestCached.messages.messages,
+          ),
+          hasMore: page.hasMore,
+          nextBeforeId: page.nextBeforeId,
+        ),
+        currentUser: latestCached.currentUser,
+        shop: latestCached.shop,
+        group: latestCached.group,
+      );
+      // The list is reversed, so prepending older chronological messages keeps
+      // every already-visible message at the same visual index.
+      _cachedData = updated;
+      setState(() => _future = Future.value(updated));
+    } catch (error) {
+      if (mounted && widget.conversation.id == conversationId) {
+        AppNotice.show(context, '历史消息加载失败，请稍后重试');
+      }
+    } finally {
+      if (mounted && widget.conversation.id == conversationId) {
+        setState(() => _isLoadingMore = false);
+      }
+    }
+  }
+
+  void _removeCachedMessage(int messageId) {
+    final cached = _cachedData;
+    if (cached == null ||
+        !cached.messages.messages.any((message) => message.id == messageId)) {
+      return;
+    }
+    final updated = _ChatDetailData(
+      messages: ChatMessages(
+        conversation: cached.messages.conversation,
+        messages: cached.messages.messages
+            .where((message) => message.id != messageId)
+            .toList(),
+        hasMore: cached.messages.hasMore,
+        nextBeforeId: cached.messages.nextBeforeId,
+      ),
+      currentUser: cached.currentUser,
+      shop: cached.shop,
+      group: cached.group,
+    );
+    _cachedData = updated;
+    if (mounted) setState(() => _future = Future.value(updated));
+  }
+
+  void _scheduleMarkRead(int? latestMessageId) {
+    if (latestMessageId == null ||
+        _markingRead ||
+        (_lastMarkedReadId != null && latestMessageId <= _lastMarkedReadId!)) {
+      return;
+    }
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted) return;
+      final current = _cachedData?.messages.messages;
+      if (current == null ||
+          current.isEmpty ||
+          current.last.id != latestMessageId) {
+        return;
+      }
+      unawaited(_markConversationRead(widget.conversation.id, latestMessageId));
+    });
+  }
+
+  Future<void> _markConversationRead(int conversationId, int messageId) async {
+    if (_markingRead) return;
+    _markingRead = true;
+    var succeeded = false;
+    try {
+      await shopApi.markConversationRead(conversationId, messageId);
+      succeeded = true;
+      if (mounted && widget.conversation.id == conversationId) {
+        _lastMarkedReadId = messageId;
+      }
+    } catch (_) {
+      // A later refresh or incoming message will retry without blocking chat.
+    } finally {
+      _markingRead = false;
+      if (mounted && (succeeded || widget.conversation.id != conversationId)) {
+        final currentConversationId = widget.conversation.id;
+        final messages = _cachedData?.messages.messages;
+        final latest = messages == null || messages.isEmpty
+            ? null
+            : messages.last.id;
+        if (latest != null &&
+            (_lastMarkedReadId == null || latest > _lastMarkedReadId!)) {
+          unawaited(_markConversationRead(currentConversationId, latest));
+        }
+      }
     }
   }
 
@@ -351,6 +691,7 @@ class _ChatDetailPageState extends State<ChatDetailPage>
       AppNotice.show(context, '请先取消拉黑后再发送消息');
       return;
     }
+    _stopTyping();
     setState(() => _sending = true);
     try {
       final sent = _pendingImagePath == null
@@ -379,6 +720,8 @@ class _ChatDetailPageState extends State<ChatDetailPage>
           messages: ChatMessages(
             conversation: cached.messages.conversation,
             messages: messages,
+            hasMore: cached.messages.hasMore,
+            nextBeforeId: cached.messages.nextBeforeId,
           ),
           currentUser: cached.currentUser,
           shop: cached.shop,
@@ -407,11 +750,14 @@ class _ChatDetailPageState extends State<ChatDetailPage>
   }
 
   Future<void> _loadLatestEssence() async {
+    final conversationId = widget.conversation.id;
     try {
       final message = await shopApi.fetchLatestUnreadChatEssence(
-        widget.conversation.id,
+        conversationId,
       );
-      if (mounted && message?.id != _dismissedEssenceId) {
+      if (mounted &&
+          widget.conversation.id == conversationId &&
+          message?.id != _dismissedEssenceId) {
         setState(() => _latestUnreadEssence = message);
       }
     } catch (_) {}
@@ -475,7 +821,9 @@ class _ChatDetailPageState extends State<ChatDetailPage>
     if (userId == null) return;
     try {
       final state = await shopApi.fetchChatBlock(userId);
-      if (mounted) setState(() => _blockState = state);
+      if (mounted && widget.conversation.directUserId == userId) {
+        setState(() => _blockState = state);
+      }
     } catch (_) {}
   }
 
@@ -650,7 +998,14 @@ class _ChatDetailPageState extends State<ChatDetailPage>
     _subscription?.cancel();
     _connectionSubscription?.cancel();
     _highlightTimer?.cancel();
+    _presenceHeartbeatTimer?.cancel();
+    _typingPollTimer?.cancel();
+    _stopTyping();
     _input.removeListener(_keepLatestAboveComposer);
+    _input.removeListener(_handleTypingInputChanged);
+    _itemPositionsListener.itemPositions.removeListener(
+      _onMessagePositionsChanged,
+    );
     _input.dispose();
     _inputFocus.dispose();
     super.dispose();
@@ -753,6 +1108,7 @@ class _ChatDetailPageState extends State<ChatDetailPage>
         if (_scrollCoordinator.observeLatestMessage(latestMessageId)) {
           _scheduleScrollToBottom(animate: !initialRender);
         }
+        _scheduleMarkRead(latestMessageId);
         return Column(
           children: [
             if (_latestUnreadEssence != null)
@@ -799,32 +1155,52 @@ class _ChatDetailPageState extends State<ChatDetailPage>
                 behavior: HitTestBehavior.translucent,
                 onPointerDown: (_) => _dismissComposerInput(),
                 child: _MessageList(
-                messages: data.messages.messages,
-                currentUser: data.currentUser,
-                conversation: conversation,
-                group: data.group,
-                shop: data.shop,
-                controller: _itemScrollController,
-                positionsListener: _itemPositionsListener,
-                onLongPress: (message, mine, position) => _messageActions(
-                  message,
-                  mine,
-                  position,
-                  canManageEssence:
-                      !conversation.isDirect &&
-                      (data.group?.members.any(
-                            (member) =>
-                                member.userId == data.currentUser.id &&
-                                member.role == 'OWNER',
-                          ) ==
-                          true),
+                  messages: data.messages.messages,
+                  currentUser: data.currentUser,
+                  conversation: conversation,
+                  group: data.group,
+                  shop: data.shop,
+                  controller: _itemScrollController,
+                  positionsListener: _itemPositionsListener,
+                  onLongPress: (message, mine, position) => _messageActions(
+                    message,
+                    mine,
+                    position,
+                    canManageEssence:
+                        !conversation.isDirect &&
+                        (data.group?.members.any(
+                              (member) =>
+                                  member.userId == data.currentUser.id &&
+                                  member.role == 'OWNER',
+                            ) ==
+                            true),
+                  ),
+                  onQuoteTap: _jumpToQuote,
+                  onReEdit: (message) =>
+                      setState(() => _input.text = message.content),
+                  highlightedMessageId: _highlightedMessageId,
+                  isLoadingMore: _isLoadingMore,
                 ),
-                onQuoteTap: _jumpToQuote,
-                onReEdit: (message) =>
-                    setState(() => _input.text = message.content),
-                highlightedMessageId: _highlightedMessageId,
               ),
-              ),
+            ),
+            AnimatedSize(
+              duration: const Duration(milliseconds: 160),
+              child: _remoteTypingUserIds.isEmpty
+                  ? const SizedBox.shrink()
+                  : Container(
+                      width: double.infinity,
+                      color: Colors.white,
+                      padding: const EdgeInsets.fromLTRB(52, 5, 12, 3),
+                      child: Text(
+                        _typingLabel,
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: const TextStyle(
+                          color: Color(0xFF6F6F6F),
+                          fontSize: 12,
+                        ),
+                      ),
+                    ),
             ),
             if (_quotedMessage != null)
               Material(
@@ -1102,6 +1478,7 @@ class _MessageList extends StatelessWidget {
     required this.onQuoteTap,
     required this.onReEdit,
     required this.highlightedMessageId,
+    required this.isLoadingMore,
   });
 
   final List<ChatMessage> messages;
@@ -1116,6 +1493,7 @@ class _MessageList extends StatelessWidget {
   final void Function(int messageId) onQuoteTap;
   final void Function(ChatMessage message) onReEdit;
   final int? highlightedMessageId;
+  final bool isLoadingMore;
 
   @override
   Widget build(BuildContext context) {
@@ -1125,79 +1503,104 @@ class _MessageList extends StatelessWidget {
       child: SizedBox(
         width: double.infinity,
         child: ScrollablePositionedList.builder(
-            itemScrollController: controller,
-            itemPositionsListener: positionsListener,
-            reverse: true,
-            shrinkWrap: true,
-            padding: const EdgeInsets.fromLTRB(12, 16, 12, 8),
-            itemCount: messages.length,
-            itemBuilder: (context, index) {
-              final messageIndex = chatVisualIndexFromChronologicalIndex(
-                index,
-                messages.length,
+          itemScrollController: controller,
+          itemPositionsListener: positionsListener,
+          reverse: true,
+          shrinkWrap: true,
+          padding: const EdgeInsets.fromLTRB(12, 16, 12, 8),
+          itemCount: messages.length + (isLoadingMore ? 1 : 0),
+          itemBuilder: (context, index) {
+            if (index == messages.length) {
+              return const Padding(
+                padding: EdgeInsets.symmetric(vertical: 16),
+                child: Center(
+                  child: SizedBox.square(
+                    dimension: 20,
+                    child: CircularProgressIndicator(strokeWidth: 2),
+                  ),
+                ),
               );
-              final message = messages[messageIndex];
-              final previous = messageIndex == 0 ? null : messages[messageIndex - 1];
-              final sentAt = message.sentAt;
-              final previousAt = previous?.sentAt;
-              final isMine = message.senderUserId == currentUser.id;
-              final sender = _senderFor(message, isMine);
-              if (message.isSystem || message.isRecalled) {
-                return Column(
-                  children: [
-                    if (sentAt != null && shouldShowChatTimestamp(sentAt, previousAt))
-                      _Timestamp(value: sentAt),
-                    Padding(
-                      padding: const EdgeInsets.only(bottom: 12),
-                      child: GestureDetector(
-                        onLongPressStart: message.isRecalled
-                            ? (details) =>
-                                  onLongPress(message, isMine, details.globalPosition)
+            }
+            final messageIndex = chatVisualIndexFromChronologicalIndex(
+              index,
+              messages.length,
+            );
+            final message = messages[messageIndex];
+            final previous = messageIndex == 0
+                ? null
+                : messages[messageIndex - 1];
+            final sentAt = message.sentAt;
+            final previousAt = previous?.sentAt;
+            final isMine = message.senderUserId == currentUser.id;
+            final sender = _senderFor(message, isMine);
+            if (message.isSystem || message.isRecalled) {
+              return Column(
+                children: [
+                  if (sentAt != null &&
+                      shouldShowChatTimestamp(sentAt, previousAt))
+                    _Timestamp(value: sentAt),
+                  Padding(
+                    padding: const EdgeInsets.only(bottom: 12),
+                    child: GestureDetector(
+                      onLongPressStart: message.isRecalled
+                          ? (details) => onLongPress(
+                              message,
+                              isMine,
+                              details.globalPosition,
+                            )
+                          : null,
+                      child: InkWell(
+                        onTap:
+                            isMine &&
+                                !message.isSystem &&
+                                message.type == 'TEXT'
+                            ? () => onReEdit(message)
                             : null,
-                        child: InkWell(
-                          onTap: isMine && !message.isSystem && message.type == 'TEXT'
-                              ? () => onReEdit(message)
-                              : null,
-                          child: Text(
-                            message.isRecalled
-                                ? (isMine
-                                      ? '撤回一条消息${message.type == 'TEXT' ? '，重新编辑' : ''}'
-                                      : '${message.senderNickname ?? '对方'}撤回一条消息')
-                                : message.content,
-                            textAlign: TextAlign.center,
-                            style: const TextStyle(fontSize: 12, color: Colors.grey),
+                        child: Text(
+                          message.isRecalled
+                              ? (isMine
+                                    ? '撤回一条消息${message.type == 'TEXT' ? '，重新编辑' : ''}'
+                                    : '${message.senderNickname ?? '对方'}撤回一条消息')
+                              : message.content,
+                          textAlign: TextAlign.center,
+                          style: const TextStyle(
+                            fontSize: 12,
+                            color: Colors.grey,
                           ),
                         ),
                       ),
                     ),
-                  ],
-                );
-              }
-              return Column(
-                children: [
-                  if (sentAt != null && shouldShowChatTimestamp(sentAt, previousAt))
-                    _Timestamp(value: sentAt),
-                  _MessageBubble(
-                    message: message,
-                    isMine: isMine,
-                    senderName: conversation.isDirect ? null : sender.name,
-                    avatarUrl: sender.avatarUrl,
-                    onLongPress: (position) => onLongPress(message, isMine, position),
-                    onQuoteTap: message.quotedMessageId == null
-                        ? null
-                        : () => onQuoteTap(message.quotedMessageId!),
-                    onReEdit:
-                        isMine &&
-                            message.isRecalled &&
-                            !message.isDishShare &&
-                            !message.isOrderShare
-                        ? () => onReEdit(message)
-                        : null,
-                    highlighted: highlightedMessageId == message.id,
                   ),
                 ],
               );
-            },
+            }
+            return Column(
+              children: [
+                if (sentAt != null &&
+                    shouldShowChatTimestamp(sentAt, previousAt))
+                  _Timestamp(value: sentAt),
+                _MessageBubble(
+                  message: message,
+                  isMine: isMine,
+                  senderName: conversation.isDirect ? null : sender.name,
+                  avatarUrl: sender.avatarUrl,
+                  onLongPress: (position) =>
+                      onLongPress(message, isMine, position),
+                  onQuoteTap: message.quotedMessageId == null
+                      ? null
+                      : () => onQuoteTap(message.quotedMessageId!),
+                  onReEdit:
+                      isMine &&
+                          message.isRecalled &&
+                          !message.isDishShare &&
+                          !message.isOrderShare
+                      ? () => onReEdit(message)
+                      : null,
+                  highlighted: highlightedMessageId == message.id,
+                ),
+              ],
+            );
+          },
         ),
       ),
     );

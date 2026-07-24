@@ -40,3 +40,9 @@ moment_dist/
 .env.local
 .vite/
 *.log
+
+# redis
+.env.redis
+backend/scripts/
+.env.redis.example
+docker-compose.redis.yml

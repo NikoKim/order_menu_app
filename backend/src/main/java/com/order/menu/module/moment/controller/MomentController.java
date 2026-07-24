@@ -62,6 +62,7 @@ public class MomentController {
     return ResponseEntity.ok().header(HttpHeaders.CACHE_CONTROL,"public, max-age=300").contentType(MediaType.TEXT_HTML).body(html);
   }
   @GetMapping("/{id}") public ApiResponse<MomentDtos.MomentResponse> detail(@PathVariable Long id){return ApiResponse.success(service.detail(uid(),id));}
+  @GetMapping("/hot") public ApiResponse<List<MomentDtos.MomentResponse>> hot(@RequestParam(defaultValue="10")long limit){return ApiResponse.success(service.hot(uid(),limit));}
   @GetMapping("/{id}/availability") public ApiResponse<MomentDtos.AvailabilityResponse> availability(@PathVariable Long id){return ApiResponse.success(service.availability(uid(),id));}
   @PostMapping public ApiResponse<MomentDtos.MomentResponse> create(@Valid @RequestBody MomentDtos.UpsertRequest r){return ApiResponse.success(service.create(uid(),r));}
   @PutMapping("/{id}") public ApiResponse<MomentDtos.MomentResponse> update(@PathVariable Long id,@Valid @RequestBody MomentDtos.UpsertRequest r){return ApiResponse.success(service.update(uid(),id,r));}
