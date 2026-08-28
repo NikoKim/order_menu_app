@@ -1,4 +1,9 @@
+import 'dart:async';
+
+import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
+import 'package:photo_view/photo_view.dart';
+import 'package:photo_view/photo_view_gallery.dart';
 
 typedef MomentImageUrlResolver = String Function(String url);
 
@@ -95,11 +100,14 @@ Future<void> openMomentImageViewer(
   required MomentImageUrlResolver resolveUrl,
   Map<String, String>? headers,
 }) async {
+  if (images.isEmpty) return;
+  final requestedImage = images[initialIndex.clamp(0, images.length - 1)];
   final availableImages = images
       .where((image) => image.trim().isNotEmpty)
       .toList();
   if (availableImages.isEmpty) return;
-  final selectedIndex = initialIndex.clamp(0, availableImages.length - 1);
+  final requestedIndex = availableImages.indexOf(requestedImage);
+  final selectedIndex = requestedIndex < 0 ? 0 : requestedIndex;
 
   await showGeneralDialog<void>(
     context: context,
@@ -107,28 +115,11 @@ Future<void> openMomentImageViewer(
     barrierLabel: '关闭图片预览',
     barrierColor: const Color(0xCC000000),
     transitionDuration: const Duration(milliseconds: 160),
-    pageBuilder: (dialogContext, _, _) => Material(
-      key: const ValueKey('moment-image-viewer'),
-      type: MaterialType.transparency,
-      child: Stack(
-        children: [
-          Positioned.fill(
-            child: GestureDetector(
-              key: const ValueKey('moment-image-viewer-backdrop'),
-              behavior: HitTestBehavior.opaque,
-              onTap: () => Navigator.of(dialogContext).pop(),
-            ),
-          ),
-          SafeArea(
-            child: Center(
-              child: _ZoomableNetworkImage(
-                url: resolveUrl(availableImages[selectedIndex]),
-                headers: headers,
-              ),
-            ),
-          ),
-        ],
-      ),
+    pageBuilder: (dialogContext, _, _) => _MomentImageGallery(
+      images: availableImages,
+      initialIndex: selectedIndex,
+      resolveUrl: resolveUrl,
+      headers: headers,
     ),
     transitionBuilder: (_, animation, _, child) => FadeTransition(
       opacity: CurvedAnimation(parent: animation, curve: Curves.easeOut),
@@ -137,98 +128,169 @@ Future<void> openMomentImageViewer(
   );
 }
 
-class _ZoomableNetworkImage extends StatefulWidget {
-  const _ZoomableNetworkImage({required this.url, this.headers});
+class _MomentImageGallery extends StatefulWidget {
+  const _MomentImageGallery({
+    required this.images,
+    required this.initialIndex,
+    required this.resolveUrl,
+    this.headers,
+  });
 
-  final String url;
+  final List<String> images;
+  final int initialIndex;
+  final MomentImageUrlResolver resolveUrl;
   final Map<String, String>? headers;
 
   @override
-  State<_ZoomableNetworkImage> createState() => _ZoomableNetworkImageState();
+  State<_MomentImageGallery> createState() => _MomentImageGalleryState();
 }
 
-class _ZoomableNetworkImageState extends State<_ZoomableNetworkImage> {
-  double _scale = 1;
-  double _scaleAtStart = 1;
-  Offset _offset = Offset.zero;
-  Offset _offsetAtStart = Offset.zero;
-  Offset _focalPointAtStart = Offset.zero;
+class _MomentImageGalleryState extends State<_MomentImageGallery> {
+  late final PageController _pageController;
+  late int _currentIndex;
+  Timer? _singleTapTimer;
+  Offset? _pointerDown;
+  int _pointerCount = 0;
+  bool _pointerMoved = false;
+  bool _completingDoubleTap = false;
 
-  void _handleScaleStart(ScaleStartDetails details) {
-    _scaleAtStart = _scale;
-    _offsetAtStart = _offset;
-    _focalPointAtStart = details.localFocalPoint;
+  @override
+  void initState() {
+    super.initState();
+    _currentIndex = widget.initialIndex;
+    _pageController = PageController(initialPage: widget.initialIndex);
   }
 
-  void _handleScaleUpdate(ScaleUpdateDetails details) {
-    final nextScale = (_scaleAtStart * details.scale).clamp(1.0, 5.0);
-    setState(() {
-      _scale = nextScale;
-      _offset = nextScale == 1
-          ? Offset.zero
-          : _offsetAtStart + (details.localFocalPoint - _focalPointAtStart);
-    });
+  @override
+  void dispose() {
+    _singleTapTimer?.cancel();
+    _pageController.dispose();
+    super.dispose();
   }
 
-  void _handleDoubleTap() {
-    setState(() {
-      if (_scale > 1.01) {
-        _scale = 1;
-        _offset = Offset.zero;
-      } else {
-        _scale = 2.5;
+  void _onPointerDown(PointerDownEvent event) {
+    _pointerCount += 1;
+    if (_pointerCount > 1) {
+      _pointerMoved = true;
+      _singleTapTimer?.cancel();
+      _singleTapTimer = null;
+      return;
+    }
+    _pointerDown = event.position;
+    _pointerMoved = false;
+    _completingDoubleTap = _singleTapTimer != null;
+    _singleTapTimer?.cancel();
+    _singleTapTimer = null;
+  }
+
+  void _onPointerMove(PointerMoveEvent event) {
+    final origin = _pointerDown;
+    if (origin != null && (event.position - origin).distance > kTouchSlop) {
+      _pointerMoved = true;
+    }
+  }
+
+  void _onPointerUp(PointerUpEvent event) {
+    if (_pointerCount > 0) _pointerCount -= 1;
+    if (_pointerCount > 0) return;
+    final wasTap = !_pointerMoved && _pointerDown != null;
+    _pointerDown = null;
+    _pointerMoved = false;
+    if (!wasTap || _completingDoubleTap) {
+      _completingDoubleTap = false;
+      return;
+    }
+    _singleTapTimer = Timer(kDoubleTapTimeout, () {
+      _singleTapTimer = null;
+      if (mounted && ModalRoute.of(context)?.isCurrent == true) {
+        Navigator.of(context).pop();
       }
     });
   }
 
-  Matrix4 get _imageTransform => Matrix4.identity()
-    ..setEntry(0, 0, _scale)
-    ..setEntry(1, 1, _scale)
-    ..setEntry(0, 3, _offset.dx)
-    ..setEntry(1, 3, _offset.dy);
+  void _onPointerCancel(PointerCancelEvent event) {
+    _pointerCount = 0;
+    _pointerDown = null;
+    _pointerMoved = false;
+    _completingDoubleTap = false;
+  }
 
   @override
   Widget build(BuildContext context) {
-    final size = MediaQuery.sizeOf(context);
-    return GestureDetector(
-      key: const ValueKey('moment-image-zoom'),
-      behavior: HitTestBehavior.opaque,
-      onTap: () {},
-      onDoubleTap: _handleDoubleTap,
-      onScaleStart: _handleScaleStart,
-      onScaleUpdate: _handleScaleUpdate,
-      child: Transform(
-        alignment: Alignment.center,
-        transform: _imageTransform,
-        child: ConstrainedBox(
-          constraints: BoxConstraints(
-            maxWidth: size.width,
-            maxHeight: size.height * .9,
-          ),
-          child: Image.network(
-            widget.url,
-            headers: widget.headers,
-            fit: BoxFit.contain,
-            loadingBuilder: (_, child, progress) => progress == null
-                ? child
-                : const SizedBox(
+    return Material(
+      key: const ValueKey('moment-image-viewer'),
+      type: MaterialType.transparency,
+      child: Stack(
+        children: [
+          Positioned.fill(
+            child: Listener(
+              behavior: HitTestBehavior.opaque,
+              onPointerDown: _onPointerDown,
+              onPointerMove: _onPointerMove,
+              onPointerUp: _onPointerUp,
+              onPointerCancel: _onPointerCancel,
+              child: PhotoViewGallery.builder(
+                key: const ValueKey('moment-image-gallery'),
+                pageController: _pageController,
+                itemCount: widget.images.length,
+                scrollPhysics: const BouncingScrollPhysics(),
+                backgroundDecoration: const BoxDecoration(
+                  color: Colors.transparent,
+                ),
+                onPageChanged: (index) => setState(() => _currentIndex = index),
+                loadingBuilder: (_, _) => const Center(
+                  child: SizedBox(
                     width: 280,
                     height: 220,
                     child: SoftImageLoadingPlaceholder(),
                   ),
-            errorBuilder: (_, _, _) => const SizedBox(
-              width: 160,
-              height: 120,
-              child: Center(
-                child: Icon(
-                  Icons.broken_image_outlined,
-                  size: 44,
-                  color: Colors.white54,
+                ),
+                builder: (_, index) => PhotoViewGalleryPageOptions(
+                  key: ValueKey('moment-image-zoom-$index'),
+                  imageProvider: NetworkImage(
+                    widget.resolveUrl(widget.images[index]),
+                    headers: widget.headers,
+                  ),
+                  initialScale: PhotoViewComputedScale.contained,
+                  minScale: PhotoViewComputedScale.contained,
+                  maxScale: PhotoViewComputedScale.covered * 4,
+                  gestureDetectorBehavior: HitTestBehavior.opaque,
+                  errorBuilder: (_, _, _) => const Center(
+                    child: Icon(
+                      Icons.broken_image_outlined,
+                      size: 44,
+                      color: Colors.white54,
+                    ),
+                  ),
                 ),
               ),
             ),
           ),
-        ),
+          if (widget.images.length > 1)
+            Positioned(
+              left: 0,
+              right: 0,
+              bottom: MediaQuery.paddingOf(context).bottom + 22,
+              child: Center(
+                child: DecoratedBox(
+                  decoration: BoxDecoration(
+                    color: const Color(0x99000000),
+                    borderRadius: BorderRadius.circular(6),
+                  ),
+                  child: Padding(
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: 9,
+                      vertical: 5,
+                    ),
+                    child: Text(
+                      '${_currentIndex + 1}/${widget.images.length}',
+                      style: const TextStyle(color: Colors.white, fontSize: 12),
+                    ),
+                  ),
+                ),
+              ),
+            ),
+        ],
       ),
     );
   }

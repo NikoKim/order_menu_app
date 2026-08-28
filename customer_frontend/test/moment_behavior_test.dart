@@ -11,6 +11,8 @@ import 'package:customer_frontend/pages/moment_privacy_page.dart';
 import 'package:customer_frontend/services/api_client.dart';
 import 'package:customer_frontend/widgets/moment_card.dart';
 import 'package:customer_frontend/widgets/moment_image_viewer.dart';
+import 'package:customer_frontend/widgets/moment_mention.dart';
+import 'package:customer_frontend/widgets/moment_share_sheet.dart';
 import 'package:customer_frontend/widgets/ui_utils.dart';
 import 'package:customer_frontend/widgets/moment_reaction_picker.dart';
 import 'package:flutter/material.dart';
@@ -48,6 +50,97 @@ class _MomentFeedClient extends http.BaseClient {
   }
 }
 
+class _CachedMomentFeedClient extends http.BaseClient {
+  int feedRequestCount = 0;
+
+  @override
+  Future<http.StreamedResponse> send(http.BaseRequest request) async {
+    if (!request.url.path.endsWith('/moments')) return _response(null);
+    feedRequestCount++;
+    return _response({
+      'records': List.generate(
+        30,
+        (index) => {
+          'id': 500 + index,
+          'authorId': 998,
+          'authorNickname': '缓存用户',
+          'title': '缓存动态 ${index + 1}',
+          'content': '用于验证返回列表时保留分页内容和滚动位置。',
+          'visibility': 'PUBLIC',
+          'createdAt': '2026-07-16T10:00:00',
+        },
+      ),
+      'page': 1,
+      'pageSize': 30,
+      'total': 30,
+      'hasMore': false,
+    });
+  }
+}
+
+class _LiveMomentFeedClient extends http.BaseClient {
+  int detailRequestCount = 0;
+
+  @override
+  Future<http.StreamedResponse> send(http.BaseRequest request) async {
+    final path = request.url.path;
+    if (path.endsWith('/moments/700/comments')) {
+      return _response({
+        'records': <Object>[],
+        'page': 1,
+        'pageSize': 20,
+        'total': 0,
+      });
+    }
+    if (path.endsWith('/moments/700')) {
+      detailRequestCount++;
+      return _response({
+        'id': 700,
+        'authorId': 998,
+        'authorNickname': '实时用户',
+        'title': '实时动态',
+        'content': '详情返回后应更新列表数据。',
+        'visibility': 'PUBLIC',
+        'createdAt': '2026-07-16T10:00:00',
+        'liked': true,
+        'likeCount': 7,
+        'commentCount': 1,
+        'rootCommentCount': 1,
+        'shareCount': 4,
+        'reactions': [
+          {'emoji': '😊', 'count': 3, 'selected': true},
+        ],
+        'hotComment': {
+          'id': 701,
+          'userId': 9,
+          'nickname': '评论用户',
+          'content': '返回列表后渲染这条评论',
+          'createdAt': '2026-07-16T10:01:00',
+        },
+      });
+    }
+    if (path.endsWith('/moments')) {
+      return _response({
+        'records': [
+          {
+            'id': 700,
+            'authorId': 998,
+            'authorNickname': '实时用户',
+            'title': '实时动态',
+            'content': '详情返回后应更新列表数据。',
+            'visibility': 'PUBLIC',
+            'createdAt': '2026-07-16T10:00:00',
+          },
+        ],
+        'page': 1,
+        'pageSize': 12,
+        'total': 1,
+      });
+    }
+    return _response(null);
+  }
+}
+
 class _ProfileClient extends http.BaseClient {
   final response = Completer<http.StreamedResponse>();
 
@@ -75,6 +168,20 @@ class _MomentSearchClient extends http.BaseClient {
     }
     return _response(null);
   }
+}
+
+class _UserCardClient extends http.BaseClient {
+  @override
+  Future<http.StreamedResponse> send(http.BaseRequest request) async =>
+      _response({
+        'id': 7,
+        'nickname': '小鲨鱼',
+        'role': 'SHOP',
+        'merchant': true,
+        'phone': '13800000000',
+        'phoneVisible': true,
+        'self': false,
+      });
 }
 
 class _MomentDetailClient extends http.BaseClient {
@@ -210,7 +317,7 @@ void main() {
     expect(candidate(publishedAt: '2026-07-16T11:59:59+08:00'), isFalse);
   });
 
-  testWidgets('image preview is an in-place dismissible zoom overlay', (
+  testWidgets('image preview supports animated zoom, paging and tap dismiss', (
     tester,
   ) async {
     await tester.pumpWidget(
@@ -219,7 +326,7 @@ void main() {
           body: Center(
             child: MomentImagePreview(
               key: const ValueKey('customer-image-preview'),
-              images: const ['/moment.jpg'],
+              images: const ['/moment-1.jpg', '/moment-2.jpg'],
               index: 0,
               resolveUrl: (url) => 'https://example.test$url',
               child: const SizedBox.square(dimension: 120),
@@ -232,19 +339,104 @@ void main() {
     await tester.tap(find.byKey(const ValueKey('customer-image-preview')));
     await tester.pump(const Duration(milliseconds: 180));
     expect(find.byKey(const ValueKey('moment-image-viewer')), findsOneWidget);
-    expect(find.byKey(const ValueKey('moment-image-zoom')), findsOneWidget);
+    expect(find.byKey(const ValueKey('moment-image-gallery')), findsOneWidget);
+    expect(find.text('1/2'), findsOneWidget);
     expect(find.byType(AppBar), findsNothing);
 
-    final zoomGesture = tester.widget<GestureDetector>(
-      find.byKey(const ValueKey('moment-image-zoom')),
+    final center = tester.getCenter(
+      find.byKey(const ValueKey('moment-image-gallery')),
     );
-    expect(zoomGesture.onDoubleTap, isNotNull);
-    expect(zoomGesture.onScaleStart, isNotNull);
-    expect(zoomGesture.onScaleUpdate, isNotNull);
+    await tester.tapAt(center);
+    await tester.pump(const Duration(milliseconds: 80));
+    await tester.tapAt(center);
+    await tester.pump(const Duration(milliseconds: 600));
+    expect(find.byKey(const ValueKey('moment-image-viewer')), findsOneWidget);
 
-    await tester.tapAt(const Offset(8, 8));
-    await tester.pump(const Duration(milliseconds: 180));
+    await tester.tapAt(center);
+    await tester.pump(const Duration(milliseconds: 80));
+    await tester.tapAt(center);
+    await tester.pump(const Duration(milliseconds: 350));
+    expect(find.byKey(const ValueKey('moment-image-viewer')), findsOneWidget);
+
+    Navigator.of(
+      tester.element(find.byKey(const ValueKey('moment-image-viewer'))),
+    ).pop();
+    await tester.pumpAndSettle();
     expect(find.byKey(const ValueKey('moment-image-viewer')), findsNothing);
+
+    await tester.tap(find.byKey(const ValueKey('customer-image-preview')));
+    await tester.pump(const Duration(milliseconds: 180));
+    await tester.fling(find.byType(PageView), const Offset(-600, 0), 1200);
+    await tester.pumpAndSettle();
+    expect(find.text('2/2'), findsOneWidget);
+
+    await tester.tapAt(center);
+    await tester.pump(const Duration(milliseconds: 350));
+    await tester.pump(const Duration(milliseconds: 200));
+    expect(find.byKey(const ValueKey('moment-image-viewer')), findsNothing);
+  });
+
+  testWidgets('share sheet selects a channel before showing its details', (
+    tester,
+  ) async {
+    const moment = Moment(
+      id: 9,
+      authorId: 7,
+      authorNickname: '小鲨鱼',
+      title: '分享动态',
+      content: '动态内容',
+      visibility: 'PUBLIC',
+      createdAt: '2026-07-16T10:00:00',
+    );
+    await tester.pumpWidget(
+      _withServices(
+        _MomentFeedClient(),
+        Scaffold(
+          body: Builder(
+            builder: (context) => TextButton(
+              onPressed: () => showMomentShareSheet(context, moment: moment),
+              child: const Text('打开分享'),
+            ),
+          ),
+        ),
+      ),
+    );
+
+    await tester.tap(find.text('打开分享'));
+    await tester.pumpAndSettle();
+    expect(find.byKey(const ValueKey('share-options')), findsOneWidget);
+    expect(find.text('分享到聊天'), findsOneWidget);
+    expect(find.text('分享到其他应用'), findsOneWidget);
+    expect(find.byKey(const ValueKey('share-external-options')), findsNothing);
+
+    await tester.tap(find.text('分享到其他应用'));
+    await tester.pumpAndSettle();
+    expect(
+      find.byKey(const ValueKey('share-external-options')),
+      findsOneWidget,
+    );
+    expect(find.text('只分享此动态'), findsOneWidget);
+  });
+
+  testWidgets('tapping a mention opens a compact user card', (tester) async {
+    await tester.pumpWidget(
+      _withServices(
+        _UserCardClient(),
+        const Scaffold(
+          body: MomentMentionText(
+            content: '你好 @小鲨鱼',
+            mentions: [MomentUser(id: 7, nickname: '小鲨鱼', merchant: true)],
+          ),
+        ),
+      ),
+    );
+
+    await tester.tap(find.text('@小鲨鱼'));
+    await tester.pumpAndSettle();
+    expect(find.byType(Dialog), findsOneWidget);
+    expect(find.text('商家用户'), findsOneWidget);
+    expect(find.text('13800000000'), findsOneWidget);
+    expect(find.text('查看详情'), findsOneWidget);
   });
 
   test('hashtag search resolves only an exact topic name', () {
@@ -328,18 +520,16 @@ void main() {
         home: Scaffold(body: MomentCard(moment: moment)),
       ),
     );
-    final body = tester.widget<Container>(
+    final body = tester.widget<Padding>(
       find
           .byWidgetPredicate(
             (widget) =>
-                widget is Container &&
+                widget is Padding &&
                 widget.padding == const EdgeInsets.fromLTRB(16, 15, 16, 8),
           )
           .first,
     );
-    final decoration = body.decoration! as BoxDecoration;
-    expect(decoration.border, isNull);
-    expect(decoration.boxShadow, isNull);
+    expect(body.padding, const EdgeInsets.fromLTRB(16, 15, 16, 8));
     final surface = tester.widget<Material>(
       find
           .ancestor(of: find.text('无边框动态'), matching: find.byType(Material))
@@ -590,7 +780,7 @@ void main() {
           )
           .controller
           ?.index,
-      1,
+      2,
     );
 
     await tester.tap(find.text('聊天').first);
@@ -614,8 +804,80 @@ void main() {
           )
           .controller
           ?.index,
-      1,
+      2,
     );
+    await tester.pumpWidget(const SizedBox.shrink());
+  });
+
+  testWidgets(
+    'recreated moment feed restores cached records and exact scroll',
+    (tester) async {
+      final client = _CachedMomentFeedClient();
+      final services = AppServices(
+        apiClient: ApiClient(
+          httpClient: client,
+          baseUrl: 'https://example.test/api',
+        ),
+      );
+      Widget app(Widget home) => AppScope(
+        services: services,
+        child: MaterialApp(home: home),
+      );
+
+      await tester.pumpWidget(
+        app(const MomentFeedPage(embedded: true, authorId: 998)),
+      );
+      await tester.pumpAndSettle();
+      final scrollFinder = find.byKey(const ValueKey('customer-user-scroll'));
+      final firstController = tester.widget<ListView>(scrollFinder).controller!;
+      firstController.jumpTo(1400);
+      await tester.pump();
+      final expectedOffset = firstController.offset;
+
+      await tester.pumpWidget(app(const SizedBox.shrink()));
+      await tester.pump();
+      await tester.pumpWidget(
+        app(const MomentFeedPage(embedded: true, authorId: 998)),
+      );
+      await tester.pumpAndSettle();
+
+      final restoredController = tester
+          .widget<ListView>(scrollFinder)
+          .controller!;
+      expect(client.feedRequestCount, 1);
+      expect(restoredController.offset, closeTo(expectedOffset, .5));
+      restoredController.jumpTo(restoredController.position.maxScrollExtent);
+      await tester.pumpAndSettle();
+      expect(find.text('缓存动态 30'), findsOneWidget);
+      await tester.pumpWidget(const SizedBox.shrink());
+    },
+  );
+
+  testWidgets('returning from detail refreshes stats and comment preview', (
+    tester,
+  ) async {
+    final client = _LiveMomentFeedClient();
+    await tester.pumpWidget(
+      _withServices(
+        client,
+        const MomentFeedPage(embedded: true, authorId: 998),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.text('实时动态'));
+    await tester.pumpAndSettle();
+    Navigator.of(tester.element(find.byType(MomentDetailPage))).pop();
+    await tester.pump(const Duration(milliseconds: 100));
+    await tester.pumpAndSettle();
+
+    expect(client.detailRequestCount, 2);
+    final refreshedCard = tester.widget<MomentCard>(find.byType(MomentCard));
+    expect(refreshedCard.moment.hotComment?.content, '返回列表后渲染这条评论');
+    expect(find.text('返回列表后渲染这条评论'), findsOneWidget);
+    expect(find.text('7'), findsOneWidget);
+    expect(find.text('4'), findsOneWidget);
+    expect(find.text('😊'), findsWidgets);
     await tester.pumpWidget(const SizedBox.shrink());
   });
 
@@ -658,10 +920,23 @@ void main() {
       findsWidgets,
     );
     expect(
-      tester.getTopLeft(find.text('热门评论')).dy,
+      tester.getTopLeft(find.text('欢迎来尝尝')).dy,
       greaterThan(
         tester.getBottomLeft(find.byIcon(Icons.ios_share_rounded)).dy,
       ),
+    );
+    final materialRadii = find
+        .byType(Material)
+        .evaluate()
+        .map((element) => (element.widget as Material).borderRadius)
+        .toList();
+    expect(
+      materialRadii,
+      contains(const BorderRadius.vertical(top: Radius.circular(16))),
+    );
+    expect(
+      materialRadii,
+      contains(const BorderRadius.vertical(bottom: Radius.circular(16))),
     );
   });
 

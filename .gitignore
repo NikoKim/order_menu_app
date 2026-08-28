@@ -46,3 +46,5 @@ moment_dist/
 backend/scripts/
 .env.redis.example
 docker-compose.redis.yml
+
+docs/.mdedit-trash/

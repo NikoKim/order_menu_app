@@ -1,5 +1,4 @@
 import 'dart:async';
-import 'dart:convert';
 
 import 'package:flutter/material.dart';
 
@@ -8,6 +7,12 @@ import '../models.dart';
 import '../services/api_client.dart';
 import '../services/customer_websocket_service.dart';
 import '../widgets/app_notice.dart';
+import '../utils/moment_time_formatter.dart';
+import 'chat_detail_page.dart';
+import 'moment_detail_page.dart';
+import 'order_detail_page.dart';
+import 'my_feedback_page.dart';
+import 'my_families_page.dart';
 
 class MessageCenterPage extends StatefulWidget {
   const MessageCenterPage({super.key});
@@ -57,26 +62,78 @@ class _MessageCenterPageState extends State<MessageCenterPage> {
     }
   }
 
-  Future<void> _markRead(UserNotification notification) async {
-    if (!notification.isUnread || _api == null) return;
-    try {
-      await _api!.markNotificationRead(notification.id);
-      _reload();
-    } on ApiException catch (error) {
-      if (mounted) {
-        AppNotice.show(context, error.message);
-      }
-    }
+  int? _payloadId(UserNotification notification, String key) {
+    final value = notification.payloadData[key];
+    return value is num ? value.toInt() : int.tryParse('$value');
   }
 
-  int? _conversationId(UserNotification notification) {
-    try {
-      final payload =
-          jsonDecode(notification.payload ?? '') as Map<String, dynamic>;
-      final value = payload['conversationId'];
-      return value is num ? value.toInt() : int.tryParse('$value');
-    } catch (_) {
-      return null;
+  int? _conversationId(UserNotification notification) =>
+      _payloadId(notification, 'conversationId');
+
+  Future<void> _handleNotificationTap(UserNotification notification) async {
+    final api = _api;
+    if (api == null) return;
+    if (notification.isUnread) {
+      try {
+        await api.markNotificationRead(notification.id);
+      } on ApiException catch (error) {
+        if (mounted) AppNotice.show(context, error.message);
+        return;
+      }
+    }
+    if (!mounted) return;
+    _reload();
+    final momentId = _payloadId(notification, 'momentId');
+    if (momentId != null || notification.type.startsWith('MOMENT_')) {
+      if (momentId == null) return;
+      await Navigator.of(context).push(
+        MaterialPageRoute(
+          builder: (_) => MomentDetailPage(
+            momentId: momentId,
+            highlightCommentId: _payloadId(notification, 'commentId'),
+          ),
+        ),
+      );
+      return;
+    }
+    final conversationId = _conversationId(notification);
+    if (conversationId != null && notification.type != 'FAMILY_GROUP_INVITE') {
+      try {
+        final conversations = await api.conversations();
+        final conversation = conversations
+            .where((item) => item.id == conversationId)
+            .firstOrNull;
+        if (conversation != null && mounted) {
+          await Navigator.of(context).push(
+            MaterialPageRoute(
+              builder: (_) => ChatDetailPage(conversation: conversation),
+            ),
+          );
+        }
+      } on ApiException catch (error) {
+        if (mounted) AppNotice.show(context, error.message);
+      }
+      return;
+    }
+    final orderId = _payloadId(notification, 'orderId');
+    if (orderId != null) {
+      await Navigator.of(context).push(
+        MaterialPageRoute(
+          builder: (_) => OrderDetailPage(orderId: orderId, api: api),
+        ),
+      );
+      return;
+    }
+    if (notification.type.startsWith('FEEDBACK_')) {
+      await Navigator.of(
+        context,
+      ).push(MaterialPageRoute(builder: (_) => MyFeedbackPage(api: api)));
+      return;
+    }
+    if (notification.type.startsWith('FAMILY_')) {
+      await Navigator.of(
+        context,
+      ).push(MaterialPageRoute(builder: (_) => MyFamiliesPage(api: api)));
     }
   }
 
@@ -169,7 +226,7 @@ class _MessageCenterPageState extends State<MessageCenterPage> {
                   borderRadius: BorderRadius.circular(12),
                   clipBehavior: Clip.antiAlias,
                   child: ListTile(
-                    onTap: () => _markRead(notification),
+                    onTap: () => _handleNotificationTap(notification),
                     leading: Stack(
                       clipBehavior: Clip.none,
                       children: [
@@ -203,7 +260,11 @@ class _MessageCenterPageState extends State<MessageCenterPage> {
                       crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
                         const SizedBox(height: 3),
-                        Text(notification.content),
+                        Text(
+                          notification.content,
+                          maxLines: 3,
+                          overflow: TextOverflow.ellipsis,
+                        ),
                         if (notification.type == 'FAMILY_GROUP_INVITE' &&
                             notification.isUnread)
                           Row(
@@ -243,7 +304,14 @@ IconData _notificationIcon(String type) => switch (type) {
   'ORDER_STATUS' => Icons.receipt_long_outlined,
   'FEEDBACK_REPLY' => Icons.rate_review_outlined,
   'FAMILY_APPROVED' || 'FAMILY_REJECTED' => Icons.home_outlined,
+  'MOMENT_LIKED' => Icons.favorite_outline_rounded,
+  'MOMENT_COMMENTED' || 'MOMENT_COMMENT_REPLIED' => Icons.mode_comment_outlined,
+  'MOMENT_REACTED' => Icons.emoji_emotions_outlined,
+  'MOMENT_MENTIONED' ||
+  'MOMENT_COMMENT_MENTIONED' => Icons.alternate_email_rounded,
+  'MOMENT_QUOTED' || 'MOMENT_COMMENT_QUOTED' => Icons.format_quote_rounded,
+  'CHAT_MESSAGE' => Icons.chat_bubble_outline_rounded,
   _ => Icons.notifications_none,
 };
 
-String _formatNotificationTime(String value) => value.replaceFirst('T', ' ');
+String _formatNotificationTime(String value) => formatMomentTime(value);

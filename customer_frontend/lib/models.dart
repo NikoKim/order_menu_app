@@ -1,3 +1,5 @@
+import 'dart:convert';
+
 class PageResult<T> {
   const PageResult({
     required this.records,
@@ -881,7 +883,9 @@ class UserNotification {
         type: json['type']?.toString() ?? '',
         title: json['title']?.toString() ?? '',
         content: json['content']?.toString() ?? '',
-        payload: json['payload']?.toString(),
+        payload: json['payload'] is Map
+            ? jsonEncode(json['payload'])
+            : json['payload']?.toString(),
         readAt: json['readAt']?.toString(),
         createdAt: json['createdAt']?.toString() ?? '',
       );
@@ -896,6 +900,15 @@ class UserNotification {
   final String createdAt;
 
   bool get isUnread => readAt == null || readAt!.isEmpty;
+
+  Map<String, dynamic> get payloadData {
+    try {
+      final decoded = jsonDecode(payload ?? '');
+      return decoded is Map<String, dynamic> ? decoded : const {};
+    } catch (_) {
+      return const {};
+    }
+  }
 
   UserNotification markRead() => UserNotification(
     id: id,

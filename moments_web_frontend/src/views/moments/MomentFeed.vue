@@ -82,7 +82,7 @@
     />
 
     <!-- Image viewer -->
-    <ImageViewer :visible="imageViewer.visible" :src="imageViewer.src" @close="imageViewer.visible = false" />
+    <ImageViewer :visible="imageViewer.visible" :images="imageViewer.images" :initial-index="imageViewer.index" @close="imageViewer.visible = false" />
 
     <!-- Share sheet -->
     <div v-if="shareMoment" class="modal-overlay" @click.self="shareMoment = null">
@@ -113,7 +113,7 @@
 import { nextTick, ref, onMounted, onUnmounted, watch } from 'vue'
 import { useRouter } from 'vue-router'
 import { AlertCircle, FileText, LoaderCircle, MessageCircle, RotateCcw, Search, Share2, SquarePen } from 'lucide-vue-next'
-import { deleteMoment, getHotMoments, getMomentUnreadCount, getMoments, markMomentsRead, setMomentLike, setMomentReaction } from '../../api/moments'
+import { deleteMoment, getHotMoments, getMomentDetail, getMomentUnreadCount, getMoments, markMomentsRead, setMomentLike, setMomentReaction } from '../../api/moments'
 import { getConversations, shareMomentToChat } from '../../api/messages'
 import { imageUrl } from '../../composables/useImage'
 import MomentCard from '../../components/MomentCard.vue'
@@ -124,6 +124,7 @@ import EmptyState from '../../components/EmptyState.vue'
 import ExternalShareOptions from '../../components/ExternalShareOptions.vue'
 import MomentReactionPicker from '../../components/MomentReactionPicker.vue'
 import { shareMomentExternally } from '../../services/shareCard'
+import { getMomentFeedCache } from '../../services/momentFeedCache'
 import { confirmNotice, notifyError, notifySuccess } from '../../services/notice'
 import { connectCustomerWebSocket, subscribeCustomerWebSocket } from '../../services/customerWebSocket'
 
@@ -143,7 +144,7 @@ const newCount = ref(0)
 const relatedUnread = ref(0)
 const reportedRead = new Set()
 
-const imageViewer = ref({ visible: false, src: '' })
+const imageViewer = ref({ visible: false, images: [], index: 0 })
 const reactionMoment = ref(null)
 const shareMoment = ref(null)
 const shareConversations = ref([])
@@ -157,19 +158,75 @@ let scrollDirection = 0
 let scrollDistance = 0
 const FEED_PAGE_SIZE = 12
 
-function storedScroll(type) {
-  const scoped = sessionStorage.getItem(`moment-feed-scroll-${type}`)
-  if (scoped !== null) return Math.max(0, Number(scoped) || 0)
-  return type === tab.value ? Math.max(0, Number(sessionStorage.getItem('moment-feed-scroll')) || 0) : 0
+function cacheScope() {
+  try {
+    const userId = JSON.parse(localStorage.getItem('user') || 'null')?.id
+    return userId ? `user-${userId}` : (localStorage.getItem('token') ? 'customer' : 'guest')
+  } catch {
+    return localStorage.getItem('token') ? 'customer' : 'guest'
+  }
 }
 
-const tabStates = {
-  RECOMMENDED: { records: [], page: 1, hasMore: true, newCount: 0, loaded: false, request: null, loadMoreRequest: null, loadMoreError: '', scrollTop: storedScroll('RECOMMENDED') },
-  HOT: { records: [], page: 1, hasMore: false, newCount: 0, loaded: false, request: null, loadMoreRequest: null, loadMoreError: '', scrollTop: storedScroll('HOT') },
-  RELATED: { records: [], page: 1, hasMore: true, newCount: 0, loaded: false, request: null, loadMoreRequest: null, loadMoreError: '', scrollTop: storedScroll('RELATED') }
+const feedCacheScope = cacheScope()
+
+const tabStates = getMomentFeedCache(feedCacheScope)
+const momentRefreshRequests = new Map()
+
+function removeCachedMoment(momentId) {
+  let activeChanged = false
+  for (const [type, state] of Object.entries(tabStates)) {
+    const next = state.records.filter(item => Number(item.id) !== Number(momentId))
+    if (next.length === state.records.length) continue
+    state.records = next
+    if (type === tab.value) activeChanged = true
+  }
+  if (activeChanged) feed.value = [...tabStates[tab.value].records]
 }
 
-function saveCurrentTabState(captureScroll = true) {
+function replaceCachedMoment(latest) {
+  let activeChanged = false
+  for (const [type, state] of Object.entries(tabStates)) {
+    const index = state.records.findIndex(item => Number(item.id) === Number(latest.id))
+    if (index < 0) continue
+    state.records = state.records.map((item, itemIndex) => itemIndex === index ? latest : item)
+    if (type === tab.value) activeChanged = true
+  }
+  if (activeChanged) feed.value = [...tabStates[tab.value].records]
+}
+
+async function refreshMoment(momentId) {
+  const known = Object.values(tabStates).some(state =>
+    state.records.some(item => Number(item.id) === Number(momentId)))
+  if (!known) return
+  let request = momentRefreshRequests.get(Number(momentId))
+  if (!request) {
+    request = getMomentDetail(momentId)
+    momentRefreshRequests.set(Number(momentId), request)
+  }
+  try {
+    replaceCachedMoment(await request)
+  } catch (e) {
+    if (Number(e?.code) === 403 || Number(e?.code) === 404) removeCachedMoment(momentId)
+  } finally {
+    if (momentRefreshRequests.get(Number(momentId)) === request) {
+      momentRefreshRequests.delete(Number(momentId))
+    }
+  }
+}
+
+function captureAnchor(state, momentId = null) {
+  const container = feedContainer.value
+  if (!container) return
+  const element = momentId
+    ? container.querySelector(`[data-moment-id="${momentId}"]`)
+    : [...container.querySelectorAll('[data-moment-id]')]
+        .find(node => node.getBoundingClientRect().bottom > container.getBoundingClientRect().top)
+  if (!element) return
+  state.anchorMomentId = Number(element.dataset.momentId)
+  state.anchorViewportOffset = element.getBoundingClientRect().top - container.getBoundingClientRect().top
+}
+
+function saveCurrentTabState(captureScroll = true, captureCurrentAnchor = true) {
   const state = tabStates[tab.value]
   if (!state) return
   state.records = feed.value
@@ -178,8 +235,24 @@ function saveCurrentTabState(captureScroll = true) {
   state.newCount = newCount.value
   state.loadMoreError = loadMoreError.value
   state.loaded = state.loaded || (!loading.value && !error.value)
-  if (captureScroll && feedContainer.value) state.scrollTop = feedContainer.value.scrollTop
-  sessionStorage.setItem(`moment-feed-scroll-${tab.value}`, String(state.scrollTop))
+  if (captureScroll && feedContainer.value) {
+    state.scrollTop = feedContainer.value.scrollTop
+    if (captureCurrentAnchor) captureAnchor(state)
+  }
+}
+
+async function restoreScrollPosition(state) {
+  await nextTick()
+  const container = feedContainer.value
+  if (!container) return
+  container.scrollTop = state.scrollTop
+  await nextTick()
+  if (state.anchorMomentId == null || state.anchorViewportOffset == null) return
+  const element = container.querySelector(`[data-moment-id="${state.anchorMomentId}"]`)
+  if (!element) return
+  const currentOffset = element.getBoundingClientRect().top - container.getBoundingClientRect().top
+  container.scrollTop += currentOffset - state.anchorViewportOffset
+  state.scrollTop = container.scrollTop
 }
 
 async function restoreTabState(type) {
@@ -201,12 +274,17 @@ async function restoreTabState(type) {
     loading.value = true
     await loadFeed()
   }
-  await nextTick()
-  if (feedContainer.value) feedContainer.value.scrollTop = state.scrollTop
+  await restoreScrollPosition(state)
   lastScrollTop = state.scrollTop
   scrollDirection = 0
   scrollDistance = 0
   scheduleVisibleReadCheck()
+  const returnMomentId = state.returnMomentId
+  if (returnMomentId != null) {
+    await refreshMoment(returnMomentId)
+    state.returnMomentId = null
+    await restoreScrollPosition(state)
+  }
 }
 
 async function loadFeed() {
@@ -258,6 +336,8 @@ async function refreshFeed() {
   state.scrollTop = 0
   await nextTick()
   if (feedContainer.value) feedContainer.value.scrollTop = 0
+  state.anchorMomentId = null
+  state.anchorViewportOffset = null
 }
 
 async function loadMore(force = false) {
@@ -276,7 +356,7 @@ async function loadMore(force = false) {
     const res = await request
     const records = res.records || []
     const existingIds = new Set(state.records.map(item => item.id))
-    state.records.push(...records.filter(item => !existingIds.has(item.id)))
+    state.records = [...state.records, ...records.filter(item => !existingIds.has(item.id))]
     state.hasMore = res.hasMore !== false
     state.page = nextPage
     if (tab.value !== requestedTab) return
@@ -305,7 +385,6 @@ async function switchTab(t) {
 function handleScroll(e) {
   const el = e.target
   tabStates[tab.value].scrollTop = el.scrollTop
-  sessionStorage.setItem(`moment-feed-scroll-${tab.value}`, String(el.scrollTop))
   if (el.scrollHeight - el.scrollTop - el.clientHeight < 300) loadMore()
   const delta = el.scrollTop - lastScrollTop
   const direction = Math.sign(delta)
@@ -401,7 +480,14 @@ async function removeMoment(moment) {
     saveCurrentTabState(false)
   } catch (e) { notifyError(e.message) }
 }
-function goDetail(m) { router.push(`/customer/moments/${m.id}`) }
+function goDetail(m) {
+  const state = tabStates[tab.value]
+  if (feedContainer.value) state.scrollTop = feedContainer.value.scrollTop
+  captureAnchor(state, m.id)
+  state.returnMomentId = Number(m.id)
+  openingDetail = true
+  router.push(`/customer/moments/${m.id}`)
+}
 function goTopic(t) {
   if (!t?.id) return
   router.push({
@@ -420,7 +506,7 @@ function goAuthor(a) {
 function viewImages(moment, idx) {
   const urls = moment?.imageUrls
   if (!urls?.[idx]) return
-  imageViewer.value = { visible: true, src: imageUrl(urls[idx]) }
+  imageViewer.value = { visible: true, images: urls.map(imageUrl), index: idx }
 }
 function goReference(ref) {
   if (ref?.shopId) router.push(`/customer/shop/${ref.shopId}/menu`)
@@ -429,6 +515,7 @@ function goReference(ref) {
 let pollTimer = null
 let unsubscribeWs
 let visibilityFrame = 0
+let openingDetail = false
 const badge = value => value > 99 ? '99+' : value
 
 async function loadRelatedUnread() {
@@ -480,23 +567,28 @@ async function markVisibleRelatedMomentsRead() {
   }
 }
 
-async function checkForNewRelatedMoments() {
-  if (tab.value !== 'RELATED' || !feed.value.length) {
+async function checkForNewMoments() {
+  const requestedTab = tab.value
+  if ((requestedTab !== 'RECOMMENDED' && requestedTab !== 'RELATED') || !feed.value.length) {
     newCount.value = 0
     return
   }
   try {
-    const res = await getMoments({ feed: 'RELATED', page: 1, pageSize: FEED_PAGE_SIZE, consumeExposure: false })
+    const res = await getMoments({ feed: requestedTab, page: 1, pageSize: FEED_PAGE_SIZE, consumeExposure: false })
+    if (tab.value !== requestedTab) return
     const visibleIds = new Set(feed.value.map(item => item.id))
     newCount.value = (res.records || []).filter(item => !visibleIds.has(item.id)).length
+    tabStates[requestedTab].newCount = newCount.value
   } catch { }
 }
 
-function handleMomentWs(message) {
+async function handleMomentWs(message) {
   const count = Number(message?.data?.relatedUnreadCount)
   if (Number.isFinite(count)) setRelatedUnread(count)
   else loadRelatedUnread()
-  checkForNewRelatedMoments()
+  const momentId = Number(message?.data?.momentId)
+  if (Number.isFinite(momentId)) await refreshMoment(momentId)
+  if (message?.action === 'PUBLISHED') checkForNewMoments()
 }
 
 onMounted(async () => {
@@ -505,7 +597,7 @@ onMounted(async () => {
   await loadRelatedUnread()
   connectCustomerWebSocket()
   unsubscribeWs = subscribeCustomerWebSocket('MOMENT', handleMomentWs)
-  pollTimer = setInterval(() => { loadRelatedUnread(); checkForNewRelatedMoments() }, 60000)
+  pollTimer = setInterval(() => { loadRelatedUnread(); checkForNewMoments() }, 60000)
   scheduleVisibleReadCheck()
 })
 watch(() => props.active, active => {
@@ -521,7 +613,7 @@ watch(() => props.active, active => {
   })
 })
 onUnmounted(() => {
-  saveCurrentTabState()
+  saveCurrentTabState(true, !openingDetail)
   clearInterval(pollTimer)
   window.cancelAnimationFrame(visibilityFrame)
   unsubscribeWs?.()

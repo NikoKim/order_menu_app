@@ -11,7 +11,9 @@
           <span class="mc-author-name">{{ moment.author?.nickname }}</span>
           <span v-if="moment.author?.merchant" class="mc-badge">商家</span>
         </div>
-        <span class="mc-time">{{ formatTime(moment.publishedAt || moment.createdAt) }}</span>
+        <span class="mc-time">
+          {{ showEdited ? `编辑于 ${formatTime(moment.editedAt)}` : formatTime(moment.publishedAt || moment.createdAt) }}
+        </span>
       </div>
       <div class="mc-header-actions">
         <span v-if="moment.visibility" class="mc-vis-badge" :class="'vis-' + moment.visibility.toLowerCase()">
@@ -72,7 +74,7 @@
     </div>
 
     <!-- Comment preview -->
-    <div v-if="moment.hotComment || commentsExpanded" class="mc-comment-list">
+    <div v-if="previewComment || commentsExpanded" class="mc-comment-list">
       <TransitionGroup name="mc-comment" tag="div" class="mc-comment-items">
       <div v-for="comment in visibleComments" :key="comment.id" class="mc-comment-preview" @click.stop="$emit('comment', moment)">
         <div class="mc-comment-main">
@@ -149,7 +151,7 @@ import { useRouter } from 'vue-router'
 import { Heart, MessageCircle, MoreVertical, Pencil, Quote, Share2, SmilePlus, Trash2 } from 'lucide-vue-next'
 import { getMomentComments } from '../api/moments'
 import { imageUrl } from '../composables/useImage'
-import { formatMomentTime } from '../composables/useMomentTime'
+import { formatMomentTime, hasMeaningfulMomentEdit } from '../composables/useMomentTime'
 import AnchoredMenu from './AnchoredMenu.vue'
 import LoadingSpinner from './LoadingSpinner.vue'
 import MomentQuoteCard from './MomentQuoteCard.vue'
@@ -172,20 +174,34 @@ const commentsExpanded = ref(false)
 const commentsLoading = ref(false)
 const commentLoadError = ref(false)
 const loadedComments = ref([])
+const fallbackPreview = ref(null)
+const previewLoading = ref(false)
 const commentsPage = ref(1)
 const commentsTotal = ref(0)
 const commentsHasMore = ref(false)
 const commentPageSize = 3
 const reactionCount = computed(() => (props.moment.reactions || []).reduce((sum, item) => sum + Number(item.count || 0), 0))
-const visibleComments = computed(() => commentsExpanded.value ? loadedComments.value : (props.moment.hotComment ? [props.moment.hotComment] : []))
+const previewComment = computed(() => props.moment.hotComment || fallbackPreview.value)
+const visibleComments = computed(() => commentsExpanded.value ? loadedComments.value : (previewComment.value ? [previewComment.value] : []))
 const canExpandComments = computed(() => Number(props.moment.rootCommentCount || 0) >= 2)
+
+async function loadCommentPreview() {
+  if (previewLoading.value || previewComment.value || Number(props.moment.commentCount || 0) <= 0) return
+  previewLoading.value = true
+  const requestedId = Number(props.moment.id)
+  try {
+    const result = await getMomentComments(requestedId, { page: 1, pageSize: 1 })
+    if (Number(props.moment.id) === requestedId) fallbackPreview.value = result.records?.[0] || null
+  } catch { }
+  finally { previewLoading.value = false }
+}
 
 async function loadMoreComments() {
   if (commentsLoading.value) return
   commentsLoading.value = true
   commentLoadError.value = false
   try {
-    const result = await getMomentComments(props.moment.id, { page: commentsPage.value, size: commentPageSize })
+    const result = await getMomentComments(props.moment.id, { page: commentsPage.value, pageSize: commentPageSize })
     const knownIds = new Set(loadedComments.value.map(comment => comment.id))
     const nextComments = (result.records || []).filter(comment => !knownIds.has(comment.id))
     loadedComments.value.push(...nextComments)
@@ -219,6 +235,13 @@ watch(() => props.moment.id, () => {
   commentsPage.value = 1
   commentsTotal.value = 0
   commentsHasMore.value = false
+  fallbackPreview.value = null
+  loadCommentPreview()
+})
+
+watch(() => [props.moment.commentCount, props.moment.hotComment], ([count, hotComment]) => {
+  if (hotComment || Number(count || 0) <= 0) fallbackPreview.value = null
+  loadCommentPreview()
 })
 
 function runOwnerAction(action) {
@@ -243,6 +266,7 @@ nextTick(() => {
   if (contentEl.value) {
     if (contentEl.value.scrollHeight > 76) showExpand.value = true
   }
+  loadCommentPreview()
 })
 
 function visLabel(v) {
@@ -251,6 +275,7 @@ function visLabel(v) {
 }
 
 const formatTime = formatMomentTime
+const showEdited = computed(() => hasMeaningfulMomentEdit(props.moment))
 </script>
 
 <style scoped>

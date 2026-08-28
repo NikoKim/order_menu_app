@@ -30,10 +30,11 @@ String formatMomentTime(String value, {DateTime? now}) {
       return _formatAbsolute(parsed, current);
     }
   }
+  if (difference < const Duration(minutes: 1)) return '刚刚';
   if (difference < const Duration(hours: 1)) {
     return '${difference.inMinutes}分钟前';
   }
-  if (difference <= const Duration(hours: 24)) {
+  if (difference < const Duration(hours: 24)) {
     return '${difference.inHours}小时前';
   }
 
@@ -43,6 +44,22 @@ String formatMomentTime(String value, {DateTime? now}) {
     return '昨天 ${_clock(parsed)}';
   }
   return _formatAbsolute(parsed, current);
+}
+
+bool shouldShowMomentEdited({
+  required String? editedAt,
+  required String? publishedAt,
+  required String createdAt,
+  required String status,
+}) {
+  if (editedAt?.isNotEmpty != true || status != 'PUBLISHED') return false;
+  final edited = _parseMomentTime(editedAt!);
+  final published = _parseMomentTime(publishedAt ?? createdAt);
+  if (edited == null) return false;
+  if (published == null) return true;
+
+  // Older clients performed a second update while finishing image uploads.
+  return edited.isAfter(published.add(const Duration(seconds: 30)));
 }
 
 DateTime? _parseMomentTime(String value) {
@@ -98,10 +115,10 @@ DateTime _asChinaWallClock(DateTime instant) {
 }
 
 String _formatAbsolute(DateTime value, DateTime current) {
-  final monthDay = '${_twoDigits(value.month)}月${_twoDigits(value.day)}日';
+  final monthDay = '${_twoDigits(value.month)}-${_twoDigits(value.day)}';
   final date = value.year == current.year
       ? monthDay
-      : '${value.year}年$monthDay';
+      : '${value.year}-$monthDay';
   return '$date ${_clock(value)}';
 }
 

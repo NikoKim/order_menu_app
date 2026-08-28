@@ -2,11 +2,15 @@ import 'dart:async';
 import 'dart:io';
 
 import 'package:flutter/material.dart';
+import 'package:app_links/app_links.dart';
 
 import 'pages/auth_page.dart';
 import 'pages/home_page.dart';
 import 'pages/profile_page.dart';
 import 'pages/chat_list_page.dart';
+import 'pages/chat_detail_page.dart';
+import 'pages/moment_detail_page.dart';
+import 'pages/order_detail_page.dart';
 import 'services/api_client.dart';
 import 'package:package_info_plus/package_info_plus.dart';
 import 'package:dio/dio.dart';
@@ -22,6 +26,8 @@ void main() {
   runApp(const OrderMenuCustomerApp());
 }
 
+final customerNavigatorKey = GlobalKey<NavigatorState>();
+
 List<String> customerNavigationLabels({required bool loggedIn}) =>
     loggedIn ? const ['首页', '聊天', '我的'] : const ['首页', '登录'];
 
@@ -36,12 +42,44 @@ class OrderMenuCustomerApp extends StatefulWidget {
 
 class _OrderMenuCustomerAppState extends State<OrderMenuCustomerApp> {
   late final AppServices _services;
+  late final AppLinks _appLinks;
+  StreamSubscription<Uri>? _appLinkSubscription;
 
   @override
   void initState() {
     super.initState();
     _services = AppServices.shared();
+    _appLinks = AppLinks();
+    _appLinkSubscription = _appLinks.uriLinkStream.listen(_handleAppLink);
     _services.init();
+  }
+
+  void _handleAppLink(Uri uri) {
+    final segments = uri.pathSegments;
+    int? momentId;
+    if (uri.scheme == 'ordermenu' && uri.host == 'moments') {
+      momentId = segments.isNotEmpty ? int.tryParse(segments.first) : null;
+    } else if (segments.length >= 3 &&
+        segments[0] == 'customer' &&
+        segments[1] == 'moments') {
+      momentId = int.tryParse(segments[2]);
+    } else if (segments.length >= 2 &&
+        segments[0] == 'customer' &&
+        segments[1] == 'moments') {
+      momentId = int.tryParse(uri.queryParameters['sharedMoment'] ?? '');
+    }
+    if (momentId == null) return;
+    PushDeviceRegistration.instance.emitNavigation({
+      'momentId': momentId,
+      if (uri.queryParameters['commentId'] != null)
+        'commentId': uri.queryParameters['commentId'],
+    });
+  }
+
+  @override
+  void dispose() {
+    _appLinkSubscription?.cancel();
+    super.dispose();
   }
 
   @override
@@ -56,6 +94,7 @@ class _OrderMenuCustomerAppState extends State<OrderMenuCustomerApp> {
     return AppScope(
       services: _services,
       child: MaterialApp(
+        navigatorKey: customerNavigatorKey,
         debugShowCheckedModeBanner: false,
         title: '点餐',
         theme: ThemeData(
@@ -175,6 +214,7 @@ class _CustomerShellState extends State<CustomerShell>
   StreamSubscription<CustomerWsMessage>? _chatBadgeSubscription;
   StreamSubscription<CustomerWsMessage>? _notificationBadgeSubscription;
   StreamSubscription<bool>? _connectionSubscription;
+  StreamSubscription<Map<String, dynamic>>? _pushNavigationSubscription;
   Timer? _presenceHeartbeatTimer;
   int _unreadChats = 0;
   int _unreadNotifications = 0;
@@ -208,6 +248,15 @@ class _CustomerShellState extends State<CustomerShell>
           _refreshChatBadge();
           _refreshNotificationBadge();
         });
+    _pushNavigationSubscription ??= PushDeviceRegistration.instance.navigation
+        .listen(_handlePushNavigation);
+    final pendingNavigation = PushDeviceRegistration.instance
+        .takePendingNavigation();
+    if (pendingNavigation != null) {
+      WidgetsBinding.instance.addPostFrameCallback(
+        (_) => _handlePushNavigation(pendingNavigation),
+      );
+    }
 
     if (!_hasCheckedUpdate) {
       _hasCheckedUpdate = true;
@@ -306,6 +355,58 @@ class _CustomerShellState extends State<CustomerShell>
     } catch (_) {}
   }
 
+  int? _pushId(Map<String, dynamic> payload, String key) {
+    final value = payload[key];
+    return value is num ? value.toInt() : int.tryParse('$value');
+  }
+
+  Future<void> _handlePushNavigation(Map<String, dynamic> payload) async {
+    if (!_auth.isLoggedIn) return;
+    final navigator = customerNavigatorKey.currentState;
+    if (navigator == null) return;
+    final notificationId = _pushId(payload, 'notificationId');
+    if (notificationId != null) {
+      _customerApi.markNotificationRead(notificationId).catchError((_) {});
+    }
+    final momentId = _pushId(payload, 'momentId');
+    if (momentId != null) {
+      await navigator.push(
+        MaterialPageRoute(
+          builder: (_) => MomentDetailPage(
+            momentId: momentId,
+            highlightCommentId: _pushId(payload, 'commentId'),
+          ),
+        ),
+      );
+      return;
+    }
+    final orderId = _pushId(payload, 'orderId');
+    if (orderId != null) {
+      await navigator.push(
+        MaterialPageRoute(
+          builder: (_) => OrderDetailPage(orderId: orderId, api: _customerApi),
+        ),
+      );
+      return;
+    }
+    final conversationId = _pushId(payload, 'conversationId');
+    if (conversationId != null) {
+      try {
+        final conversations = await _customerApi.conversations();
+        final conversation = conversations
+            .where((item) => item.id == conversationId)
+            .firstOrNull;
+        if (conversation != null) {
+          await navigator.push(
+            MaterialPageRoute(
+              builder: (_) => ChatDetailPage(conversation: conversation),
+            ),
+          );
+        }
+      } catch (_) {}
+    }
+  }
+
   @override
   void dispose() {
     WidgetsBinding.instance.removeObserver(this);
@@ -313,6 +414,7 @@ class _CustomerShellState extends State<CustomerShell>
     _chatBadgeSubscription?.cancel();
     _notificationBadgeSubscription?.cancel();
     _connectionSubscription?.cancel();
+    _pushNavigationSubscription?.cancel();
     _presenceHeartbeatTimer?.cancel();
     CustomerWebSocketService.instance.disconnect();
     super.dispose();

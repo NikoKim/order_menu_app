@@ -49,6 +49,7 @@ class FirebasePushTokenProvider implements PushTokenProvider {
   final String projectId;
   final String? storageBucket;
   final String? iosBundleId;
+  static bool _navigationBound = false;
   bool get configured =>
       apiKey.isNotEmpty &&
       appId.isNotEmpty &&
@@ -71,6 +72,19 @@ class FirebasePushTokenProvider implements PushTokenProvider {
     }
     final messaging = FirebaseMessaging.instance;
     await messaging.requestPermission(alert: true, badge: true, sound: true);
+    if (!_navigationBound) {
+      _navigationBound = true;
+      FirebaseMessaging.onMessageOpenedApp.listen(
+        (message) =>
+            PushDeviceRegistration.instance.emitNavigation(message.data),
+      );
+      final initial = await messaging.getInitialMessage();
+      if (initial != null) {
+        scheduleMicrotask(
+          () => PushDeviceRegistration.instance.emitNavigation(initial.data),
+        );
+      }
+    }
     return messaging;
   }
 
@@ -94,6 +108,25 @@ class PushDeviceRegistration {
   PushTokenProvider provider;
   String? _registeredToken;
   StreamSubscription<String>? _refreshSubscription;
+  final _navigation = StreamController<Map<String, dynamic>>.broadcast();
+  Map<String, dynamic>? _pendingNavigation;
+
+  Stream<Map<String, dynamic>> get navigation => _navigation.stream;
+
+  void emitNavigation(Map<String, dynamic> payload) {
+    if (payload.isEmpty) return;
+    if (!_navigation.hasListener) {
+      _pendingNavigation = payload;
+      return;
+    }
+    _navigation.add(payload);
+  }
+
+  Map<String, dynamic>? takePendingNavigation() {
+    final value = _pendingNavigation;
+    _pendingNavigation = null;
+    return value;
+  }
 
   void configure(PushTokenProvider provider) {
     _refreshSubscription?.cancel();

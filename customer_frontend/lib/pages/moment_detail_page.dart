@@ -11,9 +11,14 @@ import '../services/moment_image.dart';
 import '../widgets/app_notice.dart';
 import '../widgets/moment_image_viewer.dart';
 import '../widgets/moment_detail_post.dart';
+import '../widgets/moment_mention.dart';
+import '../widgets/moment_share_sheet.dart';
 import '../widgets/ui_utils.dart';
 import '../utils/moment_time_formatter.dart';
 import 'moment_privacy_page.dart';
+import 'moment_feed_page.dart';
+
+int _momentAtCount(String value) => '@'.allMatches(value).length;
 
 class MomentDetailPage extends StatefulWidget {
   const MomentDetailPage({
@@ -42,10 +47,15 @@ class _MomentDetailPageState extends State<MomentDetailPage> {
   bool _loadingComments = false;
   bool _sending = false;
   MomentComment? _replyingTo;
-  XFile? _image;
+  final List<XFile> _images = [];
+  final Map<String, int> _imageQuarterTurns = {};
+  List<MomentUser> _commentMentions = const [];
+  bool _mentionPickerOpen = false;
+  String _previousComment = '';
 
   late CustomerApi _api;
   bool _initialized = false;
+  String? _unavailableReason;
 
   @override
   void initState() {
@@ -54,6 +64,7 @@ class _MomentDetailPageState extends State<MomentDetailPage> {
     _scroll.addListener(() {
       if (_scroll.position.extentAfter < 300 && _hasMore) _loadComments();
     });
+    _comment.addListener(_handleCommentChanged);
     WidgetsBinding.instance.addPostFrameCallback((_) async {
       await _loadComments(refresh: true);
       if (widget.highlightCommentId != null) await _loadUntilHighlight();
@@ -67,7 +78,21 @@ class _MomentDetailPageState extends State<MomentDetailPage> {
       _initialized = true;
       // 在这里安全地获取 context 并发起网络请求
       _api = CustomerApi(AppScope.of(context).api);
-      _momentFuture = _api.moment(widget.momentId);
+      _momentFuture = _fetchMoment();
+    }
+  }
+
+  Future<Moment> _fetchMoment() async {
+    try {
+      final value = await _api.moment(widget.momentId);
+      _unavailableReason = null;
+      return value;
+    } catch (_) {
+      try {
+        final reason = await _api.momentUnavailableReason(widget.momentId);
+        if (mounted) setState(() => _unavailableReason = reason);
+      } catch (_) {}
+      rethrow;
     }
   }
 
@@ -77,6 +102,53 @@ class _MomentDetailPageState extends State<MomentDetailPage> {
     _comment.dispose();
     _commentFocus.dispose();
     super.dispose();
+  }
+
+  void _handleCommentChanged() {
+    final value = _comment.text;
+    final active = activeMomentMentionIds(value, _commentMentions).toSet();
+    if (active.length != _commentMentions.length && mounted) {
+      setState(
+        () => _commentMentions = _commentMentions
+            .where((user) => active.contains(user.id))
+            .toList(),
+      );
+    }
+    final typedAt =
+        value.length > _previousComment.length &&
+        _momentAtCount(value) > _momentAtCount(_previousComment);
+    _previousComment = value;
+    if (typedAt && !_mentionPickerOpen) _pickMentionUsers();
+  }
+
+  Future<void> _pickMentionUsers() async {
+    if (_mentionPickerOpen) return;
+    _mentionPickerOpen = true;
+    final before = _commentMentions.map((user) => user.id).toSet();
+    final selected = await showMomentMentionPicker(
+      context,
+      selected: _commentMentions,
+    );
+    _mentionPickerOpen = false;
+    if (!mounted || selected == null) return;
+    final added = selected.where((user) => !before.contains(user.id)).toList();
+    setState(() => _commentMentions = selected);
+    if (added.isEmpty) return;
+    final offset = _comment.selection.isValid
+        ? _comment.selection.baseOffset
+        : _comment.text.length;
+    final insertion = added.map((user) => '@${user.nickname} ').join();
+    final normalizedOffset = offset.clamp(0, _comment.text.length);
+    _comment.value = TextEditingValue(
+      text: _comment.text.replaceRange(
+        normalizedOffset,
+        normalizedOffset,
+        insertion,
+      ),
+      selection: TextSelection.collapsed(
+        offset: normalizedOffset + insertion.length,
+      ),
+    );
   }
 
   Future<void> _loadComments({bool refresh = false}) async {
@@ -114,6 +186,42 @@ class _MomentDetailPageState extends State<MomentDetailPage> {
   }
 
   Future<void> _loadUntilHighlight() async {
+    final targetId = widget.highlightCommentId;
+    if (targetId != null && !_hasHighlightLoaded()) {
+      try {
+        final target = await _api.momentComment(widget.momentId, targetId);
+        if (mounted) {
+          if (target.parentId == null) {
+            setState(
+              () => _comments = [
+                target,
+                ..._comments.where((item) => item.id != target.id),
+              ],
+            );
+          } else {
+            final root = await _api.momentComment(
+              widget.momentId,
+              target.parentId!,
+            );
+            if (!mounted) return;
+            setState(() {
+              _comments = [
+                root,
+                ..._comments.where((item) => item.id != root.id),
+              ];
+              _expandedReplies[root.id] =
+                  [
+                    ...root.replies.where((item) => item.id != target.id),
+                    target,
+                  ]..sort((a, b) {
+                    final time = a.createdAt.compareTo(b.createdAt);
+                    return time != 0 ? time : a.id.compareTo(b.id);
+                  });
+            });
+          }
+        }
+      } catch (_) {}
+    }
     while (mounted && !_hasHighlightLoaded() && _hasMore) {
       final pageBefore = _page;
       await _loadComments();
@@ -181,28 +289,38 @@ class _MomentDetailPageState extends State<MomentDetailPage> {
   }
 
   Future<void> _send() async {
-    if (_sending || (_comment.text.trim().isEmpty && _image == null)) return;
+    if (_sending || (_comment.text.trim().isEmpty && _images.isEmpty)) return;
     setState(() => _sending = true);
     try {
-      String? imageUrl;
-      if (_image != null) {
-        final path = await prepareMomentImage(_image!.path, comment: true);
-        imageUrl = await _api.uploadMomentCommentImage(path);
+      final imageUrls = <String>[];
+      for (final image in _images) {
+        final path = await prepareMomentImage(
+          image.path,
+          comment: true,
+          rotationDegrees: (_imageQuarterTurns[image.path] ?? 0) * 90,
+        );
+        imageUrls.add(await _api.uploadMomentCommentImage(path));
       }
       final root = _replyingTo?.parentId ?? _replyingTo?.id;
       await _api.addMomentComment(
         widget.momentId,
         content: _comment.text,
-        imageUrl: imageUrl,
+        imageUrls: imageUrls,
         parentId: root,
         replyToCommentId: _replyingTo?.id,
+        mentionedUserIds: activeMomentMentionIds(
+          _comment.text,
+          _commentMentions,
+        ),
       );
       _comment.clear();
       _commentFocus.unfocus();
       if (mounted)
         setState(() {
           _replyingTo = null;
-          _image = null;
+          _images.clear();
+          _imageQuarterTurns.clear();
+          _commentMentions = const [];
         });
       await _loadComments(refresh: true);
       _refreshMoment();
@@ -242,60 +360,10 @@ class _MomentDetailPageState extends State<MomentDetailPage> {
 
   Future<void> _shareComment(MomentComment comment) async {
     try {
-      final conversations = await _api.conversations();
+      final moment = await _api.moment(widget.momentId);
       if (!mounted) return;
-      await showModalBottomSheet<void>(
-        context: context,
-        builder: (sheetContext) => SafeArea(
-          child: SizedBox(
-            height: 420,
-            child: Column(
-              children: [
-                const Padding(
-                  padding: EdgeInsets.all(16),
-                  child: Text(
-                    '分享评论到聊天',
-                    style: TextStyle(fontSize: 18, fontWeight: FontWeight.w700),
-                  ),
-                ),
-                Expanded(
-                  child: conversations.isEmpty
-                      ? const Center(child: Text('暂无可分享的聊天'))
-                      : ListView.builder(
-                          itemCount: conversations.length,
-                          itemBuilder: (_, index) {
-                            final item = conversations[index];
-                            return ListTile(
-                              leading: const CircleAvatar(
-                                child: Icon(Icons.chat_bubble_outline),
-                              ),
-                              title: Text(item.title),
-                              enabled: item.isActive,
-                              onTap: () async {
-                                try {
-                                  await _api.shareMoment(
-                                    conversationId: item.id,
-                                    momentId: widget.momentId,
-                                    commentId: comment.id,
-                                  );
-                                  if (!sheetContext.mounted) return;
-                                  Navigator.pop(sheetContext);
-                                  if (mounted)
-                                    AppNotice.show(context, '评论已分享到聊天');
-                                } on ApiException catch (e) {
-                                  if (mounted)
-                                    AppNotice.show(context, e.message);
-                                }
-                              },
-                            );
-                          },
-                        ),
-                ),
-              ],
-            ),
-          ),
-        ),
-      );
+      await showMomentShareSheet(context, moment: moment, comment: comment);
+      if (mounted) _refreshMoment();
     } on ApiException catch (e) {
       if (mounted) AppNotice.show(context, e.message);
     }
@@ -304,6 +372,34 @@ class _MomentDetailPageState extends State<MomentDetailPage> {
   void _reply(MomentComment comment) {
     setState(() => _replyingTo = comment);
     _commentFocus.requestFocus();
+  }
+
+  Future<void> _quoteComment(MomentComment comment) async {
+    String momentTitle = '';
+    try {
+      momentTitle = (await _api.moment(widget.momentId)).title;
+    } catch (_) {}
+    if (!mounted) return;
+    Navigator.of(context).push(
+      MaterialPageRoute(
+        builder: (_) => MomentComposerPage(
+          initialQuote: MomentQuote(
+            type: 'COMMENT',
+            momentId: widget.momentId,
+            commentId: comment.id,
+            author: MomentUser(
+              id: comment.userId,
+              nickname: comment.nickname,
+              avatarUrl: comment.avatarUrl,
+              merchant: comment.merchant,
+            ),
+            momentTitle: momentTitle,
+            content: comment.content,
+            createdAt: comment.createdAt,
+          ),
+        ),
+      ),
+    );
   }
 
   void _setMoment(Moment value) {
@@ -316,7 +412,7 @@ class _MomentDetailPageState extends State<MomentDetailPage> {
 
   void _refreshMoment() {
     if (!mounted) return;
-    final future = _api.moment(widget.momentId);
+    final future = _fetchMoment();
     setState(() {
       _momentFuture = future;
     });
@@ -369,8 +465,10 @@ class _MomentDetailPageState extends State<MomentDetailPage> {
                       ),
                     ),
                     const SizedBox(height: 16),
-                    const Text(
-                      '动态暂时无法查看',
+                    Text(
+                      _unavailableReason?.isNotEmpty == true
+                          ? '该动态已被设置权限，无法查看详情'
+                          : '动态暂时无法查看',
                       style: TextStyle(
                         fontSize: 18,
                         fontWeight: FontWeight.w700,
@@ -378,8 +476,10 @@ class _MomentDetailPageState extends State<MomentDetailPage> {
                       ),
                     ),
                     const SizedBox(height: 6),
-                    const Text(
-                      '它可能已被删除，也可能是网络暂时不可用',
+                    Text(
+                      _unavailableReason?.isNotEmpty == true
+                          ? _unavailableReason!
+                          : '它可能已被删除，也可能是网络暂时不可用',
                       textAlign: TextAlign.center,
                       style: TextStyle(
                         fontSize: 13,
@@ -409,7 +509,9 @@ class _MomentDetailPageState extends State<MomentDetailPage> {
               moment: snapshot.data!,
               onChanged: _setMoment,
               onDeleted: () {
-                if (Navigator.of(context).canPop()) Navigator.of(context).pop();
+                if (Navigator.of(context).canPop()) {
+                  Navigator.of(context).pop(true);
+                }
               },
               onCommentTap: _scrollToComments,
             ),
@@ -492,6 +594,7 @@ class _MomentDetailPageState extends State<MomentDetailPage> {
                             onDelete: _delete,
                             onLike: _likeComment,
                             onShare: _shareComment,
+                            onQuote: _quoteComment,
                             onMoreReplies: () => _loadReplies(comment),
                             onCollapse: () => setState(() {
                               _expandedReplies.remove(comment.id);
@@ -520,17 +623,31 @@ class _MomentDetailPageState extends State<MomentDetailPage> {
       controller: _comment,
       focusNode: _commentFocus,
       replyingTo: _replyingTo,
-      image: _image,
+      images: _images,
+      imageQuarterTurns: _imageQuarterTurns,
       sending: _sending,
       onCancelReply: () => setState(() => _replyingTo = null),
-      onClearImage: () => setState(() => _image = null),
+      onRemoveImage: (image) => setState(() {
+        _images.remove(image);
+        _imageQuarterTurns.remove(image.path);
+      }),
+      onRotateImage: (image, delta) => setState(() {
+        _imageQuarterTurns[image.path] =
+            ((_imageQuarterTurns[image.path] ?? 0) + delta) % 4;
+      }),
       onPickImage: () async {
-        final image = await ImagePicker().pickImage(
-          source: ImageSource.gallery,
-          imageQuality: 86,
-        );
-        if (mounted) setState(() => _image = image);
+        final selected = await ImagePicker().pickMultiImage(imageQuality: 86);
+        if (mounted) {
+          setState(() {
+            final added = selected.take(6 - _images.length).toList();
+            _images.addAll(added);
+            for (final image in added) {
+              _imageQuarterTurns[image.path] = 0;
+            }
+          });
+        }
       },
+      onMention: _pickMentionUsers,
       onSend: _send,
     ),
   );
@@ -571,23 +688,29 @@ class _CommentComposerBar extends StatelessWidget {
     required this.controller,
     required this.focusNode,
     required this.replyingTo,
-    required this.image,
+    required this.images,
+    required this.imageQuarterTurns,
     required this.sending,
     required this.onCancelReply,
-    required this.onClearImage,
+    required this.onRemoveImage,
+    required this.onRotateImage,
     required this.onPickImage,
     required this.onSend,
+    required this.onMention,
   });
 
   final TextEditingController controller;
   final FocusNode focusNode;
   final MomentComment? replyingTo;
-  final XFile? image;
+  final List<XFile> images;
+  final Map<String, int> imageQuarterTurns;
   final bool sending;
   final VoidCallback onCancelReply;
-  final VoidCallback onClearImage;
+  final ValueChanged<XFile> onRemoveImage;
+  final void Function(XFile image, int delta) onRotateImage;
   final VoidCallback onPickImage;
   final VoidCallback onSend;
+  final VoidCallback onMention;
 
   @override
   Widget build(BuildContext context) => SafeArea(
@@ -643,44 +766,78 @@ class _CommentComposerBar extends StatelessWidget {
                 ],
               ),
             ),
-          if (image != null)
+          if (images.isNotEmpty)
             Align(
               alignment: Alignment.centerLeft,
               child: Padding(
                 padding: const EdgeInsets.only(bottom: 8),
-                child: Stack(
-                  clipBehavior: Clip.none,
-                  children: [
-                    ClipRRect(
-                      borderRadius: BorderRadius.circular(9),
-                      child: Image.file(
-                        File(image!.path),
-                        width: 66,
-                        height: 66,
-                        fit: BoxFit.cover,
-                      ),
-                    ),
-                    Positioned(
-                      right: -7,
-                      top: -7,
-                      child: Material(
-                        color: const Color(0xFF4D5156),
-                        shape: const CircleBorder(),
-                        child: InkWell(
-                          onTap: onClearImage,
-                          customBorder: const CircleBorder(),
-                          child: const Padding(
-                            padding: EdgeInsets.all(3),
-                            child: Icon(
-                              Icons.close_rounded,
-                              size: 14,
-                              color: Colors.white,
-                            ),
+                child: SingleChildScrollView(
+                  scrollDirection: Axis.horizontal,
+                  child: Row(
+                    children: [
+                      for (final image in images)
+                        Padding(
+                          padding: const EdgeInsets.only(right: 9),
+                          child: Stack(
+                            clipBehavior: Clip.none,
+                            children: [
+                              ClipRRect(
+                                borderRadius: BorderRadius.circular(8),
+                                child: SizedBox.square(
+                                  dimension: 66,
+                                  child: RotatedBox(
+                                    quarterTurns:
+                                        imageQuarterTurns[image.path] ?? 0,
+                                    child: Image.file(
+                                      File(image.path),
+                                      fit: BoxFit.cover,
+                                    ),
+                                  ),
+                                ),
+                              ),
+                              Positioned(
+                                left: 2,
+                                bottom: 2,
+                                child: _CommentImageRotateButton(
+                                  tooltip: '向左旋转',
+                                  icon: Icons.rotate_left_rounded,
+                                  onTap: () => onRotateImage(image, 3),
+                                ),
+                              ),
+                              Positioned(
+                                right: 2,
+                                bottom: 2,
+                                child: _CommentImageRotateButton(
+                                  tooltip: '向右旋转',
+                                  icon: Icons.rotate_right_rounded,
+                                  onTap: () => onRotateImage(image, 1),
+                                ),
+                              ),
+                              Positioned(
+                                right: -5,
+                                top: -5,
+                                child: Material(
+                                  color: const Color(0xFF4D5156),
+                                  shape: const CircleBorder(),
+                                  child: InkWell(
+                                    onTap: () => onRemoveImage(image),
+                                    customBorder: const CircleBorder(),
+                                    child: const Padding(
+                                      padding: EdgeInsets.all(3),
+                                      child: Icon(
+                                        Icons.close_rounded,
+                                        size: 14,
+                                        color: Colors.white,
+                                      ),
+                                    ),
+                                  ),
+                                ),
+                              ),
+                            ],
                           ),
                         ),
-                      ),
-                    ),
-                  ],
+                    ],
+                  ),
                 ),
               ),
             ),
@@ -691,7 +848,7 @@ class _CommentComposerBar extends StatelessWidget {
                 color: const Color(0xFFF3F4F5),
                 borderRadius: BorderRadius.circular(12),
                 child: InkWell(
-                  onTap: onPickImage,
+                  onTap: images.length < 6 ? onPickImage : null,
                   borderRadius: BorderRadius.circular(12),
                   child: const SizedBox.square(
                     dimension: 44,
@@ -704,6 +861,11 @@ class _CommentComposerBar extends StatelessWidget {
                 ),
               ),
               const SizedBox(width: 8),
+              IconButton(
+                tooltip: '提及用户',
+                onPressed: onMention,
+                icon: const Icon(Icons.alternate_email_rounded),
+              ),
               Expanded(
                 child: TextField(
                   controller: controller,
@@ -750,7 +912,7 @@ class _CommentComposerBar extends StatelessWidget {
                 builder: (_, value, __) {
                   final enabled =
                       !sending &&
-                      (value.text.trim().isNotEmpty || image != null);
+                      (value.text.trim().isNotEmpty || images.isNotEmpty);
                   return Material(
                     color: enabled
                         ? const Color(0xFFF28C28)
@@ -789,6 +951,74 @@ class _CommentComposerBar extends StatelessWidget {
   );
 }
 
+class _MomentCommentImages extends StatelessWidget {
+  const _MomentCommentImages({required this.images, this.size = 108});
+  final List<String> images;
+  final double size;
+
+  @override
+  Widget build(BuildContext context) => Wrap(
+    spacing: 6,
+    runSpacing: 6,
+    children: [
+      for (var index = 0; index < images.length; index++)
+        MomentImagePreview(
+          images: images,
+          index: index,
+          resolveUrl: resolveCustomerImageUrl,
+          child: ClipRRect(
+            borderRadius: BorderRadius.circular(8),
+            child: Image.network(
+              resolveCustomerImageUrl(images[index]),
+              width: size,
+              height: size,
+              fit: BoxFit.cover,
+              loadingBuilder: (_, child, progress) => progress == null
+                  ? child
+                  : SoftImageLoadingPlaceholder(width: size, height: size),
+              errorBuilder: (_, __, ___) => SizedBox.square(
+                dimension: size,
+                child: const ColoredBox(
+                  color: Color(0xFFF0F1F3),
+                  child: Icon(Icons.broken_image_outlined),
+                ),
+              ),
+            ),
+          ),
+        ),
+    ],
+  );
+}
+
+class _CommentImageRotateButton extends StatelessWidget {
+  const _CommentImageRotateButton({
+    required this.tooltip,
+    required this.icon,
+    required this.onTap,
+  });
+
+  final String tooltip;
+  final IconData icon;
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) => Tooltip(
+    message: tooltip,
+    child: Material(
+      color: const Color(0xB8000000),
+      shape: const CircleBorder(),
+      child: InkWell(
+        onTap: onTap,
+        customBorder: const CircleBorder(),
+        child: SizedBox.square(
+          dimension: 24,
+          child: Icon(icon, size: 15, color: Colors.white),
+        ),
+      ),
+    ),
+  );
+}
+
 class _CommentTile extends StatefulWidget {
   const _CommentTile({
     super.key,
@@ -802,6 +1032,7 @@ class _CommentTile extends StatefulWidget {
     required this.onDelete,
     required this.onLike,
     required this.onShare,
+    required this.onQuote,
     required this.onMoreReplies,
     required this.onCollapse,
   });
@@ -815,6 +1046,7 @@ class _CommentTile extends StatefulWidget {
   final ValueChanged<MomentComment> onDelete;
   final ValueChanged<MomentComment> onLike;
   final ValueChanged<MomentComment> onShare;
+  final ValueChanged<MomentComment> onQuote;
   final VoidCallback onMoreReplies;
   final VoidCallback onCollapse;
   @override
@@ -931,9 +1163,14 @@ class _CommentTileState extends State<_CommentTile>
                       ),
                       onSelected: (value) {
                         if (value == 'share') widget.onShare(widget.comment);
+                        if (value == 'quote') widget.onQuote(widget.comment);
                         if (value == 'delete') widget.onDelete(widget.comment);
                       },
                       itemBuilder: (_) => [
+                        const PopupMenuItem(
+                          value: 'quote',
+                          child: Text('引用评论'),
+                        ),
                         const PopupMenuItem(
                           value: 'share',
                           child: Text('分享到聊天'),
@@ -950,10 +1187,13 @@ class _CommentTileState extends State<_CommentTile>
                   ],
                 ),
                 const SizedBox(height: 7),
-                Text(
-                  widget.comment.content,
+                MomentMentionText(
+                  content: widget.comment.content,
+                  mentions: widget.comment.mentions,
                   maxLines: _contentExpanded ? null : 8,
-                  overflow: _contentExpanded ? null : TextOverflow.ellipsis,
+                  overflow: _contentExpanded
+                      ? TextOverflow.clip
+                      : TextOverflow.ellipsis,
                   style: const TextStyle(
                     fontSize: 14,
                     height: 1.5,
@@ -977,29 +1217,11 @@ class _CommentTileState extends State<_CommentTile>
                       ),
                     ),
                   ),
-                if (widget.comment.imageUrl?.isNotEmpty == true)
+                if (widget.comment.imageUrls.isNotEmpty)
                   Padding(
                     padding: const EdgeInsets.only(top: 10),
-                    child: MomentImagePreview(
-                      images: [widget.comment.imageUrl!],
-                      index: 0,
-                      resolveUrl: resolveCustomerImageUrl,
-                      child: ClipRRect(
-                        borderRadius: BorderRadius.circular(10),
-                        child: Image.network(
-                          resolveCustomerImageUrl(widget.comment.imageUrl!),
-                          width: 148,
-                          height: 148,
-                          fit: BoxFit.cover,
-                          loadingBuilder: (_, child, progress) =>
-                              progress == null
-                              ? child
-                              : const SoftImageLoadingPlaceholder(
-                                  width: 148,
-                                  height: 148,
-                                ),
-                        ),
-                      ),
+                    child: _MomentCommentImages(
+                      images: widget.comment.imageUrls,
                     ),
                   ),
                 const SizedBox(height: 8),
@@ -1042,6 +1264,7 @@ class _CommentTileState extends State<_CommentTile>
                       onReply: widget.onReply,
                       onLike: widget.onLike,
                       onShare: widget.onShare,
+                      onQuote: widget.onQuote,
                       onDelete: widget.onDelete,
                     ),
                   ),
@@ -1106,6 +1329,7 @@ class _ReplyThread extends StatelessWidget {
     required this.onLike,
     required this.onShare,
     required this.onDelete,
+    required this.onQuote,
   });
 
   final List<MomentComment> replies;
@@ -1115,6 +1339,7 @@ class _ReplyThread extends StatelessWidget {
   final ValueChanged<MomentComment> onLike;
   final ValueChanged<MomentComment> onShare;
   final ValueChanged<MomentComment> onDelete;
+  final ValueChanged<MomentComment> onQuote;
 
   @override
   Widget build(BuildContext context) => Stack(
@@ -1142,6 +1367,7 @@ class _ReplyThread extends StatelessWidget {
                 onLike: onLike,
                 onShare: onShare,
                 onDelete: onDelete,
+                onQuote: onQuote,
               ),
           ],
         ),
@@ -1159,6 +1385,7 @@ class _ReplyLine extends StatelessWidget {
     required this.onLike,
     required this.onShare,
     required this.onDelete,
+    required this.onQuote,
   });
 
   final MomentComment reply;
@@ -1167,6 +1394,7 @@ class _ReplyLine extends StatelessWidget {
   final ValueChanged<MomentComment> onLike;
   final ValueChanged<MomentComment> onShare;
   final ValueChanged<MomentComment> onDelete;
+  final ValueChanged<MomentComment> onQuote;
 
   @override
   Widget build(BuildContext context) => TweenAnimationBuilder<double>(
@@ -1246,9 +1474,14 @@ class _ReplyLine extends StatelessWidget {
                       ),
                       onSelected: (value) {
                         if (value == 'share') onShare(reply);
+                        if (value == 'quote') onQuote(reply);
                         if (value == 'delete') onDelete(reply);
                       },
                       itemBuilder: (_) => [
+                        const PopupMenuItem(
+                          value: 'quote',
+                          child: Text('引用评论'),
+                        ),
                         const PopupMenuItem(
                           value: 'share',
                           child: Text('分享到聊天'),
@@ -1276,37 +1509,21 @@ class _ReplyLine extends StatelessWidget {
                   ),
                 ],
                 const SizedBox(height: 5),
-                Text(
-                  reply.content,
+                MomentMentionText(
+                  content: reply.content,
+                  mentions: reply.mentions,
                   style: const TextStyle(
                     fontSize: 13,
                     height: 1.45,
                     color: Color(0xFF3C4043),
                   ),
                 ),
-                if (reply.imageUrl?.isNotEmpty == true)
+                if (reply.imageUrls.isNotEmpty)
                   Padding(
                     padding: const EdgeInsets.only(top: 8),
-                    child: MomentImagePreview(
-                      images: [reply.imageUrl!],
-                      index: 0,
-                      resolveUrl: resolveCustomerImageUrl,
-                      child: ClipRRect(
-                        borderRadius: BorderRadius.circular(8),
-                        child: Image.network(
-                          resolveCustomerImageUrl(reply.imageUrl!),
-                          width: 112,
-                          height: 112,
-                          fit: BoxFit.cover,
-                          loadingBuilder: (_, child, progress) =>
-                              progress == null
-                              ? child
-                              : const SoftImageLoadingPlaceholder(
-                                  width: 112,
-                                  height: 112,
-                                ),
-                        ),
-                      ),
+                    child: _MomentCommentImages(
+                      images: reply.imageUrls,
+                      size: 96,
                     ),
                   ),
                 const SizedBox(height: 5),

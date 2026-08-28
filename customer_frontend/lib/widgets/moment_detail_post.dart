@@ -5,6 +5,7 @@ import 'package:flutter/material.dart';
 import '../main.dart';
 import '../moment_models.dart';
 import '../pages/moment_feed_page.dart';
+import '../pages/moment_detail_page.dart';
 import '../pages/moment_privacy_page.dart';
 import '../pages/shop_order_page.dart';
 import '../services/api_client.dart';
@@ -12,7 +13,10 @@ import '../services/moment_api.dart';
 import '../utils/moment_time_formatter.dart';
 import 'app_notice.dart';
 import 'moment_image_viewer.dart';
+import 'moment_mention.dart';
+import 'moment_quote_card.dart';
 import 'moment_reaction_picker.dart';
+import 'moment_share_sheet.dart';
 import 'ui_utils.dart';
 
 /// 动态详情页专用正文组件。
@@ -129,105 +133,47 @@ class _MomentDetailPostState extends State<MomentDetailPost> {
     }
   }
 
-  Future<void> _share() async {
-    try {
-      final conversations = await _api.conversations();
-      if (!mounted) return;
-
-      await showModalBottomSheet<void>(
-        context: context,
-        showDragHandle: true,
-        backgroundColor: Colors.white,
-        shape: const RoundedRectangleBorder(
-          borderRadius: BorderRadius.vertical(top: Radius.circular(22)),
-        ),
-        builder: (sheetContext) => SafeArea(
-          child: SizedBox(
-            height: 420,
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                const Padding(
-                  padding: EdgeInsets.fromLTRB(20, 2, 20, 14),
-                  child: Text(
-                    '分享到聊天',
-                    style: TextStyle(
-                      fontSize: 18,
-                      fontWeight: FontWeight.w800,
-                      color: Color(0xFF202124),
-                    ),
-                  ),
-                ),
-                const Divider(height: 1, color: Color(0xFFEEEEEE)),
-                Expanded(
-                  child: conversations.isEmpty
-                      ? const Center(
-                          child: Text(
-                            '暂无可分享的聊天',
-                            style: TextStyle(color: Color(0xFF8A8F98)),
-                          ),
-                        )
-                      : ListView.separated(
-                          padding: const EdgeInsets.symmetric(vertical: 8),
-                          itemCount: conversations.length,
-                          separatorBuilder: (_, _) => const Divider(
-                            height: 1,
-                            indent: 72,
-                            color: Color(0xFFF1F2F4),
-                          ),
-                          itemBuilder: (_, index) {
-                            final item = conversations[index];
-                            return ListTile(
-                              contentPadding: const EdgeInsets.symmetric(
-                                horizontal: 18,
-                                vertical: 2,
-                              ),
-                              leading: const CircleAvatar(
-                                backgroundColor: Color(0xFFFFF0E2),
-                                child: Icon(
-                                  Icons.chat_bubble_outline_rounded,
-                                  color: Color(0xFFE77910),
-                                ),
-                              ),
-                              title: Text(
-                                item.title,
-                                maxLines: 1,
-                                overflow: TextOverflow.ellipsis,
-                              ),
-                              enabled: item.isActive,
-                              trailing: const Icon(
-                                Icons.chevron_right_rounded,
-                                size: 20,
-                              ),
-                              onTap: () async {
-                                try {
-                                  await _api.shareMoment(
-                                    conversationId: item.id,
-                                    momentId: _moment.id,
-                                  );
-                                  if (!sheetContext.mounted) return;
-                                  Navigator.pop(sheetContext);
-                                  if (mounted) {
-                                    AppNotice.show(context, '已分享到聊天');
-                                  }
-                                } on ApiException catch (error) {
-                                  if (mounted) {
-                                    AppNotice.show(context, error.message);
-                                  }
-                                }
-                              },
-                            );
-                          },
-                        ),
-                ),
-              ],
+  void _quoteMoment() {
+    Navigator.of(context).push(
+      MaterialPageRoute(
+        builder: (_) => MomentComposerPage(
+          initialQuote: MomentQuote(
+            type: 'MOMENT',
+            momentId: _moment.id,
+            author: MomentUser(
+              id: _moment.authorId,
+              nickname: _moment.authorNickname,
+              avatarUrl: _moment.authorAvatarUrl,
+              merchant: _moment.merchant,
             ),
+            momentTitle: _moment.title,
+            content: _moment.content,
+            createdAt: _moment.publishedAt ?? _moment.createdAt,
           ),
         ),
-      );
-    } on ApiException catch (error) {
-      if (mounted) AppNotice.show(context, error.message);
-    }
+      ),
+    );
+  }
+
+  void _openQuote() {
+    final quote = _moment.quote;
+    if (quote == null || quote.momentId <= 0) return;
+    Navigator.of(context).push(
+      MaterialPageRoute(
+        builder: (_) => MomentDetailPage(
+          momentId: quote.momentId,
+          highlightCommentId: quote.commentId,
+        ),
+      ),
+    );
+  }
+
+  Future<void> _share() async {
+    await showMomentShareSheet(context, moment: _moment);
+    if (!mounted) return;
+    try {
+      _replaceMoment(await _api.moment(_moment.id));
+    } catch (_) {}
   }
 
   void _openAuthor() {
@@ -249,7 +195,13 @@ class _MomentDetailPostState extends State<MomentDetailPost> {
 
   @override
   Widget build(BuildContext context) {
-    final displayTime = _shouldShowEdited(_moment)
+    final displayTime =
+        shouldShowMomentEdited(
+          editedAt: _moment.editedAt,
+          publishedAt: _moment.publishedAt,
+          createdAt: _moment.createdAt,
+          status: _moment.status,
+        )
         ? '编辑于 ${formatMomentTime(_moment.editedAt!)}'
         : formatMomentTime(_moment.publishedAt ?? _moment.createdAt);
 
@@ -269,6 +221,7 @@ class _MomentDetailPostState extends State<MomentDetailPost> {
               onAuthorTap: _openAuthor,
               onEdit: _moment.mine ? _editMoment : null,
               onDelete: _moment.mine ? _deleteMoment : null,
+              onQuote: _quoteMoment,
             ),
           ),
           Padding(
@@ -286,14 +239,17 @@ class _MomentDetailPostState extends State<MomentDetailPost> {
                   ),
                 ),
                 const SizedBox(height: 11),
-                SelectableText(
-                  _moment.content,
+                MomentMentionText(
+                  content: _moment.content,
+                  mentions: _moment.mentions,
                   style: const TextStyle(
                     fontSize: 16,
                     height: 1.7,
                     color: Color(0xFF303134),
                   ),
                 ),
+                if (_moment.quote != null)
+                  MomentQuoteCard(quote: _moment.quote!, onTap: _openQuote),
                 if (_moment.images.isNotEmpty) ...[
                   const SizedBox(height: 16),
                   _DetailImages(images: _moment.images),
@@ -305,8 +261,8 @@ class _MomentDetailPostState extends State<MomentDetailPost> {
                 if (_moment.topics.isNotEmpty) ...[
                   const SizedBox(height: 14),
                   Wrap(
-                    spacing: 8,
-                    runSpacing: 8,
+                    spacing: 4,
+                    runSpacing: 5,
                     children: [
                       for (final topic in _moment.topics)
                         _DetailTopicChip(
@@ -382,7 +338,9 @@ class _MomentDetailPostState extends State<MomentDetailPost> {
                 Expanded(
                   child: _DetailAction(
                     icon: Icons.ios_share_rounded,
-                    label: '分享',
+                    label: widget.moment.shareCount == 0
+                        ? '分享'
+                        : '分享 ${widget.moment.shareCount}',
                     onTap: _share,
                   ),
                 ),
@@ -402,6 +360,7 @@ class _DetailAuthorHeader extends StatelessWidget {
     required this.onAuthorTap,
     this.onEdit,
     this.onDelete,
+    required this.onQuote,
   });
 
   final Moment moment;
@@ -409,6 +368,7 @@ class _DetailAuthorHeader extends StatelessWidget {
   final VoidCallback onAuthorTap;
   final VoidCallback? onEdit;
   final VoidCallback? onDelete;
+  final VoidCallback onQuote;
 
   @override
   Widget build(BuildContext context) => Row(
@@ -464,22 +424,23 @@ class _DetailAuthorHeader extends StatelessWidget {
           ],
         ),
       ),
-      if (onEdit != null || onDelete != null)
-        PopupMenuButton<String>(
-          tooltip: '更多操作',
-          padding: EdgeInsets.zero,
-          icon: const Icon(Icons.more_horiz_rounded, color: Color(0xFF777B82)),
-          onSelected: (value) {
-            if (value == 'edit') onEdit?.call();
-            if (value == 'delete') onDelete?.call();
-          },
-          itemBuilder: (_) => [
-            if (onEdit != null)
-              const PopupMenuItem(value: 'edit', child: Text('编辑动态')),
-            if (onDelete != null)
-              const PopupMenuItem(value: 'delete', child: Text('删除动态')),
-          ],
-        ),
+      PopupMenuButton<String>(
+        tooltip: '更多操作',
+        padding: EdgeInsets.zero,
+        icon: const Icon(Icons.more_horiz_rounded, color: Color(0xFF777B82)),
+        onSelected: (value) {
+          if (value == 'edit') onEdit?.call();
+          if (value == 'delete') onDelete?.call();
+          if (value == 'quote') onQuote();
+        },
+        itemBuilder: (_) => [
+          const PopupMenuItem(value: 'quote', child: Text('引用动态')),
+          if (onEdit != null)
+            const PopupMenuItem(value: 'edit', child: Text('编辑动态')),
+          if (onDelete != null)
+            const PopupMenuItem(value: 'delete', child: Text('删除动态')),
+        ],
+      ),
     ],
   );
 }
@@ -608,7 +569,7 @@ class _DetailTopicChip extends StatelessWidget {
     onTap: onTap,
     borderRadius: BorderRadius.circular(8),
     child: Ink(
-      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 5),
       decoration: BoxDecoration(
         color: const Color(0xFFFFF3E8),
         borderRadius: BorderRadius.circular(8),
@@ -897,14 +858,4 @@ class _DetailBadge extends StatelessWidget {
       ],
     ),
   );
-}
-
-bool _shouldShowEdited(Moment moment) {
-  if (moment.editedAt?.isNotEmpty != true || moment.status != 'PUBLISHED') {
-    return false;
-  }
-  final edited = DateTime.tryParse(moment.editedAt!);
-  final published = DateTime.tryParse(moment.publishedAt ?? moment.createdAt);
-  if (edited == null || published == null) return true;
-  return edited.isAfter(published.add(const Duration(seconds: 1)));
 }

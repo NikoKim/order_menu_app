@@ -135,7 +135,30 @@ public class MomentService {
     validate(r); validateReference(userId,r.shopId(),r.dishId()); Moment m=new Moment(); apply(m,r); m.setAuthorUserId(userId); LocalDateTime now=LocalDateTime.now(); m.setCreatedAt(now); m.setUpdatedAt(now); if("PUBLISHED".equals(m.getStatus()))m.setPublishedAt(now); momentMapper.insert(m);auxiliaryCache.evictMomentMissing(m.getId()); replaceTopics(m.getId(),userId,r.topics());MomentQuote quote=replaceQuote(userId,m.getId(),r);Set<Long> mentions=replaceMomentMentions(m.getId(),r.mentionedUserIds());if("PUBLISHED".equals(m.getStatus())){invalidatePublishedMoment(m,topicIds(m.getId()));notifyMomentMentions(m,userId,mentions);notifyQuote(m,userId,quote);pushMomentEvent(m,"PUBLISHED",userId);} return toResponseFresh(userId,momentMapper.selectById(m.getId()));
   }
   @Transactional public MomentDtos.MomentResponse update(Long userId,Long id,MomentDtos.UpsertRequest r){
-    Moment m=requireOwned(userId,id); validate(r); validateReference(userId,r.shopId(),r.dishId()); boolean wasDraft="DRAFT".equals(m.getStatus());List<Long> oldTopics=topicIds(id);Set<Long> oldMentions=mentionedUsers(id);String oldQuote=quoteKey(quoteMapper.selectById(id));apply(m,r); LocalDateTime now=LocalDateTime.now();m.setEditedAt(wasDraft?null:now); m.setUpdatedAt(now); if(wasDraft&&"PUBLISHED".equals(m.getStatus()))m.setPublishedAt(now); momentMapper.updateById(m); replaceTopics(id,userId,r.topics());MomentQuote quote=replaceQuote(userId,id,r);Set<Long> mentions=replaceMomentMentions(id,r.mentionedUserIds());Set<Long> affectedTopics=new HashSet<>(oldTopics);affectedTopics.addAll(topicIds(id));cache.evictMoment(id);cache.evictTopicMoments(affectedTopics);cache.evictHotTopics();cache.evictHotMomentIds();cache.evictUserFeeds(userId);cache.evictUserMoments(userId);cache.evictUnread(relatedUsers(userId));if("PUBLISHED".equals(m.getStatus())){Set<Long> recipients=wasDraft?mentions:new HashSet<>(mentions);if(!wasDraft)recipients.removeAll(oldMentions);notifyMomentMentions(m,userId,recipients);if(wasDraft||!Objects.equals(oldQuote,quoteKey(quote)))notifyQuote(m,userId,quote);if(wasDraft)pushMomentEvent(m,"PUBLISHED",userId);else pushMomentEvent(m,"UPDATED",userId);} return toResponseFresh(userId,momentMapper.selectById(id));
+    Moment m=requireOwned(userId,id); validate(r); validateReference(userId,r.shopId(),r.dishId());
+    boolean wasDraft="DRAFT".equals(m.getStatus());
+    List<Long> oldTopics=topicIds(id);Set<Long> oldMentions=mentionedUsers(id);String oldQuote=quoteKey(quoteMapper.selectById(id));
+    String oldTitle=m.getTitle(),oldContent=m.getContent(),oldVisibility=m.getVisibility(),oldStatus=m.getStatus(),oldImages=m.getImageUrls();
+    Long oldShopId=m.getShopId(),oldDishId=m.getDishId();
+    apply(m,r);
+    boolean imageChanged=!Objects.equals(oldImages,m.getImageUrls());
+    boolean nonImageScalarChanged=!Objects.equals(oldTitle,m.getTitle())||!Objects.equals(oldContent,m.getContent())
+        ||!Objects.equals(oldVisibility,m.getVisibility())||!Objects.equals(oldStatus,m.getStatus())
+        ||!Objects.equals(oldShopId,m.getShopId())||!Objects.equals(oldDishId,m.getDishId());
+    boolean scalarChanged=nonImageScalarChanged||imageChanged;
+    LocalDateTime now=LocalDateTime.now();
+    boolean legacyImageCompletion=!nonImageScalarChanged&&imageChanged&&!StringUtils.hasText(oldImages)
+        &&StringUtils.hasText(m.getImageUrls())&&m.getPublishedAt()!=null
+        &&!now.isAfter(m.getPublishedAt().plusSeconds(30));
+    boolean meaningfulScalarChanged=scalarChanged&&!legacyImageCompletion;
+    m.setEditedAt(wasDraft?null:(meaningfulScalarChanged?now:m.getEditedAt()));m.setUpdatedAt(now);
+    if(wasDraft&&"PUBLISHED".equals(m.getStatus()))m.setPublishedAt(now);
+    momentMapper.updateById(m);
+    replaceTopics(id,userId,r.topics());MomentQuote quote=replaceQuote(userId,id,r);Set<Long> mentions=replaceMomentMentions(id,r.mentionedUserIds());
+    List<Long> newTopics=topicIds(id);boolean relationChanged=!new HashSet<>(oldTopics).equals(new HashSet<>(newTopics))
+        ||!oldMentions.equals(mentions)||!Objects.equals(oldQuote,quoteKey(quote));
+    if(!wasDraft&&!meaningfulScalarChanged&&relationChanged){m.setEditedAt(now);momentMapper.updateById(m);}
+    Set<Long> affectedTopics=new HashSet<>(oldTopics);affectedTopics.addAll(newTopics);cache.evictMoment(id);cache.evictTopicMoments(affectedTopics);cache.evictHotTopics();cache.evictHotMomentIds();cache.evictUserFeeds(userId);cache.evictUserMoments(userId);cache.evictUnread(relatedUsers(userId));if("PUBLISHED".equals(m.getStatus())){Set<Long> recipients=wasDraft?mentions:new HashSet<>(mentions);if(!wasDraft)recipients.removeAll(oldMentions);notifyMomentMentions(m,userId,recipients);if(wasDraft||!Objects.equals(oldQuote,quoteKey(quote)))notifyQuote(m,userId,quote);if(wasDraft)pushMomentEvent(m,"PUBLISHED",userId);else if(scalarChanged||relationChanged)pushMomentEvent(m,"UPDATED",userId);} return toResponseFresh(userId,momentMapper.selectById(id));
   }
   @Transactional public void delete(Long userId,Long id){ Moment m=requireOwned(userId,id);List<Long> topicIds=topicIds(id);momentMapper.deleteById(id);auxiliaryCache.markMomentMissing(id);topicIds.forEach(this::recomputeTopicUsage);cache.evictMoment(id);invalidatePublishedMoment(m,topicIds); }
   public MomentDtos.PageResponse<MomentDtos.MomentResponse> drafts(Long userId,long page,long size){ size=Math.min(Math.max(size,1),30); page=Math.max(page,1); return page(userId,momentMapper.selectPage(new Page<>(page,size),new LambdaQueryWrapper<Moment>().eq(Moment::getAuthorUserId,userId).eq(Moment::getStatus,"DRAFT").orderByDesc(Moment::getUpdatedAt))); }

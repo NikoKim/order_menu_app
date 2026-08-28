@@ -21,6 +21,17 @@ export function formatMomentTime(value) {
   return `${date.getFullYear()}-${two(date.getMonth() + 1)}-${two(date.getDate())} ${two(date.getHours())}:${two(date.getMinutes())}`
 }
 
+export function hasMeaningfulMomentEdit(moment) {
+  if (!moment?.editedAt || moment.status !== 'PUBLISHED') return false
+  const editedAt = new Date(moment.editedAt)
+  const publishedAt = new Date(moment.publishedAt || moment.createdAt)
+  if (Number.isNaN(editedAt.getTime())) return false
+  if (Number.isNaN(publishedAt.getTime())) return true
+
+  // Legacy clients uploaded images through an immediate follow-up update.
+  return editedAt.getTime() - publishedAt.getTime() > 30000
+}
+
 function two(value) {
   return String(value).padStart(2, '0')
 }

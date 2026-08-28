@@ -81,6 +81,96 @@ class MomentReaction {
   );
 }
 
+class MomentUser {
+  const MomentUser({
+    required this.id,
+    required this.nickname,
+    this.avatarUrl,
+    this.role = 'CUSTOMER',
+    this.merchant = false,
+  });
+
+  final int id;
+  final String nickname;
+  final String? avatarUrl;
+  final String role;
+  final bool merchant;
+
+  factory MomentUser.fromJson(Map<String, dynamic> json) => MomentUser(
+    id: _momentInt(json['id'] ?? json['userId']),
+    nickname: (json['nickname'] ?? '用户').toString(),
+    avatarUrl: json['avatarUrl']?.toString(),
+    role: (json['role'] ?? 'CUSTOMER').toString(),
+    merchant: json['merchant'] == true || json['role'] == 'SHOP',
+  );
+}
+
+class MomentUserCard extends MomentUser {
+  const MomentUserCard({
+    required super.id,
+    required super.nickname,
+    super.avatarUrl,
+    super.role,
+    super.merchant,
+    this.phone,
+    this.phoneVisible = false,
+    this.self = false,
+  });
+
+  final String? phone;
+  final bool phoneVisible;
+  final bool self;
+
+  factory MomentUserCard.fromJson(Map<String, dynamic> json) => MomentUserCard(
+    id: _momentInt(json['id'] ?? json['userId']),
+    nickname: (json['nickname'] ?? '用户').toString(),
+    avatarUrl: json['avatarUrl']?.toString(),
+    role: (json['role'] ?? 'CUSTOMER').toString(),
+    merchant: json['merchant'] == true || json['role'] == 'SHOP',
+    phone: json['phone']?.toString(),
+    phoneVisible: json['phoneVisible'] == true,
+    self: json['self'] == true,
+  );
+}
+
+class MomentQuote {
+  const MomentQuote({
+    required this.type,
+    required this.momentId,
+    required this.content,
+    required this.createdAt,
+    this.commentId,
+    this.author,
+    this.momentTitle = '',
+    this.available = true,
+    this.unavailableReason,
+  });
+
+  final String type;
+  final int momentId;
+  final int? commentId;
+  final MomentUser? author;
+  final String momentTitle;
+  final String content;
+  final String createdAt;
+  final bool available;
+  final String? unavailableReason;
+
+  factory MomentQuote.fromJson(Map<String, dynamic> json) => MomentQuote(
+    type: (json['type'] ?? 'MOMENT').toString(),
+    momentId: _momentInt(json['momentId']),
+    commentId: json['commentId'] == null ? null : _momentInt(json['commentId']),
+    author: json['author'] is Map<String, dynamic>
+        ? MomentUser.fromJson(json['author'] as Map<String, dynamic>)
+        : null,
+    momentTitle: (json['momentTitle'] ?? '').toString(),
+    content: (json['content'] ?? '').toString(),
+    createdAt: (json['createdAt'] ?? '').toString(),
+    available: json['available'] != false,
+    unavailableReason: json['unavailableReason']?.toString(),
+  );
+}
+
 class MomentComment {
   const MomentComment({
     required this.id,
@@ -90,6 +180,7 @@ class MomentComment {
     required this.createdAt,
     this.avatarUrl,
     this.imageUrl,
+    this.imageUrls = const [],
     this.parentId,
     this.replyToUserId,
     this.replyToNickname,
@@ -100,6 +191,7 @@ class MomentComment {
     this.likeCount = 0,
     this.replyCount = 0,
     this.replies = const [],
+    this.mentions = const [],
   });
   final int id;
   final int userId;
@@ -108,6 +200,7 @@ class MomentComment {
   final String createdAt;
   final String? avatarUrl;
   final String? imageUrl;
+  final List<String> imageUrls;
   final int? parentId;
   final int? replyToUserId;
   final String? replyToNickname;
@@ -118,6 +211,7 @@ class MomentComment {
   final int likeCount;
   final int replyCount;
   final List<MomentComment> replies;
+  final List<MomentUser> mentions;
 
   factory MomentComment.fromJson(Map<String, dynamic> json) {
     final replyData = json['replies'] ?? json['replyPreview'];
@@ -125,6 +219,16 @@ class MomentComment {
         ? json['author'] as Map<String, dynamic>
         : const <String, dynamic>{};
     final rawImages = json['imageUrls'];
+    final replies = replyData is List
+        ? replyData
+              .whereType<Map<String, dynamic>>()
+              .map(MomentComment.fromJson)
+              .toList()
+        : <MomentComment>[];
+    replies.sort((a, b) {
+      final byTime = a.createdAt.compareTo(b.createdAt);
+      return byTime != 0 ? byTime : a.id.compareTo(b.id);
+    });
     return MomentComment(
       id: _momentInt(json['id']),
       userId: _momentInt(
@@ -146,6 +250,14 @@ class MomentComment {
       imageUrl: rawImages is List && rawImages.isNotEmpty
           ? rawImages.first.toString()
           : json['imageUrl']?.toString(),
+      imageUrls: rawImages is List
+          ? rawImages
+                .map((item) => item.toString())
+                .where((e) => e.isNotEmpty)
+                .toList()
+          : json['imageUrl']?.toString().isNotEmpty == true
+          ? [json['imageUrl'].toString()]
+          : const [],
       parentId: (json['parentCommentId'] ?? json['parentId']) == null
           ? null
           : _momentInt(json['parentCommentId'] ?? json['parentId']),
@@ -162,10 +274,11 @@ class MomentComment {
       liked: json['liked'] == true || json['likedByMe'] == true,
       likeCount: _momentInt(json['likeCount']),
       replyCount: _momentInt(json['replyCount']),
-      replies: replyData is List
-          ? replyData
+      replies: replies,
+      mentions: json['mentions'] is List
+          ? (json['mentions'] as List)
                 .whereType<Map<String, dynamic>>()
-                .map(MomentComment.fromJson)
+                .map(MomentUser.fromJson)
                 .toList()
           : const [],
     );
@@ -205,6 +318,12 @@ class Moment {
     this.dishDescription,
     this.dishSalesCount,
     this.hotComment,
+    this.quote,
+    this.mentions = const [],
+    this.rootCommentCount = 0,
+    this.shareCount = 0,
+    this.appShareCount = 0,
+    this.externalShareCount = 0,
   });
   final int id;
   final int authorId;
@@ -237,6 +356,12 @@ class Moment {
   final String? dishDescription;
   final int? dishSalesCount;
   final MomentComment? hotComment;
+  final MomentQuote? quote;
+  final List<MomentUser> mentions;
+  final int rootCommentCount;
+  final int shareCount;
+  final int appShareCount;
+  final int externalShareCount;
 
   factory Moment.fromJson(Map<String, dynamic> json) {
     final authorData = json['author'] is Map<String, dynamic>
@@ -296,6 +421,10 @@ class Moment {
       liked: json['liked'] == true || json['likedByMe'] == true,
       likeCount: _momentInt(json['likeCount']),
       commentCount: _momentInt(json['commentCount']),
+      rootCommentCount: _momentInt(json['rootCommentCount']),
+      shareCount: _momentInt(json['shareCount']),
+      appShareCount: _momentInt(json['appShareCount']),
+      externalShareCount: _momentInt(json['externalShareCount']),
       reactions: (json['reactions'] is List)
           ? (json['reactions'] as List)
                 .whereType<Map<String, dynamic>>()
@@ -335,6 +464,15 @@ class Moment {
       hotComment: json['hotComment'] is Map<String, dynamic>
           ? MomentComment.fromJson(json['hotComment'] as Map<String, dynamic>)
           : null,
+      quote: json['quote'] is Map<String, dynamic>
+          ? MomentQuote.fromJson(json['quote'] as Map<String, dynamic>)
+          : null,
+      mentions: json['mentions'] is List
+          ? (json['mentions'] as List)
+                .whereType<Map<String, dynamic>>()
+                .map(MomentUser.fromJson)
+                .toList()
+          : const [],
     );
   }
 }

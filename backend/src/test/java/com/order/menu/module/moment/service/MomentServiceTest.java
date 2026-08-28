@@ -287,6 +287,27 @@ class MomentServiceTest {
     verify(quotes,never()).deleteById(20L);verify(quotes,never()).insert(any(MomentQuote.class));
   }
 
+  @Test void noOpPublishedUpdateDoesNotCreateEditedMarker() {
+    Moment owner=published(20L,1L);when(moments.selectById(20L)).thenReturn(owner);
+    User author=new User();author.setId(1L);author.setNickname("author");author.setRole("CUSTOMER");when(users.selectById(1L)).thenReturn(author);
+
+    service.update(1L,20L,new MomentDtos.UpsertRequest(
+        "title","content","PUBLIC","PUBLISHED",null,null,List.of(),List.of(),null,null,List.of()));
+
+    assertNull(owner.getEditedAt());verify(moments,times(1)).updateById(owner);
+    verify(wsPushService,never()).pushToUser(anyLong(),eq("MOMENT"),eq("UPDATED"),any());
+  }
+
+  @Test void immediateLegacyImageCompletionDoesNotCreateEditedMarker() throws Exception {
+    Moment owner=published(21L,1L);when(moments.selectById(21L)).thenReturn(owner);
+    User author=new User();author.setId(1L);author.setNickname("author");author.setRole("CUSTOMER");when(users.selectById(1L)).thenReturn(author);
+
+    service.update(1L,21L,new MomentDtos.UpsertRequest(
+        "title","content","PUBLIC","PUBLISHED",null,null,List.of("/moments/one.jpg"),List.of(),null,null,List.of()));
+
+    assertNull(owner.getEditedAt());assertEquals(List.of("/moments/one.jpg"),new com.fasterxml.jackson.databind.ObjectMapper().readValue(owner.getImageUrls(),List.class));
+  }
+
   @Test void appShareIsCountedOnlyAfterChatMessageSucceeds() {
     Moment moment=published(31L,2L);when(moments.selectById(31L)).thenReturn(moment);
     User author=new User();author.setId(2L);author.setNickname("author");when(users.selectById(2L)).thenReturn(author);

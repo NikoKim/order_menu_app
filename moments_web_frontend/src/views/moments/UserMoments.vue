@@ -29,7 +29,7 @@
       <EmptyState v-else icon="document" title="暂无可见动态" />
     </main>
 
-    <ImageViewer :visible="viewer.visible" :src="viewer.src" @close="viewer.visible = false" />
+    <ImageViewer :visible="viewer.visible" :images="viewer.images" :initial-index="viewer.index" @close="viewer.visible = false" />
     <MomentShareDialog v-if="shareMoment" :moment="shareMoment" @close="shareMoment = null" />
   </div>
 </template>
@@ -55,7 +55,7 @@ const hasMore = ref(false)
 const loading = ref(true)
 const loadingMore = ref(false)
 const error = ref('')
-const viewer = ref({ visible: false, src: '' })
+const viewer = ref({ visible: false, images: [], index: 0 })
 const shareMoment = ref(null)
 const nickname = computed(() => route.query.nickname || 'Ta')
 
@@ -97,7 +97,7 @@ function openTopic(topic) {
 }
 function viewImage(moment, index) {
   const url = moment.imageUrls?.[index]
-  if (url) viewer.value = { visible: true, src: imageUrl(url) }
+  if (url) viewer.value = { visible: true, images: moment.imageUrls.map(imageUrl), index }
 }
 
 onMounted(loadMoments)

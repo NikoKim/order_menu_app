@@ -54,7 +54,7 @@ public class GlobalExceptionHandler {
     @ExceptionHandler(MaxUploadSizeExceededException.class)
     public ResponseEntity<ApiResponse<Void>> handleUploadSize() {
         return ResponseEntity.status(HttpStatus.PAYLOAD_TOO_LARGE)
-                .body(ApiResponse.fail(ErrorCode.PAYLOAD_TOO_LARGE, "Uploaded file is too large"));
+                .body(ApiResponse.fail(ErrorCode.PAYLOAD_TOO_LARGE, "上传文件超过30MB限制"));
     }
 
     @ExceptionHandler(HttpMediaTypeNotSupportedException.class)

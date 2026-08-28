@@ -5,21 +5,21 @@ void main() {
   final now = DateTime.utc(2026, 7, 16, 4);
 
   test('formats relative time at minute and hour boundaries', () {
-    expect(formatMomentTime('2026-07-16T11:59:59', now: now), '0分钟前');
+    expect(formatMomentTime('2026-07-16T11:59:59', now: now), '刚刚');
     expect(formatMomentTime('2026-07-16T11:59:00', now: now), '1分钟前');
     expect(formatMomentTime('2026-07-16T11:01:00', now: now), '59分钟前');
     expect(formatMomentTime('2026-07-16T11:00:00', now: now), '1小时前');
     expect(formatMomentTime('2026-07-15T12:01:00', now: now), '23小时前');
-    expect(formatMomentTime('2026-07-15T12:00:00', now: now), '24小时前');
+    expect(formatMomentTime('2026-07-15T12:00:00', now: now), '昨天 12:00');
   });
 
   test('formats yesterday and absolute calendar dates', () {
     expect(formatMomentTime('2026-07-15T11:59:59', now: now), '昨天 11:59');
     expect(formatMomentTime('2026-07-15T08:05:00', now: now), '昨天 08:05');
-    expect(formatMomentTime('2026-07-10T08:05:00', now: now), '07月10日 08:05');
+    expect(formatMomentTime('2026-07-10T08:05:00', now: now), '07-10 08:05');
     expect(
       formatMomentTime('2025-12-31T23:59:00', now: now),
-      '2025年12月31日 23:59',
+      '2025-12-31 23:59',
     );
   });
 
@@ -27,7 +27,7 @@ void main() {
     'keeps invalid values and clamps small future clock skew to zero minutes',
     () {
       expect(formatMomentTime('not-a-date', now: now), 'not-a-date');
-      expect(formatMomentTime('2026-07-16T12:02:00', now: now), '0分钟前');
+      expect(formatMomentTime('2026-07-16T12:02:00', now: now), '刚刚');
       expect(formatMomentTime('2026-07-16T03:00:00Z', now: now), '1小时前');
       expect(formatMomentTime('2026-07-16T11:00:00+08:00', now: now), '1小时前');
     },
@@ -61,4 +61,28 @@ void main() {
       isFalse,
     );
   });
+
+  test(
+    'ignores legacy upload updates when deciding whether a moment was edited',
+    () {
+      expect(
+        shouldShowMomentEdited(
+          editedAt: '2026-07-31T19:45:01+08:00',
+          publishedAt: '2026-07-31T19:44:52+08:00',
+          createdAt: '2026-07-31T19:44:52+08:00',
+          status: 'PUBLISHED',
+        ),
+        isFalse,
+      );
+      expect(
+        shouldShowMomentEdited(
+          editedAt: '2026-08-24T11:26:03+08:00',
+          publishedAt: '2026-08-24T09:27:31+08:00',
+          createdAt: '2026-08-24T09:27:31+08:00',
+          status: 'PUBLISHED',
+        ),
+        isTrue,
+      );
+    },
+  );
 }

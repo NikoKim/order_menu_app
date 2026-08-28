@@ -39,9 +39,23 @@ extension CustomerMomentApi on CustomerApi {
     },
   );
 
+  Future<List<Moment>> hotMoments({int limit = 10}) => api.get(
+    '/moments/hot',
+    (json) => (json as List? ?? const [])
+        .whereType<Map<String, dynamic>>()
+        .map(Moment.fromJson)
+        .toList(),
+    query: {'limit': '$limit'},
+  );
+
   Future<Moment> moment(int id) => api.get(
     '/moments/$id',
     (json) => Moment.fromJson(json as Map<String, dynamic>),
+  );
+
+  Future<String?> momentUnavailableReason(int id) => api.get(
+    '/moments/$id/availability',
+    (json) => json is Map ? json['reason']?.toString() : null,
   );
 
   Future<Moment> publishMoment({
@@ -54,6 +68,9 @@ extension CustomerMomentApi on CustomerApi {
     int? shopId,
     int? dishId,
     bool draft = false,
+    int? quotedMomentId,
+    int? quotedCommentId,
+    List<int> mentionedUserIds = const [],
   }) {
     final body = {
       'title': title.trim(),
@@ -64,6 +81,9 @@ extension CustomerMomentApi on CustomerApi {
       'shopId': shopId,
       'dishId': dishId,
       'status': draft ? 'DRAFT' : 'PUBLISHED',
+      'quotedMomentId': quotedMomentId,
+      'quotedCommentId': quotedCommentId,
+      'mentionedUserIds': mentionedUserIds,
     }..removeWhere((_, value) => value == null);
     if (id == null) {
       return api.post(
@@ -124,6 +144,11 @@ extension CustomerMomentApi on CustomerApi {
     query: {'page': '$page', 'pageSize': '$pageSize'},
   );
 
+  Future<MomentComment> momentComment(int momentId, int commentId) => api.get(
+    '/moments/$momentId/comments/$commentId',
+    (json) => MomentComment.fromJson(json as Map<String, dynamic>),
+  );
+
   Future<String> uploadMomentCommentImage(String filePath) => api.upload(
     '/moments/comment-images',
     (json) => json is Map
@@ -137,16 +162,23 @@ extension CustomerMomentApi on CustomerApi {
     int momentId, {
     required String content,
     String? imageUrl,
+    List<String> imageUrls = const [],
     int? parentId,
     int? replyToCommentId,
+    List<int> mentionedUserIds = const [],
   }) => api.post(
     '/moments/$momentId/comments',
     (json) => MomentComment.fromJson(json as Map<String, dynamic>),
     body: {
       'content': content.trim(),
-      'imageUrls': imageUrl == null ? <String>[] : [imageUrl],
+      'imageUrls': imageUrls.isNotEmpty
+          ? imageUrls
+          : imageUrl == null
+          ? <String>[]
+          : [imageUrl],
       'parentCommentId': parentId,
       'replyToCommentId': replyToCommentId,
+      'mentionedUserIds': mentionedUserIds,
     }..removeWhere((_, value) => value == null),
   );
 
@@ -170,6 +202,20 @@ extension CustomerMomentApi on CustomerApi {
         .map(MomentTopic.fromJson)
         .toList(),
     query: {'query': keyword.trim()},
+  );
+
+  Future<List<MomentUser>> searchMomentMentionUsers(String keyword) => api.get(
+    '/moments/mention-users',
+    (json) => (json as List? ?? const [])
+        .whereType<Map<String, dynamic>>()
+        .map(MomentUser.fromJson)
+        .toList(),
+    query: {'query': keyword.trim()},
+  );
+
+  Future<MomentUserCard> momentUserCard(int userId) => api.get(
+    '/moments/users/$userId/card',
+    (json) => MomentUserCard.fromJson(json as Map<String, dynamic>),
   );
 
   Future<MomentPage<MomentTopic>> momentTopics({
@@ -235,5 +281,24 @@ extension CustomerMomentApi on CustomerApi {
     '/moments/$momentId/share',
     (json) => ChatMessage.fromJson(json as Map<String, dynamic>),
     body: {'conversationId': conversationId, 'commentId': commentId},
+  );
+
+  Future<Map<String, int>> reportExternalMomentShare(
+    int momentId, {
+    int? commentId,
+  }) => api.post(
+    '/moments/$momentId/external-shares',
+    (json) {
+      final map = json as Map<String, dynamic>;
+      int value(String key) => map[key] is num
+          ? (map[key] as num).toInt()
+          : int.tryParse('${map[key]}') ?? 0;
+      return {
+        'shareCount': value('shareCount'),
+        'appShareCount': value('appShareCount'),
+        'externalShareCount': value('externalShareCount'),
+      };
+    },
+    body: {'commentId': commentId}..removeWhere((_, value) => value == null),
   );
 }

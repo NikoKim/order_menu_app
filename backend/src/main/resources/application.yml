@@ -58,6 +58,7 @@ app:
     max-moment-bytes: 10485760
     max-comment-bytes: 5242880
     max-pixels: 16000000
+    max-source-pixels: 120000000
   push:
     gateway-url: ${ORDER_MENU_PUSH_GATEWAY_URL:}
     gateway-token: ${ORDER_MENU_PUSH_GATEWAY_TOKEN:}

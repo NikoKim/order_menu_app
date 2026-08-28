@@ -25,12 +25,16 @@
             <button class="editor-img-rm" title="移除图片" @click="form.imageUrls.splice(i, 1)"><X :size="15" /></button>
           </div>
           <div v-for="image in pendingImages" :key="image.id" class="editor-img-wrap" :class="`is-${image.status}`">
-            <img :src="image.preview" alt="待上传的动态图片" />
+            <img :src="image.preview" :style="{ transform: `rotate(${image.rotation * 90}deg)` }" alt="待上传的动态图片" />
             <div v-if="image.status === 'queued'" class="editor-img-status queued"><span>发布后上传</span></div>
             <div v-if="image.status === 'uploading'" class="editor-img-status"><LoaderCircle :size="21" class="spin" /><span>上传中</span></div>
             <div v-else-if="image.status === 'failed'" class="editor-img-status failed">
               <span>上传失败</span>
               <button title="重新上传" @click="retryImage(image)"><RefreshCw :size="17" /></button>
+            </div>
+            <div class="editor-img-rotate">
+              <button title="向左旋转" :disabled="saving || image.status === 'uploading'" @click="rotatePendingImage(image, -1)"><RotateCcw :size="16" /></button>
+              <button title="向右旋转" :disabled="saving || image.status === 'uploading'" @click="rotatePendingImage(image, 1)"><RotateCw :size="16" /></button>
             </div>
             <button class="editor-img-rm" title="移除图片" @click="removePendingImage(image)"><X :size="15" /></button>
           </div>
@@ -39,7 +43,7 @@
             <input type="file" accept="image/*" multiple hidden @change="handleImageUpload" />
           </label>
         </div>
-        <p class="editor-hint">{{ imageCount }}/9 · 选择后保留预览，保存动态后统一上传</p>
+        <p class="editor-hint">{{ imageCount }}/9 · 选择后保留预览，保存时按顺序上传</p>
       </div>
 
       <!-- Topics -->
@@ -135,10 +139,11 @@
 <script setup>
 import { computed, nextTick, onBeforeUnmount, onMounted, ref } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
-import { ArrowLeft, Globe2, Hash, ImagePlus, LoaderCircle, LockKeyhole, PlusCircle, RefreshCw, Save, Send, UsersRound, X } from 'lucide-vue-next'
+import { ArrowLeft, Globe2, Hash, ImagePlus, LoaderCircle, LockKeyhole, PlusCircle, RefreshCw, RotateCcw, RotateCw, Save, Send, UsersRound, X } from 'lucide-vue-next'
 import { createMoment, updateMoment, getMomentComment, getMomentDetail, uploadMomentImage, searchTopics as fetchTopics, createTopic } from '../../api/moments'
 import { imageUrl } from '../../composables/useImage'
 import { notifyError, notifySuccess } from '../../services/notice'
+import { prepareUploadImage } from '../../services/imageUpload'
 import MentionPicker from '../../components/MentionPicker.vue'
 import MomentQuotePicker from '../../components/MomentQuotePicker.vue'
 
@@ -188,23 +193,31 @@ async function handleImageUpload(e) {
   error.value = ''
   const available = Math.max(0, 9 - imageCount.value)
   if (files.length > available) notifyError('最多添加9张图片')
-  const added = files.slice(0, available).map(file => ({
-    id: ++pendingImageId,
-    file,
-    preview: URL.createObjectURL(file),
-    remoteUrl: '',
-    status: 'queued',
-    error: ''
-  }))
-  pendingImages.value.push(...added)
+  try {
+    const added = await Promise.all(files.slice(0, available).map(async file => {
+      const normalizedFile = await prepareUploadImage(file)
+      return {
+        id: ++pendingImageId,
+        file: normalizedFile,
+        preview: URL.createObjectURL(normalizedFile),
+        rotation: 0,
+        remoteUrl: '',
+        status: 'queued',
+        error: ''
+      }
+    }))
+    pendingImages.value.push(...added)
+  } catch (err) {
+    notifyError(err.message || '图片处理失败，请重新选择')
+  }
   e.target.value = ''
 }
 
 async function uploadPendingImage(image) {
   const imageId = image.id
-  const file = image.file
   updatePendingImage(imageId, { status: 'uploading', error: '' })
   try {
+    const file = await prepareUploadImage(image.file, image.rotation)
     const result = await uploadMomentImage(file)
     if (!pendingImages.value.some(item => item.id === imageId)) return false
     if (!result?.url) throw new Error('服务器未返回图片地址')
@@ -217,21 +230,28 @@ async function uploadPendingImage(image) {
   }
 }
 
+function rotatePendingImage(image, delta) {
+  if (saving.value || image.status === 'uploading') return
+  const rotation = ((Number(image.rotation || 0) + delta) % 4 + 4) % 4
+  updatePendingImage(image.id, {
+    rotation,
+    remoteUrl: '',
+    status: 'queued',
+    error: ''
+  })
+}
+
 function updatePendingImage(id, patch) {
   const index = pendingImages.value.findIndex(item => item.id === id)
   if (index >= 0) pendingImages.value[index] = { ...pendingImages.value[index], ...patch }
 }
 
 async function retryImage(image) {
-  if (!editId.value) {
-    updatePendingImage(image.id, { status: 'queued', error: '' })
-    return
-  }
   saving.value = true
   try {
     const uploaded = await uploadPendingImage(image)
     if (!uploaded) return
-    await updateMoment(editId.value, momentPayload(savedStatus.value || 'PUBLISHED', uploadedImageUrls()))
+    if (editId.value) await updateMoment(editId.value, momentPayload(savedStatus.value || 'PUBLISHED', uploadedImageUrls()))
     notifySuccess('图片上传成功')
   } catch (e) {
     error.value = e.message
@@ -417,27 +437,24 @@ async function saveDraft() {
 async function saveMoment(status) {
   saving.value = true
   try {
-    const initialPayload = momentPayload(status, uploadedImageUrls())
+    const waitingImages = pendingImages.value.filter(image => image.status === 'queued' || image.status === 'failed')
+    for (const image of waitingImages) await uploadPendingImage(image)
+
+    const failedCount = pendingImages.value.filter(image => image.status === 'failed').length
+    if (failedCount) {
+      notifyError(`${failedCount}张图片上传失败，请重试或移除后再保存动态`)
+      return
+    }
+
+    const payload = momentPayload(status, uploadedImageUrls())
     if (editId.value) {
-      await updateMoment(editId.value, initialPayload)
+      await updateMoment(editId.value, payload)
     } else {
-      const created = await createMoment(initialPayload)
+      const created = await createMoment(payload)
       if (!created?.id) throw new Error('动态保存成功，但未返回动态编号')
       editId.value = Number(created.id)
     }
     savedStatus.value = status
-
-    const waitingImages = pendingImages.value.filter(image => image.status === 'queued' || image.status === 'failed')
-    if (waitingImages.length) {
-      await Promise.all(waitingImages.map(uploadPendingImage))
-      await updateMoment(editId.value, momentPayload(status, uploadedImageUrls()))
-    }
-
-    const failedCount = pendingImages.value.filter(image => image.status === 'failed').length
-    if (failedCount) {
-      notifyError(`动态已${status === 'DRAFT' ? '保存' : '发布'}，${failedCount}张图片上传失败，可在当前页面重试`)
-      return
-    }
     router.back()
   } catch (e) { error.value = e.message }
   finally { saving.value = false }
@@ -518,7 +535,7 @@ onBeforeUnmount(() => {
   width: 96px; height: 96px; border-radius: 8px; overflow: hidden; position: relative;
   background: var(--color-bg);
 }
-.editor-img-wrap img { width: 100%; height: 100%; object-fit: cover; }
+.editor-img-wrap img { width: 100%; height: 100%; object-fit: contain; transition: transform .2s ease; }
 .editor-img-status {
   position: absolute; inset: 0; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 5px;
   color: #fff; background: rgba(22, 26, 31, 0.48); font-size: 11px; font-weight: 600; backdrop-filter: blur(1px);
@@ -531,6 +548,9 @@ onBeforeUnmount(() => {
   border: none; background: rgba(0,0,0,0.55); color: #fff; border-radius: 50%;
   font-size: 12px; cursor: pointer; display: flex; align-items: center; justify-content: center;
 }
+.editor-img-rotate { position: absolute; left: 4px; right: 4px; bottom: 4px; z-index: 2; display: flex; justify-content: space-between; }
+.editor-img-rotate button { width: 28px; height: 28px; display: grid; place-items: center; border-radius: 50%; background: rgba(0,0,0,.66); color: #fff; }
+.editor-img-rotate button:disabled { opacity: .4; cursor: default; }
 .editor-img-add {
   width: 96px; height: 96px; border: 2px dashed var(--color-line); border-radius: 8px;
   display: flex; align-items: center; justify-content: center; font-size: 32px;

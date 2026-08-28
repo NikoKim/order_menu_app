@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:collection';
 import 'dart:io';
 
 import 'package:flutter/material.dart';
@@ -6,6 +7,7 @@ import 'package:image_picker/image_picker.dart';
 
 import '../main.dart';
 import '../moment_models.dart';
+import 'moment_detail_page.dart';
 import '../services/api_client.dart';
 import '../services/moment_api.dart';
 import '../services/moment_image.dart';
@@ -13,9 +15,53 @@ import '../services/customer_websocket_service.dart';
 import '../utils/moment_time_formatter.dart';
 import '../widgets/app_notice.dart';
 import '../widgets/moment_card.dart';
+import '../widgets/moment_mention.dart';
+import '../widgets/moment_quote_card.dart';
 import '../widgets/ui_utils.dart';
 
 final Set<int> _customerViewedMomentIds = <int>{};
+int _atCount(String value) => '@'.allMatches(value).length;
+
+const _momentListCacheLimit = 12;
+final LinkedHashMap<String, _MomentListCache> _momentListCaches =
+    LinkedHashMap<String, _MomentListCache>();
+final Map<String, Future<Moment>> _momentRefreshRequests =
+    <String, Future<Moment>>{};
+
+class _MomentListCache {
+  List<Moment> items = const [];
+  List<Moment> pendingMoments = const [];
+  final Set<int> reportedRead = <int>{};
+  int nextPage = 1;
+  bool hasMore = true;
+  bool loaded = false;
+  double scrollOffset = 0;
+  int? anchorMomentId;
+  double? anchorViewportOffset;
+  DateTime newMomentCursor = DateTime.now().toUtc();
+}
+
+_MomentListCache _momentListCacheFor(String key) {
+  final existing = _momentListCaches.remove(key);
+  final cache = existing ?? _MomentListCache();
+  _momentListCaches[key] = cache;
+  while (_momentListCaches.length > _momentListCacheLimit) {
+    _momentListCaches.remove(_momentListCaches.keys.first);
+  }
+  return cache;
+}
+
+Future<Moment> _refreshMomentOnce(ApiClient api, int momentId) {
+  final key = '${identityHashCode(api)}:$momentId';
+  final existing = _momentRefreshRequests[key];
+  if (existing != null) return existing;
+  late final Future<Moment> request;
+  request = CustomerApi(api).moment(momentId).whenComplete(() {
+    _momentRefreshRequests.remove(key);
+  });
+  _momentRefreshRequests[key] = request;
+  return request;
+}
 
 bool shouldQueueMomentAsNew({
   required bool mine,
@@ -63,13 +109,14 @@ class _MomentFeedPageState extends State<MomentFeedPage>
   late final TabController _tabs;
   int _relatedUnread = 0;
   final _recommendedKey = GlobalKey<_MomentListState>();
+  final _hotKey = GlobalKey<_MomentListState>();
   final _relatedKey = GlobalKey<_MomentListState>();
   double _headerCollapseProgress = 0;
 
   @override
   void initState() {
     super.initState();
-    _tabs = TabController(length: widget.authorId == null ? 2 : 1, vsync: this);
+    _tabs = TabController(length: widget.authorId == null ? 3 : 1, vsync: this);
     _tabs.addListener(_handleTabChanged);
     if (widget.authorId == null)
       WidgetsBinding.instance.addPostFrameCallback((_) => _loadUnread());
@@ -80,9 +127,11 @@ class _MomentFeedPageState extends State<MomentFeedPage>
     setState(() {});
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (!mounted) return;
-      final state = _tabs.index == 0
-          ? _recommendedKey.currentState
-          : _relatedKey.currentState;
+      final state = switch (_tabs.index) {
+        0 => _recommendedKey.currentState,
+        1 => _hotKey.currentState,
+        _ => _relatedKey.currentState,
+      };
       _handleHeaderCollapse(state?.headerCollapseProgress ?? 0);
       state?.resumeNewMomentObservation();
     });
@@ -94,9 +143,11 @@ class _MomentFeedPageState extends State<MomentFeedPage>
     if (!oldWidget.active && widget.active) {
       WidgetsBinding.instance.addPostFrameCallback((_) {
         if (!mounted) return;
-        final state = _tabs.index == 0
-            ? _recommendedKey.currentState
-            : _relatedKey.currentState;
+        final state = switch (_tabs.index) {
+          0 => _recommendedKey.currentState,
+          1 => _hotKey.currentState,
+          _ => _relatedKey.currentState,
+        };
         state?.resumeNewMomentObservation();
       });
     }
@@ -137,6 +188,7 @@ class _MomentFeedPageState extends State<MomentFeedPage>
     if (feeds.contains('RELATED')) {
       _relatedKey.currentState?.insertPublished(created);
     }
+    _hotKey.currentState?.checkForNewMoments();
   }
 
   @override
@@ -174,10 +226,17 @@ class _MomentFeedPageState extends State<MomentFeedPage>
                       onHeaderCollapseChanged: _handleHeaderCollapse,
                     ),
                     _MomentList(
+                      key: _hotKey,
+                      feed: 'HOT',
+                      isActive: () => widget.active && _tabs.index == 1,
+                      headerCollapseExtent: widget.headerCollapseExtent,
+                      onHeaderCollapseChanged: _handleHeaderCollapse,
+                    ),
+                    _MomentList(
                       key: _relatedKey,
                       feed: 'RELATED',
                       onMomentRead: _readOne,
-                      isActive: () => widget.active && _tabs.index == 1,
+                      isActive: () => widget.active && _tabs.index == 2,
                       headerCollapseExtent: widget.headerCollapseExtent,
                       onHeaderCollapseChanged: _handleHeaderCollapse,
                     ),
@@ -258,6 +317,7 @@ class _MomentFeedToolbar extends StatelessWidget {
               ),
               tabs: [
                 const Tab(text: '推荐'),
+                const Tab(text: '热门'),
                 Tab(
                   child: _TabBadge(text: '相关', count: relatedUnread),
                 ),
@@ -352,7 +412,8 @@ class _MomentList extends StatefulWidget {
 
 class _MomentListState extends State<_MomentList>
     with AutomaticKeepAliveClientMixin {
-  final _controller = ScrollController();
+  late final ScrollController _controller;
+  late final _MomentListCache _cache;
   List<Moment> _items = const [];
   bool _loading = true;
   bool _more = true;
@@ -366,6 +427,7 @@ class _MomentListState extends State<_MomentList>
   List<Moment> _pendingMoments = const [];
   bool _checkingNewMoments = false;
   bool _showNewMomentSkeleton = false;
+  bool _initialized = false;
   DateTime _newMomentCursor = DateTime.now().toUtc();
 
   @override
@@ -384,25 +446,63 @@ class _MomentListState extends State<_MomentList>
   }
 
   @override
-  void initState() {
-    super.initState();
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    if (_initialized) return;
+    _initialized = true;
+    final api = AppScope.of(context).api;
+    final cacheKey = [
+      identityHashCode(api),
+      api.token?.hashCode ?? 0,
+      widget.feed,
+      widget.authorId ?? '',
+      widget.topicId ?? '',
+      widget.keyword ?? '',
+    ].join(':');
+    _cache = _momentListCacheFor(cacheKey);
+    _items = List<Moment>.of(_cache.items);
+    _pendingMoments = List<Moment>.of(_cache.pendingMoments);
+    _reportedRead.addAll(_cache.reportedRead);
+    _page = _cache.nextPage;
+    _more = _cache.hasMore;
+    _loading = !_cache.loaded;
+    _newMomentCursor = _cache.newMomentCursor;
+    _controller = ScrollController(initialScrollOffset: _cache.scrollOffset);
     _controller.addListener(() {
+      if (_controller.hasClients) _cache.scrollOffset = _controller.offset;
       _reportHeaderCollapse();
-      if (_controller.position.extentAfter < 400 && !_loading && _more) {
+      if (_controller.position.extentAfter < 400 &&
+          !_loading &&
+          _more &&
+          _error == null) {
         _load();
       }
     });
     WidgetsBinding.instance.addPostFrameCallback((_) {
       _reportHeaderCollapse();
-      _load(refresh: true);
+      if (_cache.loaded) {
+        _scheduleVisibilityCheck();
+        _restoreCachedAnchor();
+      } else {
+        _load(refresh: true);
+      }
     });
-    _newMomentTimer = Timer.periodic(
-      const Duration(seconds: 10),
-      (_) => _checkForNewMoments(),
-    );
+    _newMomentTimer = Timer.periodic(const Duration(seconds: 10), (_) {
+      if (widget.feed != 'HOT') _checkForNewMoments();
+    });
     _momentSubscription = CustomerWebSocketService.instance
         .streamForModule('MOMENT')
-        .listen((_) => _checkForNewMoments());
+        .listen((message) {
+          final rawId = message.data['momentId'];
+          final momentId = rawId is num
+              ? rawId.toInt()
+              : int.tryParse('$rawId');
+          if (momentId != null && _items.any((item) => item.id == momentId)) {
+            unawaited(_refreshMoment(momentId));
+          } else if (message.action == 'PUBLISHED') {
+            unawaited(_checkForNewMoments());
+          }
+        });
   }
 
   @override
@@ -414,10 +514,123 @@ class _MomentListState extends State<_MomentList>
   }
 
   Future<void> checkForNewMoments({bool showSkeleton = false}) =>
-      _checkForNewMoments(showSkeleton: showSkeleton);
+      widget.feed == 'HOT'
+      ? _load(refresh: true)
+      : _checkForNewMoments(showSkeleton: showSkeleton);
 
   void resumeNewMomentObservation() {
     _newMomentCursor = DateTime.now().toUtc();
+    _cache.newMomentCursor = _newMomentCursor;
+  }
+
+  void _persistCache({bool loaded = true}) {
+    _cache
+      ..items = List<Moment>.of(_items)
+      ..pendingMoments = List<Moment>.of(_pendingMoments)
+      ..nextPage = _page
+      ..hasMore = _more
+      ..loaded = loaded || _cache.loaded
+      ..newMomentCursor = _newMomentCursor;
+    if (_controller.hasClients) _cache.scrollOffset = _controller.offset;
+  }
+
+  void _captureAnchor(int momentId) {
+    if (!_controller.hasClients) return;
+    _cache
+      ..scrollOffset = _controller.offset
+      ..anchorMomentId = momentId;
+    final itemContext = _itemKeys[momentId]?.currentContext;
+    final box = itemContext?.findRenderObject();
+    final viewportBox = itemContext == null
+        ? null
+        : Scrollable.maybeOf(itemContext)?.context.findRenderObject();
+    if (box is RenderBox &&
+        box.attached &&
+        viewportBox is RenderBox &&
+        viewportBox.attached) {
+      _cache.anchorViewportOffset =
+          box.localToGlobal(Offset.zero).dy -
+          viewportBox.localToGlobal(Offset.zero).dy;
+    }
+    _persistCache();
+  }
+
+  Future<void> _restoreCachedAnchor() async {
+    final momentId = _cache.anchorMomentId;
+    final expectedOffset = _cache.anchorViewportOffset;
+    if (momentId == null || expectedOffset == null) return;
+    for (var attempt = 0; attempt < 3; attempt++) {
+      await WidgetsBinding.instance.endOfFrame;
+      if (!mounted || !_controller.hasClients) return;
+      final itemContext = _itemKeys[momentId]?.currentContext;
+      if (itemContext == null || !itemContext.mounted) continue;
+      final box = itemContext.findRenderObject();
+      final viewportBox = Scrollable.maybeOf(
+        itemContext,
+      )?.context.findRenderObject();
+      if (box is! RenderBox ||
+          !box.attached ||
+          viewportBox is! RenderBox ||
+          !viewportBox.attached) {
+        continue;
+      }
+      final currentOffset =
+          box.localToGlobal(Offset.zero).dy -
+          viewportBox.localToGlobal(Offset.zero).dy;
+      final target = (_controller.offset + currentOffset - expectedOffset)
+          .clamp(0.0, _controller.position.maxScrollExtent)
+          .toDouble();
+      if ((target - _controller.offset).abs() > .5) {
+        _controller.jumpTo(target);
+      }
+      _cache.scrollOffset = target;
+      return;
+    }
+  }
+
+  Future<void> _openMoment(Moment moment) async {
+    _captureAnchor(moment.id);
+    final navigator = Navigator.of(context);
+    final deleted = await navigator.push<bool>(
+      MaterialPageRoute(builder: (_) => MomentDetailPage(momentId: moment.id)),
+    );
+    if (!mounted) return;
+    if (deleted == true) {
+      _removeMoment(moment.id);
+      return;
+    }
+    await _refreshMoment(moment.id);
+    await _restoreCachedAnchor();
+  }
+
+  void _removeMoment(int momentId) {
+    if (!_items.any((item) => item.id == momentId)) return;
+    setState(() {
+      _items = _items.where((item) => item.id != momentId).toList();
+      _itemKeys.remove(momentId);
+      _reportedRead.remove(momentId);
+      _cache.reportedRead.remove(momentId);
+    });
+    _persistCache();
+  }
+
+  Future<void> _refreshMoment(int momentId) async {
+    if (!_items.any((item) => item.id == momentId)) return;
+    try {
+      final latest = await _refreshMomentOnce(
+        AppScope.of(context).api,
+        momentId,
+      );
+      if (!mounted) return;
+      final index = _items.indexWhere((item) => item.id == momentId);
+      if (index < 0) return;
+      setState(() => _items[index] = latest);
+      _persistCache();
+    } on ApiException catch (error) {
+      if (mounted && (error.statusCode == 403 || error.statusCode == 404)) {
+        _removeMoment(momentId);
+      }
+    } catch (_) {}
   }
 
   Future<void> _checkForNewMoments({bool showSkeleton = false}) async {
@@ -425,6 +638,7 @@ class _MomentListState extends State<_MomentList>
     if ((widget.feed != 'RECOMMENDED' && widget.feed != 'RELATED') ||
         widget.isActive?.call() == false) {
       _newMomentCursor = now;
+      _cache.newMomentCursor = now;
       return;
     }
     if (_loading || _checkingNewMoments) return;
@@ -454,6 +668,7 @@ class _MomentListState extends State<_MomentList>
           authorId: widget.authorId,
           topicId: widget.topicId,
           consumeExposure: false,
+          pageSize: 12,
         );
         var reachedKnown = false;
         var reachedWindowStart = false;
@@ -488,8 +703,10 @@ class _MomentListState extends State<_MomentList>
       incoming.removeWhere((item) => currentIds.contains(item.id));
       if (incoming.isNotEmpty) {
         setState(() => _pendingMoments = [...incoming, ..._pendingMoments]);
+        _persistCache();
       }
       _newMomentCursor = windowEnd;
+      _cache.newMomentCursor = windowEnd;
     } catch (_) {
     } finally {
       _checkingNewMoments = false;
@@ -513,6 +730,7 @@ class _MomentListState extends State<_MomentList>
       _page = 1;
       _more = true;
     });
+    _persistCache();
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (_controller.hasClients)
         _controller.animateTo(
@@ -554,6 +772,7 @@ class _MomentListState extends State<_MomentList>
       _page = 1;
       _more = true;
     });
+    _persistCache();
     WidgetsBinding.instance.addPostFrameCallback((_) {
       final target = _itemKeys[firstNewId]?.currentContext;
       if (target != null)
@@ -576,13 +795,20 @@ class _MomentListState extends State<_MomentList>
     try {
       final api = CustomerApi(AppScope.of(context).api);
       final next = refresh ? 1 : _page;
-      final result = await api.moments(
-        feed: widget.feed,
-        page: next,
-        keyword: widget.keyword,
-        authorId: widget.authorId,
-        topicId: widget.topicId,
-      );
+      final result = widget.feed == 'HOT'
+          ? MomentPage<Moment>(
+              items: await api.hotMoments(limit: 10),
+              page: 1,
+              hasMore: false,
+            )
+          : await api.moments(
+              feed: widget.feed,
+              page: next,
+              pageSize: 12,
+              keyword: widget.keyword,
+              authorId: widget.authorId,
+              topicId: widget.topicId,
+            );
       if (!mounted) return;
       setState(() {
         _items = refresh
@@ -591,7 +817,9 @@ class _MomentListState extends State<_MomentList>
         _page = next + 1;
         _more = result.hasMore;
         _loading = false;
+        _error = null;
       });
+      _persistCache();
       _scheduleVisibilityCheck();
     } catch (e) {
       if (mounted)
@@ -640,6 +868,7 @@ class _MomentListState extends State<_MomentList>
       }).toList();
       if (unread.isEmpty) return;
       _reportedRead.addAll(unread);
+      _cache.reportedRead.addAll(unread);
       CustomerApi(
         AppScope.of(context).api,
       ).markMomentsRead(unread).catchError((_) {});
@@ -697,9 +926,21 @@ class _MomentListState extends State<_MomentList>
           key: ValueKey('customer-${widget.feed.toLowerCase()}-scroll'),
           controller: _controller,
           padding: const EdgeInsets.fromLTRB(12, 12, 12, 28),
-          itemCount: _items.length + (_loading ? 1 : 0),
+          itemCount: _items.length + ((_loading || _error != null) ? 1 : 0),
           separatorBuilder: (_, _) => const SizedBox(height: 12),
           itemBuilder: (_, index) {
+            if (index == _items.length && _error != null) {
+              return Center(
+                child: OutlinedButton.icon(
+                  onPressed: () {
+                    setState(() => _error = null);
+                    _load();
+                  },
+                  icon: const Icon(Icons.refresh_rounded),
+                  label: const Text('重新加载下一页'),
+                ),
+              );
+            }
             if (index == _items.length)
               return const Center(
                 child: Padding(
@@ -718,17 +959,13 @@ class _MomentListState extends State<_MomentList>
                   );
                   if (currentIndex >= 0) {
                     setState(() => _items[currentIndex] = value);
+                    _persistCache();
                   }
                 },
+                onOpen: () => _openMoment(item),
                 onDeleted: () {
                   if (!mounted) return;
-                  setState(() {
-                    _items = _items
-                        .where((candidate) => candidate.id != item.id)
-                        .toList();
-                    _itemKeys.remove(item.id);
-                    _reportedRead.remove(item.id);
-                  });
+                  _removeMoment(item.id);
                 },
               ),
             );
@@ -1341,12 +1578,14 @@ class MomentComposerPage extends StatefulWidget {
     this.dishId,
     this.shopName,
     this.dishName,
+    this.initialQuote,
   });
   final Moment? moment;
   final int? shopId;
   final int? dishId;
   final String? shopName;
   final String? dishName;
+  final MomentQuote? initialQuote;
   @override
   State<MomentComposerPage> createState() => _MomentComposerPageState();
 }
@@ -1364,10 +1603,18 @@ class _MomentComposerPageState extends State<MomentComposerPage> {
   int _hotTotal = 0;
   bool _loadingTopics = false;
   final List<XFile> _images = [];
+  final Map<String, int> _imageQuarterTurns = {};
+  final Map<String, String> _uploadedImages = {};
+  final Set<String> _uploadingImages = {};
+  final Set<String> _failedImages = {};
   late List<String> _existingImages;
   String _visibility = 'PUBLIC';
   bool _submitting = false;
   Timer? _debounce;
+  MomentQuote? _quote;
+  List<MomentUser> _mentions = const [];
+  bool _mentionPickerOpen = false;
+  late String _previousContent;
 
   @override
   void initState() {
@@ -1377,6 +1624,10 @@ class _MomentComposerPageState extends State<MomentComposerPage> {
     _topics = widget.moment?.topics.toList() ?? [];
     _existingImages = widget.moment?.images.toList() ?? [];
     _visibility = widget.moment?.visibility ?? 'PUBLIC';
+    _quote = widget.initialQuote ?? widget.moment?.quote;
+    _mentions = widget.moment?.mentions.toList() ?? const [];
+    _previousContent = _content.text;
+    _content.addListener(_handleContentChanged);
     WidgetsBinding.instance.addPostFrameCallback((_) => _loadHotTopics());
   }
 
@@ -1385,18 +1636,115 @@ class _MomentComposerPageState extends State<MomentComposerPage> {
     _title.dispose();
     _content.dispose();
     _topicSearch.dispose();
+    _content.removeListener(_handleContentChanged);
     _debounce?.cancel();
     super.dispose();
   }
 
+  void _handleContentChanged() {
+    final value = _content.text;
+    final active = activeMomentMentionIds(value, _mentions).toSet();
+    if (active.length != _mentions.length && mounted) {
+      setState(
+        () => _mentions = _mentions
+            .where((user) => active.contains(user.id))
+            .toList(),
+      );
+    }
+    final typedAt =
+        value.length > _previousContent.length &&
+        _atCount(value) > _atCount(_previousContent);
+    _previousContent = value;
+    if (typedAt && !_mentionPickerOpen) _pickMentionUsers();
+  }
+
+  Future<void> _pickMentionUsers() async {
+    if (_mentionPickerOpen) return;
+    _mentionPickerOpen = true;
+    final before = _mentions.map((user) => user.id).toSet();
+    final selected = await showMomentMentionPicker(
+      context,
+      selected: _mentions,
+    );
+    _mentionPickerOpen = false;
+    if (!mounted || selected == null) return;
+    final added = selected.where((user) => !before.contains(user.id)).toList();
+    setState(() => _mentions = selected);
+    if (added.isEmpty) return;
+    final selection = _content.selection;
+    final offset = selection.isValid
+        ? selection.baseOffset
+        : _content.text.length;
+    final insertion = added.map((user) => '@${user.nickname} ').join();
+    final text = _content.text;
+    final normalizedOffset = offset.clamp(0, text.length);
+    _content.value = TextEditingValue(
+      text: text.replaceRange(normalizedOffset, normalizedOffset, insertion),
+      selection: TextSelection.collapsed(
+        offset: normalizedOffset + insertion.length,
+      ),
+    );
+  }
+
+  Future<void> _pickQuote() async {
+    final quote = await showModalBottomSheet<MomentQuote>(
+      context: context,
+      isScrollControlled: true,
+      showDragHandle: true,
+      builder: (_) =>
+          _MomentQuotePickerSheet(excludeMomentId: widget.moment?.id),
+    );
+    if (mounted && quote != null) setState(() => _quote = quote);
+  }
+
   Future<void> _pickImages() async {
     final selected = await _picker.pickMultiImage(imageQuality: 86);
-    if (mounted)
+    if (mounted) {
       setState(() {
-        _images.addAll(
-          selected.take(9 - _images.length - _existingImages.length),
-        );
+        final added = selected
+            .take(9 - _images.length - _existingImages.length)
+            .toList();
+        _images.addAll(added);
+        for (final image in added) {
+          _imageQuarterTurns[image.path] = 0;
+        }
       });
+    }
+  }
+
+  void _rotateImage(XFile image, int delta) {
+    if (_uploadingImages.contains(image.path)) return;
+    setState(() {
+      final current = _imageQuarterTurns[image.path] ?? 0;
+      _imageQuarterTurns[image.path] = (current + delta) % 4;
+      _uploadedImages.remove(image.path);
+      _failedImages.remove(image.path);
+    });
+  }
+
+  Future<String?> _uploadLocalImage(XFile image) async {
+    final uploaded = _uploadedImages[image.path];
+    if (uploaded != null) return uploaded;
+    final api = CustomerApi(AppScope.of(context).api);
+    setState(() {
+      _uploadingImages.add(image.path);
+      _failedImages.remove(image.path);
+    });
+    try {
+      final path = await prepareMomentImage(
+        image.path,
+        comment: false,
+        rotationDegrees: (_imageQuarterTurns[image.path] ?? 0) * 90,
+      );
+      final url = await api.uploadMomentImage(path);
+      if (mounted) setState(() => _uploadedImages[image.path] = url);
+      return url;
+    } catch (_) {
+      if (mounted) setState(() => _failedImages.add(image.path));
+      return null;
+    } finally {
+      if (mounted) setState(() => _uploadingImages.remove(image.path));
+    }
   }
 
   void _searchTopics(String value) {
@@ -1476,8 +1824,12 @@ class _MomentComposerPageState extends State<MomentComposerPage> {
       final api = CustomerApi(AppScope.of(context).api);
       final uploaded = <String>[..._existingImages];
       for (final image in _images) {
-        final path = await prepareMomentImage(image.path, comment: false);
-        uploaded.add(await api.uploadMomentImage(path));
+        final url = await _uploadLocalImage(image);
+        if (url != null) uploaded.add(url);
+      }
+      if (_failedImages.isNotEmpty) {
+        if (mounted) AppNotice.show(context, '部分图片上传失败，请点击失败图片重试');
+        return;
       }
       final value = await api.publishMoment(
         id: widget.moment?.id,
@@ -1489,6 +1841,9 @@ class _MomentComposerPageState extends State<MomentComposerPage> {
         shopId: widget.shopId ?? widget.moment?.shopId,
         dishId: widget.dishId ?? widget.moment?.dishId,
         draft: draft,
+        quotedMomentId: _quote?.type == 'MOMENT' ? _quote?.momentId : null,
+        quotedCommentId: _quote?.type == 'COMMENT' ? _quote?.commentId : null,
+        mentionedUserIds: activeMomentMentionIds(_content.text, _mentions),
       );
       if (!mounted) return;
       AppNotice.show(context, draft ? '草稿已保存，30天后自动清理' : '动态已发布');
@@ -1577,8 +1932,35 @@ class _MomentComposerPageState extends State<MomentComposerPage> {
                     contentPadding: EdgeInsets.zero,
                   ),
                 ),
+                Align(
+                  alignment: Alignment.centerLeft,
+                  child: IconButton(
+                    tooltip: '提及用户',
+                    onPressed: _pickMentionUsers,
+                    icon: const Icon(Icons.alternate_email_rounded),
+                  ),
+                ),
               ],
             ),
+          ),
+          const SizedBox(height: 12),
+          _ComposerSection(
+            title: '引用',
+            icon: Icons.format_quote_rounded,
+            trailing: _quote == null
+                ? null
+                : IconButton(
+                    tooltip: '移除引用',
+                    onPressed: () => setState(() => _quote = null),
+                    icon: const Icon(Icons.close_rounded),
+                  ),
+            child: _quote == null
+                ? OutlinedButton.icon(
+                    onPressed: _pickQuote,
+                    icon: const Icon(Icons.search_rounded),
+                    label: const Text('搜索可见动态'),
+                  )
+                : MomentQuoteCard(quote: _quote!),
           ),
           const SizedBox(height: 12),
           _ComposerSection(
@@ -1612,8 +1994,22 @@ class _MomentComposerPageState extends State<MomentComposerPage> {
                   ),
                 for (final image in _images)
                   _ComposerImageTile(
-                    child: Image.file(File(image.path), fit: BoxFit.cover),
-                    onRemove: () => setState(() => _images.remove(image)),
+                    child: RotatedBox(
+                      quarterTurns: _imageQuarterTurns[image.path] ?? 0,
+                      child: Image.file(File(image.path), fit: BoxFit.cover),
+                    ),
+                    uploading: _uploadingImages.contains(image.path),
+                    failed: _failedImages.contains(image.path),
+                    onRetry: () => _uploadLocalImage(image),
+                    onRotateLeft: () => _rotateImage(image, 3),
+                    onRotateRight: () => _rotateImage(image, 1),
+                    onRemove: () => setState(() {
+                      _images.remove(image);
+                      _imageQuarterTurns.remove(image.path);
+                      _uploadedImages.remove(image.path);
+                      _failedImages.remove(image.path);
+                      _uploadingImages.remove(image.path);
+                    }),
                   ),
                 if (imageCount < 9)
                   InkWell(
@@ -2040,10 +2436,23 @@ class _TopicSuggestionChip extends StatelessWidget {
 }
 
 class _ComposerImageTile extends StatelessWidget {
-  const _ComposerImageTile({required this.child, required this.onRemove});
+  const _ComposerImageTile({
+    required this.child,
+    required this.onRemove,
+    this.uploading = false,
+    this.failed = false,
+    this.onRetry,
+    this.onRotateLeft,
+    this.onRotateRight,
+  });
 
   final Widget child;
   final VoidCallback onRemove;
+  final bool uploading;
+  final bool failed;
+  final VoidCallback? onRetry;
+  final VoidCallback? onRotateLeft;
+  final VoidCallback? onRotateRight;
 
   @override
   Widget build(BuildContext context) => Stack(
@@ -2053,6 +2462,59 @@ class _ComposerImageTile extends StatelessWidget {
         borderRadius: BorderRadius.circular(13),
         child: SizedBox(width: 92, height: 92, child: child),
       ),
+      if (uploading || failed)
+        Positioned.fill(
+          child: Material(
+            color: const Color(0x99000000),
+            borderRadius: BorderRadius.circular(13),
+            child: InkWell(
+              onTap: failed ? onRetry : null,
+              borderRadius: BorderRadius.circular(13),
+              child: Center(
+                child: uploading
+                    ? const SizedBox.square(
+                        dimension: 24,
+                        child: CircularProgressIndicator(
+                          strokeWidth: 2,
+                          color: Colors.white,
+                        ),
+                      )
+                    : const Column(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          Icon(Icons.refresh_rounded, color: Colors.white),
+                          SizedBox(height: 2),
+                          Text(
+                            '重试',
+                            style: TextStyle(fontSize: 11, color: Colors.white),
+                          ),
+                        ],
+                      ),
+              ),
+            ),
+          ),
+        ),
+      if (!uploading && onRotateLeft != null && onRotateRight != null)
+        Positioned(
+          left: 4,
+          right: 4,
+          bottom: 4,
+          child: Row(
+            mainAxisAlignment: MainAxisAlignment.spaceBetween,
+            children: [
+              _ComposerImageAction(
+                tooltip: '向左旋转',
+                icon: Icons.rotate_left_rounded,
+                onTap: onRotateLeft!,
+              ),
+              _ComposerImageAction(
+                tooltip: '向右旋转',
+                icon: Icons.rotate_right_rounded,
+                onTap: onRotateRight!,
+              ),
+            ],
+          ),
+        ),
       Positioned(
         top: -7,
         right: -7,
@@ -2070,6 +2532,35 @@ class _ComposerImageTile extends StatelessWidget {
         ),
       ),
     ],
+  );
+}
+
+class _ComposerImageAction extends StatelessWidget {
+  const _ComposerImageAction({
+    required this.tooltip,
+    required this.icon,
+    required this.onTap,
+  });
+
+  final String tooltip;
+  final IconData icon;
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) => Tooltip(
+    message: tooltip,
+    child: Material(
+      color: const Color(0xB8000000),
+      shape: const CircleBorder(),
+      child: InkWell(
+        onTap: onTap,
+        customBorder: const CircleBorder(),
+        child: SizedBox.square(
+          dimension: 28,
+          child: Icon(icon, size: 17, color: Colors.white),
+        ),
+      ),
+    ),
   );
 }
 
@@ -2106,4 +2597,138 @@ class MomentCollapsibleHeader extends StatelessWidget {
       ),
     );
   }
+}
+
+class _MomentQuotePickerSheet extends StatefulWidget {
+  const _MomentQuotePickerSheet({this.excludeMomentId});
+  final int? excludeMomentId;
+  @override
+  State<_MomentQuotePickerSheet> createState() =>
+      _MomentQuotePickerSheetState();
+}
+
+class _MomentQuotePickerSheetState extends State<_MomentQuotePickerSheet> {
+  final _search = TextEditingController();
+  Timer? _debounce;
+  List<Moment> _results = const [];
+  bool _loading = false;
+  int _sequence = 0;
+
+  @override
+  void dispose() {
+    _search.dispose();
+    _debounce?.cancel();
+    super.dispose();
+  }
+
+  void _runSearch(String value) {
+    _debounce?.cancel();
+    final keyword = value.trim();
+    final current = ++_sequence;
+    if (keyword.isEmpty) {
+      setState(() {
+        _results = const [];
+        _loading = false;
+      });
+      return;
+    }
+    setState(() => _loading = true);
+    _debounce = Timer(const Duration(milliseconds: 280), () async {
+      try {
+        final page = await CustomerApi(
+          AppScope.of(context).api,
+        ).moments(keyword: keyword, pageSize: 10, consumeExposure: false);
+        if (mounted && current == _sequence) {
+          setState(
+            () => _results = page.items
+                .where((item) => item.id != widget.excludeMomentId)
+                .toList(),
+          );
+        }
+      } catch (_) {
+        if (mounted && current == _sequence)
+          setState(() => _results = const []);
+      } finally {
+        if (mounted && current == _sequence) setState(() => _loading = false);
+      }
+    });
+  }
+
+  @override
+  Widget build(BuildContext context) => SafeArea(
+    child: SizedBox(
+      height: MediaQuery.sizeOf(context).height * .72,
+      child: Column(
+        children: [
+          const Padding(
+            padding: EdgeInsets.fromLTRB(18, 0, 18, 10),
+            child: Align(
+              alignment: Alignment.centerLeft,
+              child: Text(
+                '引用动态',
+                style: TextStyle(fontSize: 18, fontWeight: FontWeight.w700),
+              ),
+            ),
+          ),
+          Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 16),
+            child: TextField(
+              controller: _search,
+              autofocus: true,
+              onChanged: _runSearch,
+              decoration: const InputDecoration(
+                prefixIcon: Icon(Icons.search_rounded),
+                hintText: '搜索当前可见的动态',
+              ),
+            ),
+          ),
+          const SizedBox(height: 8),
+          Expanded(
+            child: _loading
+                ? const MomentFeedSkeleton(itemCount: 3)
+                : _search.text.trim().isEmpty
+                ? const Center(child: Text('输入标题或正文关键词进行搜索'))
+                : _results.isEmpty
+                ? const Center(child: Text('没有找到可引用的动态'))
+                : ListView.separated(
+                    itemCount: _results.length,
+                    separatorBuilder: (_, __) => const Divider(height: 1),
+                    itemBuilder: (_, index) {
+                      final moment = _results[index];
+                      return ListTile(
+                        title: Text(
+                          moment.title,
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                        ),
+                        subtitle: Text(
+                          '${moment.authorNickname} · ${formatMomentTime(moment.publishedAt ?? moment.createdAt)}\n${moment.content}',
+                          maxLines: 3,
+                          overflow: TextOverflow.ellipsis,
+                        ),
+                        isThreeLine: true,
+                        onTap: () => Navigator.pop(
+                          context,
+                          MomentQuote(
+                            type: 'MOMENT',
+                            momentId: moment.id,
+                            author: MomentUser(
+                              id: moment.authorId,
+                              nickname: moment.authorNickname,
+                              avatarUrl: moment.authorAvatarUrl,
+                              merchant: moment.merchant,
+                            ),
+                            momentTitle: moment.title,
+                            content: moment.content,
+                            createdAt: moment.publishedAt ?? moment.createdAt,
+                          ),
+                        ),
+                      );
+                    },
+                  ),
+          ),
+        ],
+      ),
+    ),
+  );
 }

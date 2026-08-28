@@ -13,7 +13,10 @@ import '../services/moment_api.dart';
 import '../utils/moment_time_formatter.dart';
 import 'app_notice.dart';
 import 'moment_image_viewer.dart';
+import 'moment_mention.dart';
+import 'moment_quote_card.dart';
 import 'moment_reaction_picker.dart';
+import 'moment_share_sheet.dart';
 import 'ui_utils.dart';
 
 /// 动态列表卡片。
@@ -26,6 +29,7 @@ class MomentCard extends StatefulWidget {
     required this.moment,
     this.detail = false,
     this.onChanged,
+    this.onOpen,
     this.onDeleted,
     this.highlightCommentId,
   });
@@ -35,6 +39,7 @@ class MomentCard extends StatefulWidget {
   /// 仅保留用于兼容旧调用。新的详情页不应再设置为 true。
   final bool detail;
   final ValueChanged<Moment>? onChanged;
+  final VoidCallback? onOpen;
   final VoidCallback? onDeleted;
   final int? highlightCommentId;
 
@@ -47,6 +52,9 @@ class _MomentCardState extends State<MomentCard> {
   bool _working = false;
   Timer? _timeTimer;
   MomentComment? _hotComment;
+  List<MomentComment> _previewComments = const [];
+  bool _commentsExpanded = false;
+  bool _loadingComments = false;
 
   CustomerApi get _api => CustomerApi(AppScope.of(context).api);
 
@@ -88,9 +96,32 @@ class _MomentCardState extends State<MomentCard> {
     try {
       final result = await _api.momentComments(_moment.id, pageSize: 10);
       if (!mounted || result.items.isEmpty) return;
-      setState(() => _hotComment = selectHotMomentComment(result.items));
+      setState(() {
+        _hotComment = selectHotMomentComment(result.items);
+        _previewComments = result.items;
+      });
     } catch (_) {
       // 热门评论属于附加信息，加载失败不影响动态主体。
+    }
+  }
+
+  Future<void> _toggleComments() async {
+    if (_commentsExpanded) {
+      setState(() => _commentsExpanded = false);
+      return;
+    }
+    setState(() {
+      _commentsExpanded = true;
+      _loadingComments = _previewComments.isEmpty;
+    });
+    if (_previewComments.isNotEmpty) return;
+    try {
+      final result = await _api.momentComments(_moment.id, pageSize: 10);
+      if (mounted) setState(() => _previewComments = result.items);
+    } catch (_) {
+      if (mounted) AppNotice.show(context, '评论加载失败，请重试');
+    } finally {
+      if (mounted) setState(() => _loadingComments = false);
     }
   }
 
@@ -159,110 +190,55 @@ class _MomentCardState extends State<MomentCard> {
     }
   }
 
-  Future<void> _share({int? commentId}) async {
-    try {
-      final conversations = await _api.conversations();
-      if (!mounted) return;
-
-      await showModalBottomSheet<void>(
-        context: context,
-        showDragHandle: true,
-        backgroundColor: Colors.white,
-        shape: const RoundedRectangleBorder(
-          borderRadius: BorderRadius.vertical(top: Radius.circular(22)),
-        ),
-        builder: (sheetContext) => SafeArea(
-          child: SizedBox(
-            height: 420,
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                const Padding(
-                  padding: EdgeInsets.fromLTRB(20, 2, 20, 14),
-                  child: Text(
-                    '分享到聊天',
-                    style: TextStyle(
-                      fontSize: 18,
-                      fontWeight: FontWeight.w800,
-                      color: Color(0xFF202124),
-                    ),
-                  ),
-                ),
-                const Divider(height: 1, color: Color(0xFFEEEEEE)),
-                Expanded(
-                  child: conversations.isEmpty
-                      ? const Center(
-                          child: Text(
-                            '暂无可分享的聊天',
-                            style: TextStyle(color: Color(0xFF8A8F98)),
-                          ),
-                        )
-                      : ListView.separated(
-                          padding: const EdgeInsets.symmetric(vertical: 8),
-                          itemCount: conversations.length,
-                          separatorBuilder: (_, _) => const Divider(
-                            height: 1,
-                            indent: 72,
-                            color: Color(0xFFF1F2F4),
-                          ),
-                          itemBuilder: (_, index) {
-                            final item = conversations[index];
-                            return ListTile(
-                              contentPadding: const EdgeInsets.symmetric(
-                                horizontal: 18,
-                                vertical: 2,
-                              ),
-                              leading: const CircleAvatar(
-                                backgroundColor: Color(0xFFFFF0E2),
-                                child: Icon(
-                                  Icons.chat_bubble_outline_rounded,
-                                  color: Color(0xFFE77910),
-                                ),
-                              ),
-                              title: Text(
-                                item.title,
-                                maxLines: 1,
-                                overflow: TextOverflow.ellipsis,
-                              ),
-                              enabled: item.isActive,
-                              trailing: const Icon(
-                                Icons.chevron_right_rounded,
-                                size: 20,
-                              ),
-                              onTap: () async {
-                                try {
-                                  await _api.shareMoment(
-                                    conversationId: item.id,
-                                    momentId: _moment.id,
-                                    commentId: commentId,
-                                  );
-                                  if (!sheetContext.mounted) return;
-                                  Navigator.pop(sheetContext);
-                                  if (mounted) {
-                                    AppNotice.show(context, '已分享到聊天');
-                                  }
-                                } on ApiException catch (error) {
-                                  if (mounted) {
-                                    AppNotice.show(context, error.message);
-                                  }
-                                }
-                              },
-                            );
-                          },
-                        ),
-                ),
-              ],
+  void _quoteMoment() {
+    Navigator.of(context).push(
+      MaterialPageRoute(
+        builder: (_) => MomentComposerPage(
+          initialQuote: MomentQuote(
+            type: 'MOMENT',
+            momentId: _moment.id,
+            author: MomentUser(
+              id: _moment.authorId,
+              nickname: _moment.authorNickname,
+              avatarUrl: _moment.authorAvatarUrl,
+              merchant: _moment.merchant,
             ),
+            momentTitle: _moment.title,
+            content: _moment.content,
+            createdAt: _moment.publishedAt ?? _moment.createdAt,
           ),
         ),
-      );
-    } on ApiException catch (error) {
-      if (mounted) AppNotice.show(context, error.message);
-    }
+      ),
+    );
+  }
+
+  void _openQuote() {
+    final quote = _moment.quote;
+    if (quote == null || quote.momentId <= 0) return;
+    Navigator.of(context).push(
+      MaterialPageRoute(
+        builder: (_) => MomentDetailPage(
+          momentId: quote.momentId,
+          highlightCommentId: quote.commentId,
+        ),
+      ),
+    );
+  }
+
+  Future<void> _share({int? commentId}) async {
+    await showMomentShareSheet(context, moment: _moment, commentId: commentId);
+    if (!mounted) return;
+    try {
+      _replaceMoment(await _api.moment(_moment.id));
+    } catch (_) {}
   }
 
   void _open() {
     if (widget.detail) return;
+    if (widget.onOpen != null) {
+      widget.onOpen!();
+      return;
+    }
     Navigator.of(context).push(
       MaterialPageRoute(builder: (_) => MomentDetailPage(momentId: _moment.id)),
     );
@@ -287,7 +263,13 @@ class _MomentCardState extends State<MomentCard> {
 
   @override
   Widget build(BuildContext context) {
-    final displayTime = _shouldShowEdited(_moment)
+    final displayTime =
+        shouldShowMomentEdited(
+          editedAt: _moment.editedAt,
+          publishedAt: _moment.publishedAt,
+          createdAt: _moment.createdAt,
+          status: _moment.status,
+        )
         ? '编辑于 ${formatMomentTime(_moment.editedAt!)}'
         : formatMomentTime(_moment.publishedAt ?? _moment.createdAt);
     final hasCommentCard = !widget.detail && _hotComment != null;
@@ -312,6 +294,7 @@ class _MomentCardState extends State<MomentCard> {
                       onAuthorTap: _openAuthor,
                       onEdit: _moment.mine ? _editMoment : null,
                       onDelete: _moment.mine ? _deleteMoment : null,
+                      onQuote: _quoteMoment,
                     ),
                     const SizedBox(height: 13),
                     Text(
@@ -324,16 +307,21 @@ class _MomentCardState extends State<MomentCard> {
                       ),
                     ),
                     const SizedBox(height: 7),
-                    Text(
-                      _moment.content,
+                    MomentMentionText(
+                      content: _moment.content,
+                      mentions: _moment.mentions,
                       maxLines: widget.detail ? null : 5,
-                      overflow: widget.detail ? null : TextOverflow.ellipsis,
+                      overflow: widget.detail
+                          ? TextOverflow.clip
+                          : TextOverflow.ellipsis,
                       style: const TextStyle(
                         fontSize: 15,
                         height: 1.58,
                         color: Color(0xFF3C4043),
                       ),
                     ),
+                    if (_moment.quote != null)
+                      MomentQuoteCard(quote: _moment.quote!, onTap: _openQuote),
                     if (!widget.detail && _moment.content.length > 150)
                       const Padding(
                         padding: EdgeInsets.only(top: 4),
@@ -422,7 +410,9 @@ class _MomentCardState extends State<MomentCard> {
                           Expanded(
                             child: _Action(
                               icon: Icons.ios_share_rounded,
-                              text: '分享',
+                              text: widget.moment.shareCount == 0
+                                  ? '分享'
+                                  : '${widget.moment.shareCount}',
                               onTap: _share,
                             ),
                           ),
@@ -439,9 +429,41 @@ class _MomentCardState extends State<MomentCard> {
             _MomentCommentSection(
               child: Padding(
                 padding: const EdgeInsets.fromLTRB(16, 12, 16, 12),
-                child: _HotCommentPreview(
-                  comment: _hotComment!,
-                  onTap: _open,
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    AnimatedSize(
+                      duration: const Duration(milliseconds: 220),
+                      child: _commentsExpanded
+                          ? Column(
+                              children: [
+                                for (final comment in _previewComments)
+                                  Padding(
+                                    padding: const EdgeInsets.only(bottom: 10),
+                                    child: _HotCommentLine(comment: comment),
+                                  ),
+                                if (_loadingComments)
+                                  const Padding(
+                                    padding: EdgeInsets.symmetric(vertical: 8),
+                                    child: CommentSkeleton(),
+                                  ),
+                              ],
+                            )
+                          : _HotCommentPreview(
+                              comment: _hotComment!,
+                              onTap: _open,
+                            ),
+                    ),
+                    if (_moment.rootCommentCount >= 2)
+                      TextButton(
+                        onPressed: _toggleComments,
+                        style: TextButton.styleFrom(
+                          padding: const EdgeInsets.symmetric(horizontal: 0),
+                          minimumSize: const Size(0, 34),
+                        ),
+                        child: Text(_commentsExpanded ? '收起评论' : '展开更多评论'),
+                      ),
+                  ],
                 ),
               ),
             ),
@@ -459,6 +481,7 @@ class _MomentAuthorHeader extends StatelessWidget {
     required this.onAuthorTap,
     this.onEdit,
     this.onDelete,
+    required this.onQuote,
   });
 
   final Moment moment;
@@ -466,6 +489,7 @@ class _MomentAuthorHeader extends StatelessWidget {
   final VoidCallback onAuthorTap;
   final VoidCallback? onEdit;
   final VoidCallback? onDelete;
+  final VoidCallback onQuote;
 
   @override
   Widget build(BuildContext context) => Row(
@@ -524,22 +548,23 @@ class _MomentAuthorHeader extends StatelessWidget {
           ],
         ),
       ),
-      if (onEdit != null || onDelete != null)
-        PopupMenuButton<String>(
-          tooltip: '更多操作',
-          padding: EdgeInsets.zero,
-          icon: const Icon(Icons.more_horiz_rounded, color: Color(0xFF777B82)),
-          onSelected: (value) {
-            if (value == 'edit') onEdit?.call();
-            if (value == 'delete') onDelete?.call();
-          },
-          itemBuilder: (_) => [
-            if (onEdit != null)
-              const PopupMenuItem(value: 'edit', child: Text('编辑动态')),
-            if (onDelete != null)
-              const PopupMenuItem(value: 'delete', child: Text('删除动态')),
-          ],
-        ),
+      PopupMenuButton<String>(
+        tooltip: '更多操作',
+        padding: EdgeInsets.zero,
+        icon: const Icon(Icons.more_horiz_rounded, color: Color(0xFF777B82)),
+        onSelected: (value) {
+          if (value == 'edit') onEdit?.call();
+          if (value == 'delete') onDelete?.call();
+          if (value == 'quote') onQuote();
+        },
+        itemBuilder: (_) => [
+          const PopupMenuItem(value: 'quote', child: Text('引用动态')),
+          if (onEdit != null)
+            const PopupMenuItem(value: 'edit', child: Text('编辑动态')),
+          if (onDelete != null)
+            const PopupMenuItem(value: 'delete', child: Text('删除动态')),
+        ],
+      ),
     ],
   );
 }
@@ -703,7 +728,9 @@ class _MomentTopSection extends StatelessWidget {
     children: [
       Material(
         color: Colors.white,
-        borderRadius: BorderRadius.circular(16),
+        borderRadius: showCommentNotch
+            ? const BorderRadius.vertical(top: Radius.circular(16))
+            : BorderRadius.circular(16),
         clipBehavior: Clip.antiAlias,
         child: child,
       ),
@@ -745,7 +772,7 @@ class _MomentCommentSection extends StatelessWidget {
       ),
       Material(
         color: Colors.white,
-        borderRadius: BorderRadius.circular(16),
+        borderRadius: const BorderRadius.vertical(bottom: Radius.circular(16)),
         clipBehavior: Clip.antiAlias,
         child: child,
       ),
@@ -817,23 +844,9 @@ class _ConnectorPainter extends CustomPainter {
     final path = Path()
       ..moveTo(0, h)
       ..lineTo(leftJoinX, h)
-      ..cubicTo(
-        w * 0.27,
-        h,
-        leftShoulderX,
-        shoulderY,
-        tipLeftX,
-        tipShoulderY,
-      )
+      ..cubicTo(w * 0.27, h, leftShoulderX, shoulderY, tipLeftX, tipShoulderY)
       ..quadraticBezierTo(w / 2, tipTopY, tipRightX, tipShoulderY)
-      ..cubicTo(
-        rightShoulderX,
-        shoulderY,
-        w * 0.73,
-        h,
-        rightJoinX,
-        h,
-      )
+      ..cubicTo(rightShoulderX, shoulderY, w * 0.73, h, rightJoinX, h)
       ..lineTo(w, h)
       ..close();
 
@@ -1174,9 +1187,8 @@ class _CommentPreviewImage extends StatelessWidget {
           child: Image.network(
             resolveCustomerImageUrl(url),
             fit: BoxFit.cover,
-            loadingBuilder: (_, child, progress) => progress == null
-                ? child
-                : const SoftImageLoadingPlaceholder(),
+            loadingBuilder: (_, child, progress) =>
+                progress == null ? child : const SoftImageLoadingPlaceholder(),
             errorBuilder: (_, _, _) => const ColoredBox(
               color: Color(0xFFF0F1F3),
               child: Center(
@@ -1308,8 +1320,9 @@ class _HotCommentLine extends StatelessWidget {
             ),
             const SizedBox(height: 3),
             if (comment.content.trim().isNotEmpty)
-              Text(
-                comment.content,
+              MomentMentionText(
+                content: comment.content,
+                mentions: comment.mentions,
                 maxLines: compact ? 1 : 2,
                 overflow: TextOverflow.ellipsis,
                 style: TextStyle(
@@ -1318,11 +1331,11 @@ class _HotCommentLine extends StatelessWidget {
                   color: const Color(0xFF44474C),
                 ),
               ),
-            if (comment.imageUrl?.isNotEmpty == true)
+            if (comment.imageUrls.isNotEmpty)
               Padding(
                 padding: const EdgeInsets.only(top: 6),
                 child: _CommentPreviewImage(
-                  url: comment.imageUrl!,
+                  url: comment.imageUrls.first,
                   compact: compact,
                 ),
               ),
@@ -1377,14 +1390,4 @@ MomentComment selectHotMomentComment(Iterable<MomentComment> comments) {
       );
     });
   return sorted.first;
-}
-
-bool _shouldShowEdited(Moment moment) {
-  if (moment.editedAt?.isNotEmpty != true || moment.status != 'PUBLISHED') {
-    return false;
-  }
-  final edited = DateTime.tryParse(moment.editedAt!);
-  final published = DateTime.tryParse(moment.publishedAt ?? moment.createdAt);
-  if (edited == null || published == null) return true;
-  return edited.isAfter(published.add(const Duration(seconds: 1)));
 }

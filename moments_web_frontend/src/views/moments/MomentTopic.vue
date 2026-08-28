@@ -48,7 +48,7 @@
 
     <MomentShareDialog v-if="shareMoment" :moment="shareMoment" @close="shareMoment = null" />
 
-    <ImageViewer :visible="viewer.visible" :src="viewer.src" @close="viewer.visible = false" />
+    <ImageViewer :visible="viewer.visible" :images="viewer.images" :initial-index="viewer.index" @close="viewer.visible = false" />
   </div>
 </template>
 
@@ -82,7 +82,7 @@ const loadingMore = ref(false)
 const error = ref('')
 const reactionMoment = ref(null)
 const shareMoment = ref(null)
-const viewer = ref({ visible: false, src: '' })
+const viewer = ref({ visible: false, images: [], index: 0 })
 
 function requireLogin() {
   if (localStorage.getItem('token')) return true
@@ -158,7 +158,7 @@ function openAuthor(author) {
 function openReference(reference) { if (reference?.shopId) router.push(`/customer/shop/${reference.shopId}/menu`) }
 function viewImage(moment, index) {
   const url = moment.imageUrls?.[index]
-  if (url) viewer.value = { visible: true, src: imageUrl(url) }
+  if (url) viewer.value = { visible: true, images: moment.imageUrls.map(imageUrl), index }
 }
 
 onMounted(load)

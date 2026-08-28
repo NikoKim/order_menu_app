@@ -31,6 +31,7 @@ const topics = [
   { id: 5, name: '随手拍', usageCount: 49, userCount: 19, momentCount: 49 }
 ]
 let lastCommentPayload = null
+let momentFeedRequestCount = 0
 
 async function mockApi(page) {
   await page.route('**/images/sample.svg', route => route.fulfill({
@@ -103,8 +104,34 @@ async function mockApi(page) {
       total: 4,
       hasMore: url.searchParams.get('page') !== '2'
     }
-    else if (/\/moments\/\d+$/.test(url.pathname)) data = { ...sampleMoments[0], content: sampleMoments[0].content.repeat(28) }
-    else if (url.pathname.endsWith('/moments')) data = { records: sampleMoments, hasMore: false, total: sampleMoments.length }
+    else if (/\/moments\/\d+$/.test(url.pathname)) {
+      const momentId = Number(url.pathname.match(/(\d+)$/)?.[1]) || 1
+      data = {
+        ...sampleMoments[(momentId - 1) % sampleMoments.length],
+        id: momentId,
+        likeCount: 99,
+        shareCount: 12,
+        content: sampleMoments[0].content.repeat(28),
+        hotComment: {
+          ...sampleMoments[0].hotComment,
+          id: 9000 + momentId,
+          momentId,
+          content: '详情返回后同步到浏览页的评论'
+        }
+      }
+    }
+    else if (url.pathname.endsWith('/moments')) {
+      momentFeedRequestCount++
+      const requestedPage = Math.max(1, Number(url.searchParams.get('page')) || 1)
+      const offset = (requestedPage - 1) * sampleMoments.length
+      const records = sampleMoments.map((moment, index) => ({
+        ...moment,
+        id: offset + index + 1,
+        title: `第 ${requestedPage} 页动态 ${index + 1}`,
+        hotComment: { ...moment.hotComment, id: 90 + offset + index, momentId: offset + index + 1 }
+      }))
+      data = { records, hasMore: requestedPage < 3, total: sampleMoments.length * 3 }
+    }
     else data = {}
     await route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ code: 0, data }) })
   })
@@ -171,6 +198,41 @@ await desktop.locator('.header-tab').filter({ hasText: '动态' }).click()
 await desktop.waitForURL('**/customer/moments')
 assert((await desktop.locator('.feed-tab.active').textContent()).trim() === '相关', '从聊天切回动态后推荐/相关状态丢失')
 assert(Math.abs(await desktop.locator('.feed-list').evaluate(el => el.scrollTop) - 360) < 2, '从聊天切回动态后浏览位置丢失')
+await desktop.getByRole('button', { name: '推荐' }).click()
+const feedList = desktop.locator('.feed-list')
+for (const expectedCount of [24, 36]) {
+  await feedList.evaluate(el => { el.scrollTop = el.scrollHeight; el.dispatchEvent(new Event('scroll')) })
+  await desktop.locator('.moment-card').nth(expectedCount - 1).waitFor({ state: 'attached' })
+}
+const deepMoment = desktop.locator('.moment-card').nth(28)
+await deepMoment.scrollIntoViewIfNeeded()
+const deepMomentId = await deepMoment.getAttribute('data-moment-id')
+const beforeDetailPosition = await deepMoment.evaluate(el => {
+  const container = el.closest('.feed-list')
+  return { scrollTop: container.scrollTop, top: el.getBoundingClientRect().top - container.getBoundingClientRect().top }
+})
+const requestsBeforeDetail = momentFeedRequestCount
+await deepMoment.locator('.mc-title').click()
+await desktop.waitForURL('**/customer/moments/*')
+await desktop.locator('.back-btn').click()
+await desktop.waitForURL('**/customer/moments')
+await desktop.locator(`.moment-card[data-moment-id="${deepMomentId}"]`).waitFor({ state: 'visible' })
+const restoredCard = desktop.locator(`.moment-card[data-moment-id="${deepMomentId}"]`)
+const restoredPosition = await restoredCard.evaluate(el => {
+  const container = el.closest('.feed-list')
+  return { scrollTop: container.scrollTop, top: el.getBoundingClientRect().top - container.getBoundingClientRect().top }
+})
+assert(momentFeedRequestCount === requestsBeforeDetail, '返回动态列表时重复请求并只恢复了第一页')
+assert(await desktop.locator('.moment-card').count() === 36, '返回动态列表后已加载的后续分页缓存丢失')
+assert(Math.abs(restoredPosition.scrollTop - beforeDetailPosition.scrollTop) < 2, '返回动态列表后滚动距离恢复不准确')
+assert(Math.abs(restoredPosition.top - beforeDetailPosition.top) < 2, '返回动态列表后没有定位到原动态的准确位置')
+assert(await restoredCard.getByText('详情返回后同步到浏览页的评论').isVisible(), '详情中的最新评论没有重新渲染到浏览页')
+await restoredCard.locator('.mc-act-num').filter({ hasText: /^99$/ }).waitFor({ state: 'visible' })
+assert(await restoredCard.locator('.mc-act-num').filter({ hasText: /^99$/ }).count() === 1, '详情中的点赞数据没有同步到浏览页')
+const requestsBeforeReload = momentFeedRequestCount
+await desktop.reload({ waitUntil: 'networkidle' })
+assert(momentFeedRequestCount > requestsBeforeReload, '刷新页面后仍然沿用了内存缓存，没有重新请求和渲染')
+assert(await desktop.locator('.feed-list').evaluate(el => el.scrollTop) === 0, '刷新页面后错误恢复了上次会话内滚动位置')
 await desktop.locator('.header-tab').filter({ hasText: '聊天' }).click()
 await desktop.waitForURL('**/customer/chat')
 await desktop.goto(`${base}/customer/chat`, { waitUntil: 'networkidle' })

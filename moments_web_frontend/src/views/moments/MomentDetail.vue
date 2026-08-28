@@ -36,7 +36,9 @@
               <span class="author-name">{{ moment.author?.nickname }}</span>
               <span v-if="moment.author?.merchant" class="author-badge">商家</span>
             </div>
-            <span class="author-time">{{ fmtTime(moment.publishedAt || moment.createdAt) }}</span>
+            <span class="author-time">
+              {{ showEdited ? `编辑于 ${fmtTime(moment.editedAt)}` : fmtTime(moment.publishedAt || moment.createdAt) }}
+            </span>
           </div>
           <span v-if="moment.visibility" class="vis-badge" :class="'vis-' + moment.visibility.toLowerCase()">
             {{ visLabel(moment.visibility) }}
@@ -216,9 +218,13 @@
         </div>
         <div v-if="commentImages.length" class="comment-image-previews">
           <div v-for="item in commentImages" :key="item.id" class="comment-image-preview" :class="`is-${item.status}`">
-            <img :src="item.previewUrl" alt="待发送的评论图片" />
+            <img :src="item.previewUrl" :style="{ transform: `rotate(${item.rotation * 90}deg)` }" alt="待发送的评论图片" />
             <span v-if="item.status === 'uploading'" class="comment-image-loading">上传中</span>
             <button v-if="item.status === 'failed'" class="comment-image-retry" type="button" title="重新上传" aria-label="重新上传图片" @click="uploadCommentImageItem(item)"><RefreshCw :size="16" /></button>
+            <div class="comment-image-rotate">
+              <button type="button" title="向左旋转" :disabled="item.status === 'uploading'" @click="rotateCommentImage(item, -1)"><RotateCcw :size="14" /></button>
+              <button type="button" title="向右旋转" :disabled="item.status === 'uploading'" @click="rotateCommentImage(item, 1)"><RotateCw :size="14" /></button>
+            </div>
             <button class="comment-image-remove" type="button" title="移除图片" aria-label="移除图片" @click="removeCommentImage(item)"><X :size="15" /></button>
           </div>
         </div>
@@ -234,7 +240,7 @@
     </template>
 
     <!-- Image viewer -->
-    <ImageViewer :visible="imageViewer.visible" :src="imageViewer.src" @close="imageViewer.visible = false" />
+    <ImageViewer :visible="imageViewer.visible" :images="imageViewer.images" :initial-index="imageViewer.index" @close="imageViewer.visible = false" />
     <MentionPicker :visible="mentionPickerOpen" :selected-ids="commentMentionUsers.map(user => user.id)" @select="selectMentionUser" @close="mentionPickerOpen = false" />
 
     <!-- Reaction picker -->
@@ -280,11 +286,11 @@
 <script setup>
 import { computed, nextTick, ref, onMounted, onUnmounted, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
-import { ArrowLeft, Heart, ImagePlus, MessageCircle, MoreVertical, Pencil, Quote, RefreshCw, Share2, SmilePlus, Trash2, X } from 'lucide-vue-next'
+import { ArrowLeft, Heart, ImagePlus, MessageCircle, MoreVertical, Pencil, Quote, RefreshCw, RotateCcw, RotateCw, Share2, SmilePlus, Trash2, X } from 'lucide-vue-next'
 import { deleteMoment, getMomentComment, getMomentDetail, setMomentLike, setMomentReaction, getMomentComments, addMomentComment, deleteMomentComment, setCommentLike, getCommentReplies, uploadMomentCommentImage } from '../../api/moments'
 import { getConversations, shareMomentToChat } from '../../api/messages'
 import { imageUrl } from '../../composables/useImage'
-import { formatMomentTime } from '../../composables/useMomentTime'
+import { formatMomentTime, hasMeaningfulMomentEdit } from '../../composables/useMomentTime'
 import AnchoredMenu from '../../components/AnchoredMenu.vue'
 import ImageViewer from '../../components/ImageViewer.vue'
 import LoadingSpinner from '../../components/LoadingSpinner.vue'
@@ -296,6 +302,7 @@ import MentionText from '../../components/MentionText.vue'
 import MomentQuoteCard from '../../components/MomentQuoteCard.vue'
 import MomentReactionPicker from '../../components/MomentReactionPicker.vue'
 import { shareMomentExternally } from '../../services/shareCard'
+import { prepareUploadImage } from '../../services/imageUpload'
 import { confirmNotice, notifyError, notifySuccess } from '../../services/notice'
 
 const route = useRoute()
@@ -316,7 +323,7 @@ const mentionPickerOpen = ref(false)
 const commentInputEl = ref(null)
 const replyTarget = ref(null)
 const reactionMoment = ref(null)
-const imageViewer = ref({ visible: false, src: '' })
+const imageViewer = ref({ visible: false, images: [], index: 0 })
 const ownerMenuOpen = ref(false)
 const ownerMenuAnchor = ref(null)
 const commentMenuId = ref(null)
@@ -532,13 +539,24 @@ async function handleCommentImage(e) {
   const files = Array.from(e.target.files || []).slice(0, remaining)
   if (!files.length) return
   if ((e.target.files?.length || 0) > remaining) notifyError('每条评论最多添加 6 张图片')
-  const items = files.map(file => ({
-    id: `${Date.now()}-${Math.random().toString(36).slice(2)}`,
-    file,
-    previewUrl: URL.createObjectURL(file),
-    url: '',
-    status: 'uploading'
-  }))
+  let items
+  try {
+    items = await Promise.all(files.map(async file => {
+      const normalizedFile = await prepareUploadImage(file)
+      return {
+        id: `${Date.now()}-${Math.random().toString(36).slice(2)}`,
+        file: normalizedFile,
+        previewUrl: URL.createObjectURL(normalizedFile),
+        rotation: 0,
+        url: '',
+        status: 'uploading'
+      }
+    }))
+  } catch (err) {
+    notifyError(err.message || '图片处理失败，请重新选择')
+    e.target.value = ''
+    return
+  }
   commentImages.value.push(...items)
   await Promise.all(items.map(uploadCommentImageItem))
   e.target.value = ''
@@ -549,13 +567,21 @@ async function uploadCommentImageItem(item) {
   if (!current) return
   current.status = 'uploading'
   try {
-    const res = await uploadMomentCommentImage(current.file)
+    const file = await prepareUploadImage(current.file, current.rotation)
+    const res = await uploadMomentCommentImage(file)
     current.url = res.url
     current.status = 'ready'
   } catch (err) {
     current.status = 'failed'
     notifyError(err.message)
   }
+}
+
+function rotateCommentImage(item, delta) {
+  if (item.status === 'uploading') return
+  item.rotation = ((Number(item.rotation || 0) + delta) % 4 + 4) % 4
+  item.url = ''
+  uploadCommentImageItem(item)
 }
 
 function removeCommentImage(item) {
@@ -586,12 +612,12 @@ async function handleReaction(emoji) {
 function viewImage(idx) {
   const urls = moment.value?.imageUrls
   if (!urls?.[idx]) return
-  imageViewer.value = { visible: true, src: imageUrl(urls[idx]) }
+  imageViewer.value = { visible: true, images: urls.map(imageUrl), index: idx }
 }
 
 function viewCommentImage(urls, idx) {
   if (!urls?.[idx]) return
-  imageViewer.value = { visible: true, src: imageUrl(urls[idx]) }
+  imageViewer.value = { visible: true, images: urls.map(imageUrl), index: idx }
 }
 
 function focusComment() {
@@ -716,6 +742,7 @@ function visLabel(v) {
 }
 
 const fmtTime = formatMomentTime
+const showEdited = computed(() => hasMeaningfulMomentEdit(moment.value))
 
 onMounted(() => { loadDetail(); window.addEventListener('scroll', handlePageScroll, { passive: true }) })
 watch(() => route.fullPath, (current, previous) => {
@@ -947,13 +974,16 @@ onUnmounted(() => {
 .reply-cancel { border: none; background: none; font-size: 14px; color: var(--color-text-muted); cursor: pointer; }
 .comment-image-previews { display: flex; gap: 8px; overflow-x: auto; margin-bottom: 9px; padding: 1px; }
 .comment-image-preview { position: relative; width: 76px; height: 76px; flex: 0 0 76px; overflow: hidden; border: 1px solid var(--color-line); border-radius: 7px; background: #eef0f2; }
-.comment-image-preview img { width: 100%; height: 100%; object-fit: cover; transition: opacity .2s ease; }
+.comment-image-preview img { width: 100%; height: 100%; object-fit: contain; transition: opacity .2s ease, transform .2s ease; }
 .comment-image-preview.is-uploading img { opacity: .48; }
 .comment-image-loading { position: absolute; inset: 0; display: grid; place-items: center; overflow: hidden; color: #555b63; font-size: 11px; font-weight: 650; }
 .comment-image-loading::before { position: absolute; inset: 0; background: linear-gradient(100deg, transparent 20%, rgba(255,255,255,.72) 50%, transparent 80%); content: ''; transform: translateX(-100%); animation: comment-image-shimmer 1.15s infinite; }
 .comment-image-retry, .comment-image-remove { position: absolute; z-index: 2; display: grid; place-items: center; color: #fff; background: rgba(20,22,25,.72); }
 .comment-image-remove { top: 4px; right: 4px; width: 25px; height: 25px; border-radius: 50%; }
 .comment-image-retry { inset: 0; width: 34px; height: 34px; margin: auto; border-radius: 50%; }
+.comment-image-rotate { position: absolute; left: 3px; right: 3px; bottom: 3px; z-index: 3; display: flex; justify-content: space-between; }
+.comment-image-rotate button { width: 24px; height: 24px; display: grid; place-items: center; border-radius: 50%; background: rgba(20,22,25,.72); color: #fff; }
+.comment-image-rotate button:disabled { opacity: .4; cursor: default; }
 .comment-image-preview.is-failed img { opacity: .52; }
 @keyframes comment-image-shimmer { to { transform: translateX(100%); } }
 .comment-input-row { display: flex; gap: 8px; align-items: center; }
