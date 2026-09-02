@@ -12,6 +12,7 @@ spring:
 logging:
   level:
     com.order.menu: debug
+    com.order.menu.module.entertainment: info
 
 app:
   jwt:

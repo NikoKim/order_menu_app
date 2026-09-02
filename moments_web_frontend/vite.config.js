@@ -1,6 +1,8 @@
 import { defineConfig } from 'vite'
 import vue from '@vitejs/plugin-vue'
 
+const proxyTarget = process.env.VITE_PROXY_TARGET || 'http://localhost:8080'
+
 export default defineConfig({
   plugins: [vue()],
   build: {
@@ -11,24 +13,24 @@ export default defineConfig({
     host: true,
     proxy: {
       '/api': {
-        target: 'http://localhost:8080',
+        target: proxyTarget,
         changeOrigin: true
       },
       '/images': {
-        target: 'http://localhost:8080',
+        target: proxyTarget,
         changeOrigin: true
       },
       '/message-chat-images': {
-        target: 'http://localhost:8080',
+        target: proxyTarget,
         changeOrigin: true
       },
       '/ws': {
-        target: 'ws://localhost:8080',
+        target: proxyTarget.replace(/^http/, 'ws'),
         ws: true,
         changeOrigin: true
       },
       '/share': {
-        target: 'http://localhost:8080',
+        target: proxyTarget,
         changeOrigin: true,
         rewrite: path => path.replace(/^\/share\/moments\/(\d+)/, '/api/moments/$1/share-card')
       }

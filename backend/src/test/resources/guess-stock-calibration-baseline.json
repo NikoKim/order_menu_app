@@ -1,0 +1,11 @@
+{
+  "noEventMedianAbsMaxPct": 2.0,
+  "balancedEventMedianAbsMaxPct": 5.0,
+  "positiveGamePctMin": 38.0,
+  "positiveGamePctMax": 62.0,
+  "ordinaryStageMoveP99MaxPct": 6.0,
+  "eventStageMoveP99MaxPct": 7.0,
+  "regimeSwitchesMinPer100": 3.0,
+  "regimeSwitchesMaxPer100": 12.0,
+  "aiTradeCountMaxPer100": 25.0
+}

@@ -1,0 +1,11 @@
+ALTER TABLE guess_stock_ai_tasks
+  DROP INDEX idx_guess_stock_ai_telemetry,
+  DROP COLUMN attempt_count,
+  DROP COLUMN http_status,
+  DROP COLUMN fallback_reason,
+  DROP COLUMN cache_hit,
+  DROP COLUMN completion_tokens,
+  DROP COLUMN prompt_tokens,
+  DROP COLUMN latency_ms,
+  DROP COLUMN model,
+  DROP COLUMN provider;

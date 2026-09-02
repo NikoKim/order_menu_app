@@ -1,0 +1,15 @@
+ALTER TABLE guess_stock_rounds
+  DROP COLUMN pricing_engine_version,
+  DROP COLUMN total_change_percent,
+  DROP COLUMN noise_change_percent,
+  DROP COLUMN medium_mean_reversion_percent,
+  DROP COLUMN scheduled_event_change_percent,
+  DROP COLUMN regime_change_percent,
+  DROP COLUMN momentum_change_percent,
+  DROP COLUMN current_volatility_percent,
+  DROP COLUMN consecutive_direction_rounds,
+  DROP COLUMN regime_age,
+  DROP COLUMN trend_age,
+  DROP COLUMN trend_score,
+  DROP COLUMN volatility_state,
+  DROP COLUMN trend_state;

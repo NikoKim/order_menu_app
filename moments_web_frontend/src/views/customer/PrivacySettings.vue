@@ -30,6 +30,7 @@ import { ArrowLeft } from 'lucide-vue-next'
 import { getMyProfileVisibility, updateMyProfileVisibility } from '../../api/moments'
 import LoadingSpinner from '../../components/LoadingSpinner.vue'
 import EmptyState from '../../components/EmptyState.vue'
+import { notifyError } from '../../services/notice'
 
 const router = useRouter()
 const visibility = ref('PUBLIC')
@@ -55,7 +56,7 @@ async function load() {
 async function save() {
   saved.value = false
   try { await updateMyProfileVisibility(visibility.value); saved.value = true }
-  catch (e) { error.value = e.message }
+  catch (e) { notifyError(e.message) }
 }
 
 onMounted(load)

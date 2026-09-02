@@ -9,6 +9,7 @@
         <span>动态</span>
         <i v-if="momentUnread" class="tab-badge">{{ badge(momentUnread) }}</i>
       </button>
+      <router-link class="header-tab entertainment-tab" to="/customer/entertainment"><span>娱乐</span></router-link>
       <router-link v-if="isLoggedIn" class="mobile-message-link" to="/customer/message-center" title="消息中心" aria-label="消息中心">
         <Bell :size="21" aria-hidden="true" />
         <i v-if="notificationUnread" class="message-badge">{{ badge(notificationUnread) }}</i>

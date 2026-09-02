@@ -16,7 +16,6 @@
           <label class="form-label">密码</label>
           <input v-model="password" type="password" class="form-input" placeholder="请输入密码" required />
         </div>
-        <p v-if="error" class="form-error" style="text-align:center">{{ error }}</p>
         <button type="submit" class="btn btn-primary btn-block btn-lg" :disabled="loading">
           {{ loading ? '登录中...' : '登录' }}
         </button>
@@ -32,6 +31,7 @@
 import { ref } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { useAuthStore } from '../../stores/auth'
+import { notifyError } from '../../services/notice'
 
 const router = useRouter()
 const route = useRoute()
@@ -40,16 +40,14 @@ const auth = useAuthStore()
 const nickname = ref('')
 const password = ref('')
 const loading = ref(false)
-const error = ref('')
 
 async function handleLogin() {
-  error.value = ''
   loading.value = true
   try {
     await auth.loginAction(nickname.value.trim(), password.value, 'CUSTOMER')
     router.push(typeof route.query.redirect === 'string' ? route.query.redirect : '/customer/chat')
   } catch (e) {
-    error.value = e.message
+    notifyError(e.message)
   } finally {
     loading.value = false
   }

@@ -1,0 +1,1 @@
+ALTER TABLE guess_stock_challenge_entries DROP COLUMN research_attempt_count;

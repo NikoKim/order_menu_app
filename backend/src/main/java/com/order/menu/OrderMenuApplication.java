@@ -11,7 +11,13 @@ import java.util.TimeZone;
 @SpringBootApplication
 @EnableScheduling
 @EnableAsync
-@MapperScan("com.order.menu.module.*.mapper")
+@MapperScan({
+        "com.order.menu.module.*.mapper",
+        "com.order.menu.module.entertainment.core.mapper",
+        "com.order.menu.module.entertainment.mode.guessstock.mapper",
+        "com.order.menu.module.entertainment.mode.guessstock.credit.mapper",
+        "com.order.menu.module.entertainment.mode.guessstock.challenge"
+})
 public class OrderMenuApplication {
     public static void main(String[] args) {
         TimeZone.setDefault(TimeZone.getTimeZone("Asia/Shanghai"));

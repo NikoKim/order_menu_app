@@ -1,0 +1,16 @@
+ALTER TABLE guess_stock_rounds
+  ADD COLUMN event_type VARCHAR(20) NULL AFTER event_description,
+  ADD COLUMN event_relevance VARCHAR(20) NULL AFTER event_type,
+  ADD COLUMN event_credibility VARCHAR(20) NULL AFTER event_relevance,
+  ADD COLUMN event_surprise VARCHAR(20) NULL AFTER event_credibility,
+  ADD COLUMN event_strength VARCHAR(20) NULL AFTER event_surprise,
+  ADD COLUMN opening_event_tier VARCHAR(20) NULL AFTER opening_event_change_percent,
+  ADD COLUMN opening_event_regime VARCHAR(30) NULL AFTER opening_event_tier,
+  ADD COLUMN opening_event_raw_change_percent DECIMAL(10,4) NULL AFTER opening_event_regime,
+  ADD COLUMN opening_event_adaptation_percent DECIMAL(10,4) NULL AFTER opening_event_raw_change_percent,
+  ADD COLUMN opening_event_reason VARCHAR(500) NULL AFTER opening_event_adaptation_percent,
+  ADD COLUMN closing_event_tier VARCHAR(20) NULL AFTER closing_event_change_percent,
+  ADD COLUMN closing_event_regime VARCHAR(30) NULL AFTER closing_event_tier,
+  ADD COLUMN closing_event_raw_change_percent DECIMAL(10,4) NULL AFTER closing_event_regime,
+  ADD COLUMN closing_event_adaptation_percent DECIMAL(10,4) NULL AFTER closing_event_raw_change_percent,
+  ADD COLUMN closing_event_reason VARCHAR(500) NULL AFTER closing_event_adaptation_percent;

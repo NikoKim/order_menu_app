@@ -2,7 +2,7 @@
   <Teleport to="body">
     <div class="notice-stack" aria-live="polite" aria-atomic="true">
       <TransitionGroup name="notice-toast">
-        <div v-for="item in toasts" :key="item.id" class="notice-toast" :class="item.type" role="status">
+        <div v-for="item in toasts" :key="item.id" class="notice-toast" :class="item.type" :role="item.type === 'error' ? 'alert' : 'status'">
           <CircleCheck v-if="item.type === 'success'" :size="19" />
           <TriangleAlert v-else :size="19" />
           <span>{{ item.message }}</span>
@@ -82,12 +82,12 @@ onUnmounted(() => {
 </script>
 
 <style scoped>
-.notice-stack { width: min(420px, calc(100vw - 24px)); position: fixed; top: max(18px, env(safe-area-inset-top)); left: 50%; z-index: 1200; display: flex; flex-direction: column; gap: 8px; transform: translateX(-50%); pointer-events: none; }
+.notice-stack { width: min(460px, calc(100vw - 24px)); position: fixed; top: max(18px, env(safe-area-inset-top)); left: 50%; z-index: 2147483647; display: flex; flex-direction: column; gap: 8px; transform: translateX(-50%); pointer-events: none; }
 .notice-toast { min-height: 48px; display: grid; grid-template-columns: 22px minmax(0, 1fr) 30px; align-items: center; gap: 9px; padding: 8px 8px 8px 13px; border: 1px solid #f1c5bf; border-radius: 8px; background: #fff; box-shadow: 0 10px 28px rgba(30, 32, 35, .16); color: #b54135; font-size: 14px; line-height: 1.45; pointer-events: auto; }
 .notice-toast.success { border-color: #b9ddc2; color: #28743b; }
 .notice-toast button { width: 30px; height: 30px; display: grid; place-items: center; border-radius: 6px; background: transparent; color: currentColor; opacity: .7; }
 .notice-toast button:hover { background: rgba(0, 0, 0, .05); opacity: 1; }
-.notice-dialog-overlay { position: fixed; inset: 0; z-index: 1190; display: grid; place-items: center; padding: 20px; background: rgba(18, 20, 22, .4); backdrop-filter: blur(2px); }
+.notice-dialog-overlay { position: fixed; inset: 0; z-index: 2147483646; display: grid; place-items: center; padding: 20px; background: rgba(18, 20, 22, .4); backdrop-filter: blur(2px); }
 .notice-dialog { width: min(360px, 100%); padding: 22px; border-radius: 8px; background: #fff; box-shadow: 0 22px 60px rgba(20, 22, 25, .24); text-align: center; }
 .notice-dialog-icon { width: 46px; height: 46px; margin: 0 auto 12px; display: grid; place-items: center; border-radius: 50%; background: #edf4ff; color: #4777b8; }
 .notice-dialog-icon.danger { background: #fff0ed; color: #d55245; }

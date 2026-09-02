@@ -1,0 +1,16 @@
+ALTER TABLE guess_stock_rounds
+  DROP COLUMN closing_event_reason,
+  DROP COLUMN closing_event_adaptation_percent,
+  DROP COLUMN closing_event_raw_change_percent,
+  DROP COLUMN closing_event_regime,
+  DROP COLUMN closing_event_tier,
+  DROP COLUMN opening_event_reason,
+  DROP COLUMN opening_event_adaptation_percent,
+  DROP COLUMN opening_event_raw_change_percent,
+  DROP COLUMN opening_event_regime,
+  DROP COLUMN opening_event_tier,
+  DROP COLUMN event_strength,
+  DROP COLUMN event_surprise,
+  DROP COLUMN event_credibility,
+  DROP COLUMN event_relevance,
+  DROP COLUMN event_type;

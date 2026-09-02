@@ -126,7 +126,6 @@
         </div>
       </div>
 
-      <p v-if="error" class="form-error">{{ error }}</p>
       <div class="editor-buttons">
         <button class="btn-draft" @click="saveDraft" :disabled="saving"><Save :size="18" />{{ saving ? '保存中...' : '存草稿' }}</button>
         <button class="btn-publish" @click="publish" :disabled="saving"><Send :size="18" />{{ publishButtonText }}</button>
@@ -175,7 +174,6 @@ const topicSearching = ref(false)
 const topicAdding = ref(false)
 const pendingImages = ref([])
 const saving = ref(false)
-const error = ref('')
 const savedStatus = ref('')
 const topicQuery = computed(() => topicInput.value.trim().replace(/^#+/, '').trim())
 const imageCount = computed(() => form.value.imageUrls.length + pendingImages.value.length)
@@ -190,7 +188,6 @@ let pendingImageId = 0
 async function handleImageUpload(e) {
   const files = [...(e.target.files || [])]
   if (!files.length) return
-  error.value = ''
   const available = Math.max(0, 9 - imageCount.value)
   if (files.length > available) notifyError('最多添加9张图片')
   try {
@@ -254,7 +251,7 @@ async function retryImage(image) {
     if (editId.value) await updateMoment(editId.value, momentPayload(savedStatus.value || 'PUBLISHED', uploadedImageUrls()))
     notifySuccess('图片上传成功')
   } catch (e) {
-    error.value = e.message
+    notifyError(e.message)
   } finally {
     saving.value = false
   }
@@ -417,20 +414,18 @@ function removeTopic(name) {
 }
 
 async function publish() {
-  error.value = ''
   if (form.value.title.trim().length < 3) {
-    error.value = '标题至少需要3个字'
+    notifyError('标题至少需要3个字')
     return
   }
   if (!form.value.content.trim()) {
-    error.value = '内容不能为空'
+    notifyError('内容不能为空')
     return
   }
   await saveMoment('PUBLISHED')
 }
 
 async function saveDraft() {
-  error.value = ''
   await saveMoment('DRAFT')
 }
 
@@ -456,7 +451,7 @@ async function saveMoment(status) {
     }
     savedStatus.value = status
     router.back()
-  } catch (e) { error.value = e.message }
+  } catch (e) { notifyError(e.message) }
   finally { saving.value = false }
 }
 

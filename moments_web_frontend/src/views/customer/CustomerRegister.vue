@@ -20,7 +20,6 @@
           <label class="form-label">确认密码</label>
           <input v-model="confirmPassword" type="password" class="form-input" placeholder="再次输入密码" minlength="6" required />
         </div>
-        <p v-if="error" class="form-error" style="text-align:center">{{ error }}</p>
         <p v-if="successMsg" style="color:var(--color-success);text-align:center;font-weight:600">{{ successMsg }}</p>
         <button type="submit" class="btn btn-primary btn-block btn-lg" :disabled="loading || !!successMsg">
           {{ loading ? '注册中...' : '注册' }}
@@ -37,26 +36,25 @@
 import { ref } from 'vue'
 import { useRouter } from 'vue-router'
 import { customerRegister } from '../../api/auth'
+import { notifyError } from '../../services/notice'
 
 const router = useRouter()
 const nickname = ref('')
 const password = ref('')
 const confirmPassword = ref('')
 const loading = ref(false)
-const error = ref('')
 const successMsg = ref('')
 
 async function handleRegister() {
-  error.value = ''
   successMsg.value = ''
   loading.value = true
-  if (password.value !== confirmPassword.value) { error.value = '两次密码不一致'; loading.value = false; return }
+  if (password.value !== confirmPassword.value) { notifyError('两次密码不一致'); loading.value = false; return }
   try {
     await customerRegister(nickname.value.trim(), password.value)
     successMsg.value = '注册成功！3秒后跳转到登录页面...'
     setTimeout(() => router.push('/customer/login'), 3000)
   } catch (e) {
-    error.value = e.message
+    notifyError(e.message)
   } finally {
     loading.value = false
   }

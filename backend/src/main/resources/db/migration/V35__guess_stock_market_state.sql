@@ -1,0 +1,15 @@
+ALTER TABLE guess_stock_rounds
+  ADD COLUMN trend_state VARCHAR(20) NULL AFTER mean_reversion_change_percent,
+  ADD COLUMN volatility_state VARCHAR(20) NULL AFTER trend_state,
+  ADD COLUMN trend_score DECIMAL(12,6) NULL AFTER volatility_state,
+  ADD COLUMN trend_age INT NOT NULL DEFAULT 0 AFTER trend_score,
+  ADD COLUMN regime_age INT NOT NULL DEFAULT 0 AFTER trend_age,
+  ADD COLUMN consecutive_direction_rounds INT NOT NULL DEFAULT 0 AFTER regime_age,
+  ADD COLUMN current_volatility_percent DECIMAL(10,4) NULL AFTER consecutive_direction_rounds,
+  ADD COLUMN momentum_change_percent DECIMAL(10,4) NOT NULL DEFAULT 0 AFTER current_volatility_percent,
+  ADD COLUMN regime_change_percent DECIMAL(10,4) NOT NULL DEFAULT 0 AFTER momentum_change_percent,
+  ADD COLUMN scheduled_event_change_percent DECIMAL(10,4) NOT NULL DEFAULT 0 AFTER regime_change_percent,
+  ADD COLUMN medium_mean_reversion_percent DECIMAL(10,4) NOT NULL DEFAULT 0 AFTER scheduled_event_change_percent,
+  ADD COLUMN noise_change_percent DECIMAL(10,4) NOT NULL DEFAULT 0 AFTER medium_mean_reversion_percent,
+  ADD COLUMN total_change_percent DECIMAL(10,4) NOT NULL DEFAULT 0 AFTER noise_change_percent,
+  ADD COLUMN pricing_engine_version VARCHAR(8) NOT NULL DEFAULT 'V1' AFTER total_change_percent;

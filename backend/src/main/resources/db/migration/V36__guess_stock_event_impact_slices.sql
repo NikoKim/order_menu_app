@@ -1,0 +1,21 @@
+CREATE TABLE guess_stock_event_impact_slices (
+  id BIGINT PRIMARY KEY AUTO_INCREMENT,
+  session_id BIGINT NOT NULL,
+  source_round_no INT NOT NULL,
+  source_stage VARCHAR(16) NOT NULL,
+  event_config_index INT NOT NULL,
+  target_round_no INT NOT NULL,
+  target_stage VARCHAR(16) NOT NULL,
+  direction VARCHAR(20) NOT NULL,
+  event_type VARCHAR(20) NOT NULL,
+  total_impact_percent DECIMAL(10,4) NOT NULL,
+  slice_weight DECIMAL(8,4) NOT NULL,
+  slice_impact_percent DECIMAL(10,4) NOT NULL,
+  saturation_factor DECIMAL(8,4) NOT NULL,
+  contrarian_factor DECIMAL(8,4) NOT NULL,
+  applied_at DATETIME NULL,
+  created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  UNIQUE KEY uk_guess_stock_event_slice (session_id, source_round_no, source_stage, event_config_index, target_round_no, target_stage),
+  KEY idx_guess_stock_event_slice_due (session_id, target_round_no, target_stage, applied_at),
+  CONSTRAINT fk_guess_stock_event_slice_session FOREIGN KEY (session_id) REFERENCES game_sessions(id) ON DELETE CASCADE
+);
