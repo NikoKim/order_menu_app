@@ -21,4 +21,9 @@ public class NonTransactionalAiModelGateway {
     public ModelAiDecisionService.InvocationTelemetry consumeLastTelemetry() {
         return modelAiDecisionService.consumeLastTelemetry();
     }
+
+    public int inputTokenUpperBound(GameAiCredentialService.DecryptedCredential credential,
+                                    ModelAiDecisionService.Context context, String route) {
+        return modelAiDecisionService.inputTokenUpperBound(credential, context, route);
+    }
 }

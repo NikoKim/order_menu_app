@@ -20,6 +20,12 @@
       </div>
     </header>
 
+    <section class="tutorial-entry" aria-label="新手教学股">
+      <GraduationCap :size="28" />
+      <div><h2>启航科技 <span>LEARN · 新手教学股</span></h2><p><span>3 回合 · 不限时</span><span>独立虚拟账户</span></p></div>
+      <router-link class="btn btn-outline" to="/customer/entertainment/tutorial"><Play :size="17" />{{ tutorialCompleted ? '查看教程成果' : tutorialStarted ? '继续新手教程' : '从零开始练习' }}</router-link>
+    </section>
+
     <section class="filter-band" aria-label="游戏筛选">
       <label class="search-field">
         <Search :size="18" aria-hidden="true" />
@@ -88,15 +94,19 @@
 <script setup>
 import { computed, onMounted, reactive, ref } from 'vue'
 import { useRouter } from 'vue-router'
-import { BookOpen, Bot, ChevronRight, FolderKanban, Gamepad2, History, LogIn, Plus, RefreshCw, Search, Timer, TrendingUp, UserRound, Users, X } from 'lucide-vue-next'
+import { BookOpen, Bot, ChevronRight, FolderKanban, Gamepad2, GraduationCap, History, LogIn, Play, Plus, RefreshCw, Search, Timer, TrendingUp, UserRound, Users, X } from 'lucide-vue-next'
 import { ensureEntertainmentGuest, getGames, joinGameRoom } from '../../api/entertainment'
 import LoadingSpinner from '../../components/LoadingSpinner.vue'
 import EmptyState from '../../components/EmptyState.vue'
 import CustomSelect from '../../components/CustomSelect.vue'
 import GameManualDialog from './GameManualDialog.vue'
 import { notifyError } from '../../services/notice'
+import { loadTutorialSession } from '../../games/guessStockTutorial'
 
 const router = useRouter()
+const tutorialSave = loadTutorialSession()
+const tutorialCompleted = tutorialSave.status === 'COMPLETED'
+const tutorialStarted = tutorialSave.phase !== 'ROUND_START' || tutorialSave.tutorial.lessons.length > 0
 const games = ref([])
 const loading = ref(true)
 const loaded = ref(false)
@@ -155,6 +165,7 @@ onMounted(loadGames)
 
 <style scoped>
 .ent-page { max-width: 1180px; margin: 0 auto; padding: 28px 24px 56px; }
+.tutorial-entry{display:flex;align-items:center;gap:14px;padding:16px 0;margin-bottom:18px;border-top:1px solid #d5e5dc;border-bottom:1px solid #d5e5dc;color:#1a7658}.tutorial-entry>svg{flex-shrink:0}.tutorial-entry>div{flex:1;min-width:0}.tutorial-entry h2{font-size:16px;color:#263d32}.tutorial-entry h2 span{display:inline-block;margin-left:8px;font-size:11px;color:#657b6f;font-weight:500}.tutorial-entry p{display:flex;flex-wrap:wrap;gap:4px 10px;margin-top:4px;font-size:12px;color:#738279}.tutorial-entry p span{white-space:nowrap}.tutorial-entry .btn{flex-shrink:0;border-color:#a9cbb9;color:#1a7658}@media(max-width:600px){.tutorial-entry{flex-wrap:wrap;gap:10px}.tutorial-entry h2 span{display:block;margin:3px 0 0}.tutorial-entry .btn{margin-left:38px}}
 .ent-toolbar { display: flex; justify-content: space-between; align-items: flex-end; gap: 24px; margin-bottom: 22px; }
 .ent-toolbar h1 { font-size: 28px; font-weight: 800; }
 .ent-toolbar p { margin-top: 5px; color: var(--color-text-muted); font-size: 14px; }

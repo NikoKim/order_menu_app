@@ -45,6 +45,7 @@
             <button class="btn btn-outline" :disabled="submitting" @click="saveCredential"><KeyRound :size="16" />保存房主配置</button>
           </div>
           <p v-else-if="!room.host" class="ai-wait">{{ hostCredentialReady ? '房主已准备 AI，可在开局前决定是否加入' : '本局可以不配置 AI，等待房主开始' }}</p>
+          <div v-if="room.host && useAi" class="room-connection-check"><AiConnectionCheck :source="aiSource === 'OWN' && !credential.apiKey && me?.credentialReady ? 'ROOM' : aiSource" :room-id="roomId" :game-id="room.gameId" :credential="credential" :disabled="submitting" /></div>
         </section>
 
         <div class="room-actions">
@@ -69,6 +70,7 @@ import { closeGameRoom, configureRoomAi, ensureEntertainmentGuest, getDefaultAiC
 import EmptyState from '../../components/EmptyState.vue'
 import LoadingSpinner from '../../components/LoadingSpinner.vue'
 import CustomSelect from '../../components/CustomSelect.vue'
+import AiConnectionCheck from '../../components/AiConnectionCheck.vue'
 import { AI_PROVIDERS, applyAiProvider, detectAiProvider } from '../../constants/aiProviders'
 import { notifyError, notifySuccess } from '../../services/notice'
 
@@ -106,4 +108,5 @@ onBeforeUnmount(() => window.clearInterval(poller))
   @media(max-width:768px){.room-page{padding:14px 12px 90px}.room-header{margin-top:2px}.invite-copy{flex-wrap:wrap}.invite-copy strong{width:100%;font-size:32px}.invite-copy button{margin-left:0}.ai-fields{grid-template-columns:1fr}.room-actions{position:sticky;bottom:72px;padding:10px;background:rgba(255,255,255,.96);border:1px solid var(--color-line);border-radius:8px}.room-actions .btn-primary{flex:1}.credential-state{font-size:9px!important}}
 .hosted-choice{width:calc(100% - 32px);display:flex;align-items:center;gap:9px;margin:12px 16px;padding:11px;border:1px solid #8bb79b;border-radius:7px;color:#236a47;background:#edf7f1;text-align:left}.hosted-choice.active{box-shadow:0 0 0 2px rgba(56,125,84,.13)}.hosted-choice span{display:flex;flex-direction:column}.hosted-choice small{color:#648072;font-size:10px}.own-ai{margin:10px 16px 0;padding:8px 10px;border:1px solid var(--color-line);border-radius:5px;color:#53645b;background:#fff}.own-ai.active{color:#286847;border-color:#70a486;background:#edf7f1}
 .close-room-command{display:inline-flex;align-items:center;justify-content:center;gap:6px;color:#a13f39;border:1px solid #dfaaa5;background:#fff}.close-room-confirm{position:fixed;z-index:1200;inset:0;display:grid;place-items:center;padding:18px;background:rgba(30,39,34,.58)}.close-room-confirm>div{width:min(390px,100%);display:flex;flex-direction:column;align-items:center;padding:24px;border-radius:8px;background:#fff;text-align:center;box-shadow:0 20px 60px rgba(20,30,25,.3)}.close-room-confirm svg{color:#a13f39}.close-room-confirm h2{margin-top:9px;font-size:18px}.close-room-confirm p{margin:8px 0 14px;color:var(--color-text-muted);font-size:11px;line-height:1.65}.close-room-confirm .btn{width:100%;margin-top:7px}
+.room-connection-check{padding:0 16px 16px}
 </style>

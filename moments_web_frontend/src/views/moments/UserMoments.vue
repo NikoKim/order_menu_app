@@ -46,6 +46,7 @@ import EmptyState from '../../components/EmptyState.vue'
 import ImageViewer from '../../components/ImageViewer.vue'
 import MomentShareDialog from '../../components/MomentShareDialog.vue'
 import { notifyError } from '../../services/notice'
+import { optimisticLike } from '../../services/optimisticLike'
 
 const route = useRoute()
 const router = useRouter()
@@ -84,9 +85,12 @@ async function loadMore() {
 }
 
 async function toggleLike(moment) {
+  if (!localStorage.getItem('token')) {
+    router.push({ path: '/customer/login', query: { redirect: route.fullPath } })
+    return
+  }
   try {
-    const updated = await setMomentLike(moment.id, !moment.likedByMe)
-    Object.assign(moment, updated)
+    await optimisticLike(moment, active => setMomentLike(moment.id, active))
   } catch (e) { notifyError(e.message) }
 }
 

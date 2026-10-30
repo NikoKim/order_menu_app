@@ -18,12 +18,17 @@
           <div class="primary-action">
             <button v-if="detail.hasResumableSession" class="btn btn-primary btn-lg main-play" :disabled="starting" @click="continueGame"><Play :size="19" />继续游戏</button>
             <button v-else class="btn btn-primary btn-lg main-play" :disabled="starting" @click="prepareSolo"><Play :size="19" />开始游戏</button>
-            <button v-if="detail.hasResumableSession" class="btn btn-outline restart-saved" :disabled="starting" @click="showRestartSaved = true"><RotateCcw :size="18" />重新开始</button>
-            <button v-if="detail.config.dailyChallengeEnabled" class="btn btn-outline" :disabled="starting" @click="startChallenge"><Trophy :size="18" />今日挑战</button>
-            <button v-if="detail.config.dailyChallengeEnabled" class="btn btn-ghost" :disabled="starting" @click="openChallengeLeaderboard"><Medal :size="18" />挑战榜</button>
-            <button v-if="detail.activeRoomId" class="btn btn-outline" :disabled="starting" @click="returnToRoom"><Users :size="18" />{{ detail.activeRoomStatus === 'PLAYING' ? '返回多人游戏' : '返回多人房间' }}</button>
-            <button v-else-if="detail.config.multiplayerEnabled" class="btn btn-outline" :disabled="starting" @click="prepareRoom"><Users :size="18" />多人房间</button>
-<!--            <button class="btn btn-ghost" @click="showManual = true"><BookOpen :size="18" />玩法说明</button>-->
+            <div class="secondary-actions">
+              <button v-if="detail.config.dailyChallengeEnabled" class="btn btn-outline" :disabled="starting" @click="startChallenge"><Trophy :size="17" />今日挑战</button>
+              <button v-if="detail.activeRoomId" class="btn btn-outline" :disabled="starting" @click="returnToRoom"><Users :size="17" />{{ detail.activeRoomStatus === 'PLAYING' ? '返回多人游戏' : '返回多人房间' }}</button>
+              <button v-else-if="detail.config.multiplayerEnabled" class="btn btn-outline" :disabled="starting" @click="prepareRoom"><Users :size="17" />多人房间</button>
+            </div>
+            <div class="detail-quick-tools">
+              <router-link to="/customer/entertainment/tutorial"><BookOpen :size="16" />新手教程</router-link>
+              <button v-if="detail.config.dailyChallengeEnabled" type="button" :disabled="starting" @click="openChallengeLeaderboard"><Medal :size="16" />挑战榜</button>
+              <button ref="moreAnchor" type="button" class="more-command" title="更多操作" aria-label="更多操作" :aria-expanded="showMore" @click="showMore = !showMore"><Ellipsis :size="19" /></button>
+            </div>
+            <AnchoredMenu :open="showMore" :anchor="moreAnchor" @close="showMore = false"><div class="detail-more-menu"><button type="button" role="menuitem" @click="showMore = false; showManual = true"><BookOpen :size="16" />玩法说明</button><button v-if="detail.hasResumableSession" type="button" role="menuitem" :disabled="starting" @click="showMore = false; showRestartSaved = true"><RotateCcw :size="16" />重新开始</button></div></AnchoredMenu>
             <small>{{ hostedAi?.configured ? '创建者已提供 AI，无需 API Key' : '虚拟行情与虚拟资产' }}</small>
           </div>
         </div>
@@ -64,22 +69,10 @@
             <div><button v-if="hostedAi?.configured" class="btn btn-ghost" @click="removeHostedAi">停用</button><button class="btn btn-outline" @click="openHostedSetup">{{ hostedAi?.configured ? '修改' : '配置' }}</button></div>
           </section>
 
-          <section class="event-section">
-            <div class="section-title"><div><span>MARKET EVENTS</span><h2>事件池</h2></div><small>每回合最多一个</small></div>
-            <div v-if="enabledEvents.length" class="event-table">
-              <div class="event-row event-head"><span>事件</span><span>发生</span><span>影响</span><span>方向</span><span>原始幅度</span></div>
-              <div v-for="event in pagedEnabledEvents" :key="event.name" class="event-row">
-                <span><strong>{{ event.name }}</strong><small>{{ event.description }}</small><small>{{ eventMeta(event) }}</small></span>
-                <span>{{ event.occurrenceProbability }}%</span><span>{{ event.effectProbability }}%</span>
-                <span>{{ directionName(event.direction) }}</span><span>{{ event.minImpactPercent }}%～{{ event.maxImpactPercent }}%</span>
-              </div>
-            </div>
-            <PaginationBar v-if="enabledEvents.length" v-model="eventPage" :total-pages="eventPages" :total-items="enabledEvents.length" />
-            <div v-else class="empty-events">没有配置随机事件</div>
-          </section>
         </main>
 
-        <aside class="leaderboard-panel">
+        <aside class="game-community">
+        <section class="leaderboard-panel">
           <header><div><Trophy :size="19" /><h2>收益率榜</h2></div><span>{{ leaderboard?.versionLabel || detail.game.versionLabel }}</span></header>
           <div v-if="leaderboardLoading" class="leaderboard-loading"><LoadingSpinner /></div>
           <ol v-else-if="leaderboard?.entries?.length">
@@ -90,6 +83,8 @@
             </li>
           </ol>
           <div v-else class="empty-ranking"><Medal :size="30" /><span>等待首位完成者</span></div>
+        </section>
+        <GameReviewPanel :key="gameId" :game-id="gameId" />
         </aside>
       </div>
       <div class="risk-note"><ShieldAlert :size="16" />虚拟行情、虚拟资产，仅供娱乐，不构成投资建议。</div>
@@ -116,6 +111,7 @@
             <label v-if="loggedIn" class="save-default"><input v-model="saveAsDefault" type="checkbox" /><span>{{ defaultAi?.configured ? '更新账号默认 AI 配置' : '保存为账号默认 AI 配置' }}</span></label>
           </template>
           </template>
+          <AiConnectionCheck v-if="useAi" :source="aiSource" :game-id="gameId" :credential="aiCredential" :disabled="starting" />
           <button class="btn btn-primary btn-lg" :disabled="starting"><Play :size="18" />{{ useAi ? '与 AI 开始本局' : '不使用 AI，开始本局' }}</button>
         </form>
       </div>
@@ -127,6 +123,8 @@
           <label v-if="hostedProvider === 'custom'"><span>接口地址</span><input v-model.trim="hostedCredential.baseUrl" required /></label>
           <label><span>模型</span><input v-model.trim="hostedCredential.model" required /></label>
           <label><span>API Key</span><input v-model="hostedCredential.apiKey" type="password" autocomplete="new-password" required /></label>
+          <AiConnectionCheck source="OWN" :credential="hostedCredential" :disabled="starting" />
+          <AiConnectionCheck v-if="hostedAi?.configured" source="HOSTED" :game-id="gameId" label="验证已保存的配置" />
           <button class="btn btn-primary btn-lg" :disabled="starting"><KeyRound :size="18" />保存并提供给玩家</button>
         </form>
       </div>
@@ -154,14 +152,16 @@
 <script setup>
 import { computed, onMounted, ref } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
-import { ArrowLeft, BookOpen, Bot, CircleCheck, Clock3, KeyRound, LineChart, Medal, Play, RotateCcw, ShieldAlert, Timer, Trophy, UserRound, Users, WalletCards, X } from 'lucide-vue-next'
+import { ArrowLeft, BookOpen, Bot, CircleCheck, Clock3, Ellipsis, KeyRound, LineChart, Medal, Play, RotateCcw, ShieldAlert, Timer, Trophy, UserRound, Users, WalletCards, X } from 'lucide-vue-next'
 import { abandonGameSession, createGameRoom, deleteGameAiCredential, ensureEntertainmentGuest, getDailyChallenge, getDefaultAiCredential, getGame, getGameAiCredential, getLeaderboard, saveDefaultAiCredential, saveGameAiCredential, startDailyChallenge, startGameSession } from '../../api/entertainment'
 import LoadingSpinner from '../../components/LoadingSpinner.vue'
 import EmptyState from '../../components/EmptyState.vue'
 import { AI_PROVIDERS, applyAiProvider, detectAiProvider } from '../../constants/aiProviders'
 import GameManualDialog from './GameManualDialog.vue'
+import GameReviewPanel from './GameReviewPanel.vue'
 import CustomSelect from '../../components/CustomSelect.vue'
-import PaginationBar from '../../components/PaginationBar.vue'
+import AnchoredMenu from '../../components/AnchoredMenu.vue'
+import AiConnectionCheck from '../../components/AiConnectionCheck.vue'
 import { confirmNotice, notifyError, notifySuccess } from '../../services/notice'
 
 const route = useRoute()
@@ -175,9 +175,10 @@ const error = ref('')
 const showAiSetup = ref(false)
 const showHostedSetup = ref(false)
 const showManual = ref(false)
+const showMore = ref(false)
+const moreAnchor = ref(null)
 const showPlayKey = ref(false); const playKey = ref(''); const pendingMode = ref('SOLO')
 const showRestartSaved = ref(false)
-const eventPage = ref(1)
 const aiCredential = ref({ baseUrl: 'https://api.openai.com/v1', model: 'gpt-5-mini', apiKey: '' })
 const aiProvider = ref('openai')
 const defaultAi = ref(null); const useDefaultAi = ref(false); const saveAsDefault = ref(false)
@@ -188,8 +189,6 @@ const gameId = computed(() => Number(route.params.gameId))
 const loggedIn = computed(() => Boolean(localStorage.getItem('token')))
 const providerOptions = AI_PROVIDERS.map(item => ({ value: item.id, label: item.name }))
 const enabledEvents = computed(() => (detail.value?.config.events || []).filter(event => event.enabled !== false))
-const eventPages = computed(() => Math.max(1, Math.ceil(enabledEvents.value.length / 8)))
-const pagedEnabledEvents = computed(() => enabledEvents.value.slice((eventPage.value - 1) * 8, eventPage.value * 8))
 const aiCashRange = computed(() => { const values = (detail.value?.config.aiPlayers || []).map(ai => Number(ai.initialCash)); if (!values.length) return money(detail.value?.config.initialCash); return `${money(Math.min(...values))}～${money(Math.max(...values))}` })
 const pricingEngineName = computed(() => ({ V1: '经典价格 V1', V2: '市场趋势 V2', V3: '基本面与财报 V3' }[detail.value?.config.pricingEngineVersion] || '市场趋势 V2'))
 const creditModeName = computed(() => {
@@ -208,14 +207,6 @@ const price = value => `¥${Number(value || 0).toFixed(2)}`
 const signed = value => `${Number(value) >= 0 ? '+' : ''}${Number(value).toFixed(2)}`
 const liquidityName = value => ({ LOW: '低', MEDIUM: '中', HIGH: '高' }[value] || value)
 const difficultyName = value => ({ EASY: '简单', NORMAL: '普通', HARD: '困难' }[value] || value)
-const directionName = value => ({ UP: '上涨', DOWN: '下跌', RANDOM: '随机' }[value] || value)
-const eventMeta = event => {
-  const type = ({ DEMAND: '需求', SUPPLY: '供给', POLICY: '政策', FINANCIAL: '财务', ACCIDENT: '突发', INDUSTRY: '行业', SENTIMENT: '情绪' }[event.eventType] || '行业')
-  const relevance = ({ LOW: '低相关', MEDIUM: '中相关', HIGH: '高相关' }[event.relevance] || '中相关')
-  const credibility = ({ RUMOR: '传闻', PRELIMINARY: '初步确认', CONFIRMED: '已确认' }[event.credibility] || '已确认')
-  const surprise = ({ EXPECTED: '已有预期', NORMAL: '一般意外', MAJOR: '显著超预期' }[event.surprise] || '一般意外')
-  return `${type} · ${relevance} · ${credibility} · ${surprise}`
-}
 
 async function load() {
   loading.value = true
@@ -329,14 +320,14 @@ onMounted(load)
 .restart-saved{color:#9c433e;border-color:#dfbbb7}.restart-dialog>.btn{width:100%;margin-top:8px}.restart-dialog>.btn-danger{color:#fff;background:#aa433d}
 .detail-layout { display: grid; grid-template-columns: minmax(0, 1fr) 320px; gap: 24px; margin-top: 26px; align-items: start; }
 .detail-layout > main { min-width: 0; }
+.game-community { min-width: 0; display: grid; gap: 20px; }
+.game-community .leaderboard-panel { position: static; }
 .rule-band { display: grid; grid-template-columns: repeat(5, 1fr); border-top: 1px solid var(--color-line); border-left: 1px solid var(--color-line); background: #fff; }
 .rule-band > div { min-height: 78px; display: grid; grid-template-columns: 22px auto; grid-template-rows: auto auto; align-content: center; column-gap: 8px; padding: 12px 14px; border-right: 1px solid var(--color-line); border-bottom: 1px solid var(--color-line); }
 .rule-band svg { grid-row: 1 / 3; align-self: center; color: #a65d1c; }.rule-band strong { font-size: 17px; }.rule-band span { color: var(--color-text-muted); font-size: 11px; }
-.market-section { margin-top: 0; }.event-section { margin-top: 28px; }.section-title { display: flex; justify-content: space-between; align-items: flex-end; margin-bottom: 11px; }.section-title > div { display: flex; flex-direction: column; gap: 2px; }.section-title h2 { font-size: 16px; }.section-title span { color: #92704e; font-size: 8px; font-weight: 700; }.section-title small { color: var(--color-text-muted); font-size: 11px; }
+.market-section { margin-top: 0; }.section-title { display: flex; justify-content: space-between; align-items: flex-end; margin-bottom: 11px; }.section-title > div { display: flex; flex-direction: column; gap: 2px; }.section-title h2 { font-size: 16px; }.section-title span { color: #92704e; font-size: 8px; font-weight: 700; }.section-title small { color: var(--color-text-muted); font-size: 11px; }
 .market-grid { display: grid; grid-template-columns: repeat(3, 1fr); border-top: 1px solid var(--color-line); border-left: 1px solid var(--color-line); }
 .market-grid > div { min-height: 74px; padding: 13px; border-right: 1px solid var(--color-line); border-bottom: 1px solid var(--color-line); background: #fff; }.market-grid dt { color: var(--color-text-muted); font-size: 10px; }.market-grid dd { margin-top: 5px; overflow-wrap: anywhere; font-weight: 700; font-size: 13px; }
-.event-table { border: 1px solid var(--color-line); border-radius: 7px; overflow: hidden; background: #fff; }.event-row { display: grid; grid-template-columns: minmax(180px, 1fr) 65px 65px 65px 120px; align-items: center; min-height: 52px; padding: 7px 12px; border-bottom: 1px solid var(--color-line); font-size: 12px; }.event-row:last-child { border-bottom: 0; }.event-head { min-height: 38px; color: var(--color-text-muted); background: #f7f8f9; font-weight: 600; }.event-row > span:first-child { display: flex; flex-direction: column; }.event-row small { color: var(--color-text-muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.empty-events { padding: 30px; text-align: center; color: var(--color-text-muted); border: 1px solid var(--color-line); background: #fff; }
 .leaderboard-panel { position: sticky; top: 76px; overflow: hidden; border: 1px solid var(--color-line); border-radius: 8px; background: #fff; }.leaderboard-panel > header { min-height: 54px; display: flex; align-items: center; justify-content: space-between; padding: 12px 14px; border-bottom: 1px solid var(--color-line); }.leaderboard-panel header div { display: flex; align-items: center; gap: 7px; }.leaderboard-panel h2 { font-size: 15px; }.leaderboard-panel header svg { color: #a36a16; }.leaderboard-panel header > span { color: var(--color-text-muted); font-size: 11px; }
 .leaderboard-panel ol { list-style: none; padding: 5px 0; }.leaderboard-panel li { min-height: 48px; display: grid; grid-template-columns: 30px minmax(0, 1fr) auto; align-items: center; padding: 6px 14px; font-size: 12px; }.leaderboard-panel li.mine { background: #fff5e8; }.rank { color: var(--color-text-muted); font-weight: 700; }.player-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }.rank-value { display: flex; flex-direction: column; align-items: flex-end; gap: 2px; }.rank-value strong { font-size: 13px; }.rank-value small { color: var(--color-text-muted); font-size: 10px; }.positive { color: #1c8050; }.negative { color: #c04f47; }.empty-ranking { min-height: 180px; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 8px; color: var(--color-text-muted); font-size: 12px; }
 .risk-note { display: flex; align-items: center; justify-content: center; gap: 6px; margin-top: 32px; color: #7c664d; font-size: 11px; }
@@ -345,7 +336,16 @@ onMounted(load)
 .ai-dialog .use-ai-toggle{display:flex;flex-direction:row;align-items:center;gap:9px;margin:0 0 13px;padding:11px;border:1px solid #bfd4c7;border-radius:6px;background:#f0f7f3}.ai-dialog .use-ai-toggle input{width:18px;height:18px;padding:0}.hosted-ready{display:flex;align-items:center;gap:8px;padding:11px;color:#276b49;background:#edf7f1;font-size:12px}
 .own-ai-choice{width:100%;margin-top:8px;padding:9px;border:1px solid var(--color-line);border-radius:6px;color:#53645b;background:#fff}.own-ai-choice.active{color:#286847;border-color:#70a486;background:#edf7f1}
 @media (max-width: 900px) { .detail-layout { grid-template-columns: 1fr; }.leaderboard-panel { position: static; }.stock-overview { grid-template-columns: 82px minmax(0,1fr); }.stock-mark { width: 82px; height: 82px; }.primary-action { grid-column: 1 / -1; grid-template-columns:repeat(3,minmax(0,1fr)); }.primary-action .main-play{grid-column:auto}.primary-action small { grid-column: 1 / -1; }.rule-band{grid-template-columns:repeat(3,1fr)} }
-@media (max-width: 768px) { .detail-page { padding: 12px 12px 90px; }.detail-toolbar{min-height:44px}.stock-overview { grid-template-columns:64px minmax(0,1fr);gap:12px;padding:14px 0 18px}.stock-mark { width: 64px; height: 64px; }.stock-mark span{max-width:58px;font-size:11px}.stock-title h1 { font-size: 21px; }.stock-title>p{font-size:12px}.creator{margin-top:8px}.primary-action{grid-template-columns:repeat(2,minmax(0,1fr))}.primary-action .main-play{grid-column:1/-1}.rule-band { grid-template-columns: repeat(2, 1fr); }.rule-band>div{min-height:68px;padding:10px}.rule-band>div:last-child{grid-column:1/-1}.market-grid { grid-template-columns: repeat(2, 1fr); }.event-table { overflow-x: auto; }.event-row { min-width: 620px; } }
+@media (max-width: 768px) { .detail-page { padding: 12px 12px 90px; }.detail-toolbar{min-height:44px}.stock-overview { grid-template-columns:64px minmax(0,1fr);gap:12px;padding:14px 0 18px}.stock-mark { width: 64px; height: 64px; }.stock-mark span{max-width:58px;font-size:11px}.stock-title h1 { font-size: 21px; }.stock-title>p{font-size:12px}.creator{margin-top:8px}.primary-action{grid-template-columns:repeat(2,minmax(0,1fr))}.primary-action .main-play{grid-column:1/-1}.rule-band { grid-template-columns: repeat(2, 1fr); }.rule-band>div{min-height:68px;padding:10px}.rule-band>div:last-child{grid-column:1/-1}.market-grid { grid-template-columns: repeat(2, 1fr); } }
 .hosted-ai-panel{display:flex;align-items:center;justify-content:space-between;gap:12px;margin-top:18px;padding:14px 16px;border:1px solid #b9d2c3;border-radius:7px;background:#f0f7f3}.hosted-ai-panel>div{display:flex;align-items:center;gap:9px}.hosted-ai-panel>div:first-child{color:#286d4a}.hosted-ai-panel span{display:flex;flex-direction:column}.hosted-ai-panel small{color:var(--color-text-muted);font-size:10px}.hosted-ai-panel>div:last-child{gap:6px}.modal-mask,.ai-dialog{animation:modal-fade .22s ease-out}.ai-dialog{animation-name:dialog-rise}@keyframes modal-fade{from{opacity:0}}@keyframes dialog-rise{from{opacity:0;transform:translateY(18px) scale(.98)}}
 @media(max-width:600px){.hosted-ai-panel{align-items:flex-start;flex-direction:column}.hosted-ai-panel>div:last-child{width:100%;justify-content:flex-end}}
+.stock-overview{position:relative;isolation:isolate;grid-template-columns:96px minmax(0,1fr) 292px;min-height:238px;padding:24px 0 28px}
+.stock-overview::before{content:"";position:absolute;z-index:-1;inset:0;background:url('/entertainment/stock-market-detail.png') left center/cover no-repeat;opacity:.3;mask-image:linear-gradient(to right,#000 0%,rgba(0,0,0,.75) 30%,transparent 78%);-webkit-mask-image:linear-gradient(to right,#000 0%,rgba(0,0,0,.75) 30%,transparent 78%);pointer-events:none}
+.stock-title h1{white-space:normal;overflow-wrap:anywhere;line-height:1.3}.stock-mark{background:rgba(230,243,234,.9)}
+.primary-action{display:flex;flex-direction:column;gap:10px;min-width:0}.primary-action .main-play{width:100%;min-height:46px}.primary-action small{line-height:1.5}.secondary-actions{display:grid;grid-template-columns:repeat(auto-fit,minmax(128px,1fr));gap:8px}.secondary-actions .btn{min-height:38px;padding:7px 9px;font-size:12px;color:#56685c;border-color:#d6dfd8;background:rgba(255,255,255,.88)}
+.detail-quick-tools{display:flex;align-items:center;justify-content:center;gap:17px;min-height:32px}.detail-quick-tools>a,.detail-quick-tools>button{display:inline-flex;align-items:center;justify-content:center;gap:5px;min-height:32px;padding:0;color:#77847b;background:transparent;font-size:12px}.detail-quick-tools>a:hover,.detail-quick-tools>button:hover{color:#276e4c}.detail-quick-tools .more-command{width:32px}
+.detail-more-menu{display:grid;min-width:170px;padding:5px;border:1px solid #dce2dd;border-radius:6px;background:#fff;box-shadow:0 8px 24px rgba(25,45,30,.12)}.detail-more-menu button{display:flex;align-items:center;gap:8px;min-height:38px;padding:8px 11px;background:#fff;text-align:left;color:#53665a;font-size:12px}.detail-more-menu button:hover{background:#f0f6f2}
+.ai-dialog{max-height:calc(100dvh - 36px);overflow-y:auto}
+@media(max-width:1000px){.stock-overview{grid-template-columns:82px minmax(0,1fr);gap:16px}.primary-action{grid-column:1/-1;max-width:540px;width:100%;margin-top:6px}.stock-overview::before{background-size:auto 100%;mask-image:linear-gradient(to right,#000,transparent 95%);-webkit-mask-image:linear-gradient(to right,#000,transparent 95%)}}
+@media(max-width:768px){.stock-overview{grid-template-columns:64px minmax(0,1fr);gap:12px;padding:20px 0}.primary-action{max-width:none}.detail-quick-tools{justify-content:flex-start;gap:20px}.primary-action small{text-align:left}.stock-overview::before{opacity:.2}.secondary-actions{grid-template-columns:repeat(auto-fit,minmax(130px,1fr))}}
 </style>

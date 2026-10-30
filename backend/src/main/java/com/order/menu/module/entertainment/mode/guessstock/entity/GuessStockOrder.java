@@ -19,6 +19,12 @@ public class GuessStockOrder {
     private String side;
     private Long quantity;
     private BigDecimal targetExposurePercent;
+    private String allowedSide;
+    private Long executionMaxShares;
+    private BigDecimal executionMaxNotional;
+    private BigDecimal executionMinNotional;
+    private BigDecimal executionMinPrice;
+    private BigDecimal executionMaxPrice;
     private String status;
     private BigDecimal reservedAmount;
     private Integer allIn;

@@ -226,6 +226,31 @@ public class GameAiCredentialService {
         return selection == null ? null : selection.aiCredential();
     }
 
+    public DecryptedCredential credentialForConnectionTest(PlayerIdentity player, String source,
+            Long gameId, Long roomId, EntertainmentDtos.AiCredentialRequest supplied) {
+        EntertainmentDtos.AiCredentialRequest request;
+        switch (source) {
+            case "DEFAULT" -> request = defaultRequest(player);
+            case "HOSTED", "ROOM" -> {
+                GameAiCredential row = "HOSTED".equals(source) ? hostedRow(gameId)
+                        : credentialMapper.selectOne(new LambdaQueryWrapper<GameAiCredential>()
+                            .eq(GameAiCredential::getRoomId, roomId)
+                            .eq(GameAiCredential::getPlayerIdentityKey, player.key())
+                            .eq(GameAiCredential::getStatus, "ACTIVE").last("LIMIT 1"));
+                if (row == null) throw new BusinessException(ErrorCode.BAD_REQUEST, "尚未保存可验证的 AI 配置");
+                request = new EntertainmentDtos.AiCredentialRequest(row.getBaseUrl(), row.getModelName(), decrypt(row));
+            }
+            case "OWN" -> request = supplied;
+            default -> throw new BusinessException(ErrorCode.BAD_REQUEST, "请选择需要验证的 AI 配置");
+        }
+        if (request == null || request.baseUrl() == null || request.model() == null
+                || request.model().isBlank() || request.apiKey() == null || request.apiKey().trim().length() < 8) {
+            throw new BusinessException(ErrorCode.BAD_REQUEST, "请先填写完整的接口地址、模型和 API Key");
+        }
+        return new DecryptedCredential(validateBaseUrl(request.baseUrl()), request.model().trim(),
+                request.apiKey().trim(), player.key());
+    }
+
     private EntertainmentDtos.AiCredentialRequest defaultRequest(PlayerIdentity player) {
         requireLoggedIn(player);
         GameAiCredential row = defaultRow(player.userId());

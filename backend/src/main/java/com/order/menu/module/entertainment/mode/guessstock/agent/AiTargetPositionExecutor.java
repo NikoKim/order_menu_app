@@ -16,12 +16,14 @@ public class AiTargetPositionExecutor {
         double target = escape ? requestedTarget : context.currentPositionPct()
                 + clamp(requestedTarget - context.currentPositionPct(), -maxStep, maxStep);
         double delta = target - context.currentPositionPct();
-        if (Math.abs(delta) < guard.rebalanceBandPctPoints().doubleValue()) {
+        boolean riskReduction = escape && delta < 0;
+        if (Math.abs(delta) < .0000001
+                || Math.abs(delta) < guard.rebalanceBandPctPoints().doubleValue() && !riskReduction) {
             return hold(target, requestedTarget, "目标敞口差小于调仓缓冲区");
         }
         String direction = delta > 0 ? "BUY" : "SELL";
-        if (("OPENING".equals(context.stage()) && "SELL".equals(direction))
-                || ("CLOSING".equals(context.stage()) && "BUY".equals(direction))) {
+        if (!context.bidirectionalTrading() && (("OPENING".equals(context.stage()) && "SELL".equals(direction))
+                || ("CLOSING".equals(context.stage()) && "BUY".equals(direction)))) {
             return hold(target, requestedTarget, "目标仓位已保留，当前交易阶段暂不支持该方向");
         }
         if ("SELL".equals(direction) && context.lastBuyRound() != null
@@ -61,7 +63,7 @@ public class AiTargetPositionExecutor {
         BigDecimal minimum = context.totalAssets().multiply(guard.minTradeAssetPct())
                 .divide(new BigDecimal("100"), 8, RoundingMode.HALF_UP);
         if (shares <= 0) return hold(target, requestedTarget, "现金、持仓、换手或市场冲击额度不足");
-        if (value.compareTo(minimum) < 0) return hold(target, requestedTarget, "计划交易金额低于最小资产比例");
+        if (value.compareTo(minimum) < 0 && !riskReduction) return hold(target, requestedTarget, "计划交易金额低于最小资产比例");
         return new ExecutionPlan(direction, shares, target, requestedTarget, value,
                 target == requestedTarget ? "目标敞口通过统一执行约束" : "目标敞口按单次步长分批执行");
     }
@@ -70,7 +72,7 @@ public class AiTargetPositionExecutor {
         if (context.marketMaxOrderImpactPct().signum() <= 0) return guard.singleOrderMaxShares();
         double ratio = guard.maxEstimatedImpactPct().divide(context.marketMaxOrderImpactPct(), 8, RoundingMode.HALF_UP)
                 .doubleValue();
-        return Math.max(1, Math.round(context.marketLiquidityShares().doubleValue()
+        return Math.max(0, (long) Math.floor(context.marketLiquidityShares().doubleValue()
                 * Math.max(1, context.participantCount()) * Math.min(1, ratio)));
     }
 
@@ -109,7 +111,20 @@ public class AiTargetPositionExecutor {
                           boolean thesisInvalidated, boolean criticalRisk, BigDecimal marketLiquidityShares,
                           int participantCount, BigDecimal marketMaxOrderImpactPct,
                           Integer lastTradeRound, String lastTradeDirection,
-                          boolean confirmedRegimeReversal) {
+                          boolean confirmedRegimeReversal, boolean bidirectionalTrading) {
+        public Context(String stage, int roundNo, double targetPositionPct, double currentPositionPct,
+                       long currentShares, BigDecimal availableCash, BigDecimal totalAssets,
+                       BigDecimal roundStartAssets, BigDecimal usedRoundTurnoverValue, BigDecimal price,
+                       String urgency, Integer lastBuyRound, String roundTradeDirection,
+                       boolean thesisInvalidated, boolean criticalRisk, BigDecimal marketLiquidityShares,
+                       int participantCount, BigDecimal marketMaxOrderImpactPct,
+                       Integer lastTradeRound, String lastTradeDirection, boolean confirmedRegimeReversal) {
+            this(stage, roundNo, targetPositionPct, currentPositionPct, currentShares, availableCash,
+                    totalAssets, roundStartAssets, usedRoundTurnoverValue, price, urgency, lastBuyRound,
+                    roundTradeDirection, thesisInvalidated, criticalRisk, marketLiquidityShares,
+                    participantCount, marketMaxOrderImpactPct, lastTradeRound, lastTradeDirection,
+                    confirmedRegimeReversal, false);
+        }
         public Context(String stage, int roundNo, double targetPositionPct, double currentPositionPct,
                        long currentShares, BigDecimal availableCash, BigDecimal totalAssets,
                        BigDecimal roundStartAssets, BigDecimal usedRoundTurnoverValue, BigDecimal price,
@@ -119,7 +134,7 @@ public class AiTargetPositionExecutor {
             this(stage, roundNo, targetPositionPct, currentPositionPct, currentShares, availableCash,
                     totalAssets, roundStartAssets, usedRoundTurnoverValue, price, urgency, lastBuyRound,
                     roundTradeDirection, thesisInvalidated, criticalRisk, marketLiquidityShares,
-                    participantCount, marketMaxOrderImpactPct, null, null, false);
+                    participantCount, marketMaxOrderImpactPct, null, null, false, false);
         }
     }
 

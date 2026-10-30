@@ -65,6 +65,7 @@ import LoadingSpinner from '../../components/LoadingSpinner.vue'
 import EmptyState from '../../components/EmptyState.vue'
 import ImageViewer from '../../components/ImageViewer.vue'
 import { notifyError } from '../../services/notice'
+import { optimisticLike } from '../../services/optimisticLike'
 
 const route = useRoute()
 const router = useRouter()
@@ -124,9 +125,7 @@ async function loadMore() {
 async function toggleLike(moment) {
   if (!requireLogin()) return
   try {
-    const active = !moment.likedByMe
-    const updated = await setMomentLike(moment.id, active)
-    Object.assign(moment, updated)
+    await optimisticLike(moment, active => setMomentLike(moment.id, active))
   } catch (e) { notifyError(e.message) }
 }
 

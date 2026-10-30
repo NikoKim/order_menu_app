@@ -12,7 +12,14 @@
     "qa:entertainment-editor": "node scripts/entertainment-editor-smoke.mjs",
     "qa:entertainment-layout": "node scripts/entertainment-layout-smoke.mjs",
     "qa:entertainment-notice": "node scripts/entertainment-notice-smoke.mjs",
-    "qa:entertainment-room": "node scripts/entertainment-room-smoke.mjs"
+    "qa:entertainment-room": "node scripts/entertainment-room-smoke.mjs",
+    "qa:ai-cost": "node scripts/ai-cost-smoke.mjs",
+    "test:tutorial": "node --test scripts/stock-tutorial.test.mjs",
+    "test:ai-providers": "node --test scripts/ai-providers.test.mjs",
+    "qa:ai-connection-live": "node scripts/ai-connection-live-smoke.mjs",
+    "qa:tutorial": "node scripts/stock-tutorial-smoke.mjs",
+    "qa:tutorial-restart": "node scripts/stock-tutorial-restart-smoke.mjs",
+    "qa:entertainment-refinements": "node scripts/entertainment-refinements-smoke.mjs"
   },
   "dependencies": {
     "axios": "^1.7.0",

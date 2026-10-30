@@ -1,6 +1,6 @@
 export const AI_PROVIDERS = [
   { id: 'openai', name: 'OpenAI', baseUrl: 'https://api.openai.com/v1', model: 'gpt-5-mini' },
-  { id: 'deepseek', name: 'DeepSeek', baseUrl: 'https://api.deepseek.com', model: 'deepseek-chat' },
+  { id: 'deepseek', name: 'DeepSeek', baseUrl: 'https://api.deepseek.com', model: 'deepseek-flash' },
   { id: 'qwen', name: '阿里云百炼', baseUrl: 'https://dashscope.aliyuncs.com/compatible-mode/v1', model: 'qwen-plus' },
   { id: 'moonshot', name: 'Moonshot', baseUrl: 'https://api.moonshot.cn/v1', model: 'moonshot-v1-8k' },
   { id: 'zhipu', name: '智谱 AI', baseUrl: 'https://open.bigmodel.cn/api/paas/v4', model: 'glm-4-flash' },
@@ -17,6 +17,7 @@ export function applyAiProvider(providerId, credential) {
 
 export function detectAiProvider(baseUrl, model = '') {
   const normalize = value => String(value || '').trim().replace(/\/+$/, '').toLowerCase()
+    .replace(/^https:\/\/api\.deepseek\.com\/v1$/, 'https://api.deepseek.com')
   const matched = AI_PROVIDERS.find(item => item.id !== 'custom' && normalize(item.baseUrl) === normalize(baseUrl)
     && (!model || !item.model || item.model.toLowerCase() === String(model).trim().toLowerCase()))
     || AI_PROVIDERS.find(item => item.id !== 'custom' && normalize(item.baseUrl) === normalize(baseUrl))

@@ -89,6 +89,43 @@ class AiTargetPositionExecutorTest {
         assertEquals(150, plan.targetPositionPct());
     }
 
+    @Test
+    void auctionAllowsBothDirectionsWithoutChangingLegacyStageRules() {
+        var closingBuy = new AiTargetPositionExecutor.Context("CLOSING", 6, 70, 20, 200,
+                bd("8000"), bd("10000"), bd("10000"), bd("0"), bd("10"), "MEDIUM",
+                null, "NONE", false, false, bd("1000"), 5, bd("10"), null, null, false, true);
+        assertEquals("BUY", executor.plan(guard, closingBuy).direction());
+        var openingSell = new AiTargetPositionExecutor.Context("OPENING", 6, 0, 40, 400,
+                bd("6000"), bd("10000"), bd("10000"), bd("0"), bd("10"), "HIGH",
+                6, "BUY", true, true, bd("1000"), 5, bd("10"), 6, "BUY", false, true);
+        assertEquals("SELL", executor.plan(guard, openingSell).direction());
+        assertEquals("HOLD", executor.plan(guard, new AiTargetPositionExecutor.Context("CLOSING", 6, 70, 20, 200,
+                bd("8000"), bd("10000"), bd("10000"), bd("0"), bd("10"), "MEDIUM",
+                null, "NONE", false, false, bd("1000"), 5, bd("10"))).direction());
+    }
+
+    @Test
+    void zeroImpactBudgetCannotAccidentallyPermitOneShare() {
+        var noImpact = new AiTargetPositionExecutor.Guard(bd("100"), bd("1"), 0, bd("0"), bd("100"), 100,
+                bd("0"));
+        assertEquals("HOLD", executor.plan(noImpact, new AiTargetPositionExecutor.Context("OPENING", 5, 80, 0, 0,
+                bd("1000"), bd("1000"), bd("1000"), bd("0"), bd("10"), "HIGH",
+                null, "NONE", false, false, bd("1000"), 1, bd("10"))).direction());
+    }
+
+    @Test
+    void riskExitClearsDustBelowBothRebalanceBandAndMinimumTradeValue() {
+        var dust = new AiTargetPositionExecutor.Context("CLOSING", 6, 0, .3, 3,
+                bd("9970"), bd("10000"), bd("10000"), bd("0"), bd("10"), "HIGH",
+                6, "BUY", true, true, bd("1000"), 5, bd("10"));
+        var plan = executor.plan(guard, dust);
+        assertEquals("SELL", plan.direction());
+        assertEquals(3, plan.shares());
+        assertEquals("HOLD", executor.plan(guard, new AiTargetPositionExecutor.Context("CLOSING", 6, 0, .3, 3,
+                bd("9970"), bd("10000"), bd("10000"), bd("3000"), bd("10"), "HIGH",
+                6, "BUY", true, true, bd("1000"), 5, bd("10"))).direction());
+    }
+
     private AiTargetPositionExecutor.Context context(double target, String direction,
                                                       boolean invalidated, BigDecimal turnover) {
         return new AiTargetPositionExecutor.Context("CLOSING", 4, target, 40, 400,

@@ -3,6 +3,10 @@ package com.order.menu.module.entertainment.core.controller;
 import com.order.menu.common.response.ApiResponse;
 import com.order.menu.common.response.PageResponse;
 import com.order.menu.module.entertainment.core.dto.EntertainmentDtos;
+import com.order.menu.module.entertainment.core.dto.AiConnectionDtos;
+import com.order.menu.module.entertainment.core.service.GameAiConnectionService;
+import com.order.menu.module.entertainment.core.dto.GameReviewDtos;
+import com.order.menu.module.entertainment.core.service.GameReviewService;
 import com.order.menu.module.entertainment.core.service.EntertainmentGameService;
 import com.order.menu.module.entertainment.core.service.EntertainmentGuestService;
 import com.order.menu.module.entertainment.core.service.GameRoomService;
@@ -37,8 +41,30 @@ public class EntertainmentController {
     private final GuessStockSessionService sessionService;
     private final GameRoomService roomService;
     private final GameAiCredentialService credentialService;
+    private final GameAiConnectionService connectionService;
     private final GamePlayKeyService playKeyService;
     private final DailyChallengeService dailyChallengeService;
+    private final GameReviewService reviewService;
+
+    @GetMapping("/games/{gameId}/reviews")
+    public ApiResponse<GameReviewDtos.ReviewPageResponse> reviews(
+            @PathVariable Long gameId, @RequestParam(defaultValue = "1") int page,
+            @RequestParam(defaultValue = "10") int pageSize) {
+        LoginUser viewer = UserContext.getOrNull();
+        return ApiResponse.success(reviewService.list(gameId, viewer == null ? null : viewer.userId(), page, pageSize));
+    }
+
+    @PutMapping("/games/{gameId}/reviews/me")
+    public ApiResponse<GameReviewDtos.ReviewResponse> saveReview(
+            @PathVariable Long gameId, @Valid @RequestBody GameReviewDtos.SaveRequest request) {
+        return ApiResponse.success(reviewService.save(gameId, UserContext.get().userId(), request));
+    }
+
+    @DeleteMapping("/games/{gameId}/reviews/me")
+    public ApiResponse<Void> deleteReview(@PathVariable Long gameId) {
+        reviewService.deleteMine(gameId, customer().userId());
+        return ApiResponse.success();
+    }
 
     @GetMapping("/modes")
     public ApiResponse<List<EntertainmentDtos.ModeResponse>> modes() {
@@ -214,6 +240,13 @@ public class EntertainmentController {
     public ApiResponse<EntertainmentDtos.AiDefaultResponse> aiDefault(
             @RequestHeader(value = "X-Guest-Token", required = false) String guestToken) {
         return ApiResponse.success(credentialService.defaultCredential(player(guestToken)));
+    }
+
+    @PostMapping("/ai-connection/test")
+    public ApiResponse<AiConnectionDtos.Result> testAiConnection(
+            @Valid @RequestBody AiConnectionDtos.Request request,
+            @RequestHeader(value = "X-Guest-Token", required = false) String guestToken) {
+        return ApiResponse.success(connectionService.test(player(guestToken), request));
     }
 
     @PutMapping("/ai-default")

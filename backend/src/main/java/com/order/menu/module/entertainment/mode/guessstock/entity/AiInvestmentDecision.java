@@ -31,6 +31,11 @@ public class AiInvestmentDecision {
     private String triggeredConditionsJson;
     private String reasonCodesJson;
     private String executedDirection;
+    private Long orderId;
+    private String executionStatus;
+    private String plannedDirection;
+    private Long plannedShares;
+    private BigDecimal plannedValue;
     private Long executedShares;
     private BigDecimal executedValue;
     private String executionReason;

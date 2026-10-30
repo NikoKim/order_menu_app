@@ -148,11 +148,11 @@
           <input type="file" accept="image/*" hidden @change="handleImageSelect" />
         </label>
         <textarea ref="textInputEl" v-model="textInput" class="chat-text-input" rows="1" placeholder="输入消息"
-          @input="handleTypingInput" @focus="emojiOpen = false" @blur="stopTyping()" @keydown.enter.exact.prevent="handleSend"></textarea>
+          @input="handleTypingInput" @focus="emojiOpen = false" @blur="stopTyping()" @keydown.enter.exact.prevent="!$event.isComposing && handleSend()"></textarea>
         <button class="chat-emoji-btn" type="button" :title="emojiOpen ? '收起表情' : '表情'" :aria-label="emojiOpen ? '收起表情' : '表情'" @click="toggleEmojiPanel">
           <Keyboard v-if="emojiOpen" :size="22" /><Smile v-else :size="22" />
         </button>
-        <button class="chat-send-btn" :disabled="!textInput.trim()" title="发送" @click="handleSend"><Send :size="19" /><span>发送</span></button>
+        <button class="chat-send-btn" :disabled="sending || !textInput.trim()" :aria-busy="sending" :title="sending ? '发送中' : '发送'" @click="handleSend"><LoaderCircle v-if="sending" class="send-spinner" :size="19" /><Send v-else :size="19" /><span>{{ sending ? '发送中' : '发送' }}</span></button>
       </div>
       <Transition name="emoji-panel">
         <div v-if="emojiOpen" class="chat-emoji-panel" aria-label="聊天表情">
@@ -168,7 +168,7 @@
 <script setup>
 import { ref, computed, onMounted, onUnmounted, nextTick, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
-import { ArrowLeft, ChevronRight, Copy, ImagePlus, Keyboard, MoreVertical, Reply, RotateCcw, Send, Smile, Sparkles, Star, Trash2, UserRound, UsersRound, X } from 'lucide-vue-next'
+import { ArrowLeft, ChevronRight, Copy, ImagePlus, Keyboard, LoaderCircle, MoreVertical, Reply, RotateCcw, Send, Smile, Sparkles, Star, Trash2, UserRound, UsersRound, X } from 'lucide-vue-next'
 import { addEssence, deleteMessage, getChatImageUrl, getConversationTyping, getLatestUnreadEssence, getMessages, markConversationRead, markEssenceRead, recallMessage, removeEssence, sendMessage as apiSendMessage, setConversationTyping } from '../../api/messages'
 import { imageUrl } from '../../composables/useImage'
 import { apiUrl } from '../../config/endpoints'
@@ -199,6 +199,7 @@ const nextBeforeId = ref(null)
 const loadedMessageIds = new Set()
 const error = ref('')
 const textInput = ref('')
+const sending = ref(false)
 const textInputEl = ref(null)
 const emojiOpen = ref(false)
 const replyingTo = ref(null)
@@ -502,21 +503,30 @@ function scrollToMessage(msgId) {
 }
 
 async function handleSend() {
-  if (!textInput.value.trim()) return
+  if (sending.value || !textInput.value.trim()) return
+  const id = conversationId.value
+  const generation = requestGeneration
+  const draft = textInput.value
   const content = textInput.value.trim()
+  const quote = replyingTo.value
+  sending.value = true
   stopTyping()
   try {
-    const sent = await apiSendMessage(conversationId.value, { content, quotedMessageId: replyingTo.value?.id || null })
-    textInput.value = ''
-    resizeInput()
-    replyingTo.value = null
+    const sent = await apiSendMessage(id, { content, quotedMessageId: quote?.id || null })
+    if (!requestIsCurrent(id, generation)) return
+    if (textInput.value === draft) {
+      textInput.value = ''
+      resizeInput()
+    }
+    if (replyingTo.value === quote) replyingTo.value = null
     if (sent?.id) {
       mergeMessages([sent])
       scrollToBottom()
     } else {
       loadMessages({ silent: true })
     }
-  } catch (e) { notifyError(e.message) }
+  } catch (e) { if (requestIsCurrent(id, generation)) notifyError(e.message) }
+  finally { sending.value = false }
 }
 
 function resizeInput() {
@@ -833,6 +843,9 @@ function openShare(msg) {
   cursor: pointer; transition: opacity 0.2s, transform .14s ease; flex-shrink: 0;
 }
 .chat-send-btn:disabled { opacity: 0.4; cursor: not-allowed; }
+.chat-send-btn[aria-busy="true"] { opacity: 1; cursor: wait; }
+.send-spinner { animation: send-spin .9s linear infinite; }
+@keyframes send-spin { to { transform: rotate(360deg); } }
 .chat-send-btn:not(:disabled):hover { background: var(--color-primary-light); }
 .chat-send-btn:not(:disabled):active { transform: scale(.96); }
 .chat-emoji-panel { height: 210px; display: grid; grid-template-columns: repeat(10, minmax(0, 1fr)); gap: 5px; margin: 9px -2px -1px; padding: 9px 4px 4px; overflow-y: auto; border-top: 1px solid #eceef1; }

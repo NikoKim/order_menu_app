@@ -32,9 +32,14 @@ import com.order.menu.module.entertainment.mode.guessstock.agent.AiMarketSnapsho
 import com.order.menu.module.entertainment.mode.guessstock.agent.AiTargetPositionExecutor;
 import com.order.menu.module.entertainment.mode.guessstock.agent.AiThesisConditionEvaluator;
 import com.order.menu.module.entertainment.mode.guessstock.agent.AiThesisService;
-import com.order.menu.module.entertainment.mode.guessstock.agent.AiTradingFallbackPolicy;
 import com.order.menu.module.entertainment.mode.guessstock.agent.PublicEventDigest;
 import com.order.menu.module.entertainment.mode.guessstock.agent.AiDifficultyPolicy;
+import com.order.menu.module.entertainment.mode.guessstock.agent.AiStrategyPlanner;
+import com.order.menu.module.entertainment.mode.guessstock.agent.AiModelCallPolicy;
+import com.order.menu.module.entertainment.mode.guessstock.agent.AiModelSettings;
+import com.order.menu.module.entertainment.mode.guessstock.agent.AiModelCostPolicy;
+import com.order.menu.module.entertainment.mode.guessstock.agent.AiPublicOpponentModel;
+import com.order.menu.module.entertainment.mode.guessstock.agent.AiInvalidCondition;
 import com.order.menu.module.entertainment.mode.guessstock.config.GuessStockConfig;
 import com.order.menu.module.entertainment.mode.guessstock.credit.service.GuessStockCreditService;
 import com.order.menu.module.entertainment.mode.guessstock.credit.entity.LoanContract;
@@ -114,6 +119,7 @@ public class GuessStockSessionService {
     private static final BigDecimal ZERO = BigDecimal.ZERO.setScale(4);
     private static final long LEASE_SECONDS = 4;
     private static final long ORDER_DRAIN_GRACE_MILLIS = 800;
+    private static final long AI_DECISION_GRACE_SECONDS = 28;
     private static final long AUTO_GATE_MILLIS = 3_000;
     private static final long ROUND_START_FALLBACK_MILLIS = 6_000;
     private static final Set<BigDecimal> PLAYBACK_SPEEDS = Set.of(
@@ -122,7 +128,7 @@ public class GuessStockSessionService {
     private static final SecureRandom SESSION_RANDOM = new SecureRandom();
     private static final String OPENING = "OPENING";
     private static final String CLOSING = "CLOSING";
-    private static final String AI_PROMPT_VERSION = "agent-v8-public-information";
+    private static final String AI_PROMPT_VERSION = "agent-v12-cached-strategy";
     private final ConcurrentHashMap<Long, AtomicInteger> inFlightOrders = new ConcurrentHashMap<>();
 
     private final EntertainmentGameService gameService;
@@ -153,7 +159,8 @@ public class GuessStockSessionService {
     private final AiDecisionValidator aiDecisionValidator;
     private final AiThesisService aiThesisService;
     private final AiTargetPositionExecutor aiTargetPositionExecutor;
-    private final AiTradingFallbackPolicy aiTradingFallbackPolicy;
+    private final AiModelSettings aiModelSettings;
+    private final AiModelBudgetService aiModelBudgetService;
     private final GuessStockCreditService creditService;
     private final ObjectMapper objectMapper;
     private final TransactionTemplate transactionTemplate;
@@ -651,7 +658,7 @@ public class GuessStockSessionService {
                     .eq(GuessStockAiTask::getStage, stageForPhase(session.getPhase()))
                     .eq(GuessStockAiTask::getDecisionStatus, "PENDING")
                     .le(GuessStockAiTask::getExecuteAt, LocalDateTime.now()));
-            for (GuessStockAiTask task : dueTasks) executeAiTaskLocked(task.getId(), LocalDateTime.now());
+            for (GuessStockAiTask task : dueTasks) executeAiTaskLocked(task.getId(), LocalDateTime.now(), false);
         }
         pauseLocked(session, LocalDateTime.now());
         return buildSnapshot(session, player);
@@ -756,6 +763,11 @@ public class GuessStockSessionService {
     }
 
     private void progressFromGate(GameSession session, LocalDateTime now) {
+        if (isTradingPhase(session.getPhase()) && aiDecisionInProgress(session)) {
+            if (session.getPhaseEndsAt() == null) session.setPhaseEndsAt(now);
+            sessionMapper.updateById(session);
+            return;
+        }
         if (isRoundStartPhase(session.getPhase())) continueAfterRoundStart(session, now);
         else if ("CREDIT_TRADING".equals(session.getPhase())) startTrading(session, OPENING, now);
         else if ("CREDIT_REPAYMENT".equals(session.getPhase())) finishRound(session, now);
@@ -983,6 +995,8 @@ public class GuessStockSessionService {
         LocalDateTime now = LocalDateTime.now();
         int guard = 0;
         while (session.getPhaseEndsAt() != null && !session.getPhaseEndsAt().isAfter(now) && guard++ < 4) {
+            if (isTradingPhase(session.getPhase()) && aiDecisionInProgress(session)
+                    && now.isBefore(session.getPhaseEndsAt().plusSeconds(AI_DECISION_GRACE_SECONDS))) return;
             if (isTradingPhase(session.getPhase()) && (orderMutationsInFlight(session.getId()) > 0
                     || now.isBefore(session.getPhaseEndsAt().plusNanos(ORDER_DRAIN_GRACE_MILLIS * 1_000_000)))) {
                 return;
@@ -1195,6 +1209,7 @@ public class GuessStockSessionService {
         task.setMarketSnapshotJson(frozenSnapshotJson);
         task.setSnapshotVersion(snapshotVersion);
         task.setPromptVersion(AI_PROMPT_VERSION);
+        task.setEstimatedCostYuan(BigDecimal.ZERO.setScale(8));
         task.setIdempotencyKey("AI:" + session.getId() + ":" + session.getCurrentRound() + ":" + stage + ":" + ai.getId()
                 + (revision ? ":REVISION" : ""));
         try { aiTaskMapper.insert(task); } catch (DuplicateKeyException ignored) { }
@@ -1212,10 +1227,16 @@ public class GuessStockSessionService {
     }
 
     private void executeAiTaskLocked(Long taskId, LocalDateTime now) {
+        executeAiTaskLocked(taskId, now, true);
+    }
+
+    private void executeAiTaskLocked(Long taskId, LocalDateTime now, boolean allowModel) {
         long startedAt = System.nanoTime();
         GuessStockAiTask task = aiTaskMapper.selectById(taskId);
         if (task == null || !("PENDING".equals(task.getDecisionStatus())
                 || "PROCESSING".equals(task.getDecisionStatus()))) return;
+        // Clearing must claim a pending task itself, never execute work owned by a background worker.
+        if (!allowModel && "PROCESSING".equals(task.getDecisionStatus())) return;
         if ("PENDING".equals(task.getDecisionStatus())) {
             if (aiTaskMapper.claim(taskId) != 1) return;
             task = aiTaskMapper.selectById(taskId);
@@ -1231,7 +1252,7 @@ public class GuessStockSessionService {
             return;
         }
         try {
-            task.setDecisionReason(decideAiOrder(session, task));
+            task.setDecisionReason(decideAiOrder(session, task, allowModel));
             task.setDecisionStatus("EXECUTED");
         } catch (AiTaskCancelledException exception) {
             task.setDecisionStatus("CANCELLED");
@@ -1260,10 +1281,18 @@ public class GuessStockSessionService {
                 .eq(GuessStockAiTask::getRoundNo, session.getCurrentRound())
                 .eq(GuessStockAiTask::getStage, stageForPhase(session.getPhase()))
                 .eq(GuessStockAiTask::getDecisionStatus, "PENDING").orderByAsc(GuessStockAiTask::getExecuteAt));
-        for (GuessStockAiTask task : tasks) executeAiTaskLocked(task.getId(), LocalDateTime.now());
+        for (GuessStockAiTask task : tasks) executeAiTaskLocked(task.getId(), LocalDateTime.now(), false);
     }
 
-    private String decideAiOrder(GameSession session, GuessStockAiTask task) {
+    private boolean aiDecisionInProgress(GameSession session) {
+        return aiTaskMapper.selectCount(new LambdaQueryWrapper<GuessStockAiTask>()
+                .eq(GuessStockAiTask::getSessionId, session.getId())
+                .eq(GuessStockAiTask::getRoundNo, session.getCurrentRound())
+                .eq(GuessStockAiTask::getStage, stageForPhase(session.getPhase()))
+                .eq(GuessStockAiTask::getDecisionStatus, "PROCESSING")) > 0;
+    }
+
+    private String decideAiOrder(GameSession session, GuessStockAiTask task, boolean allowModel) {
         GameVersion version = gameService.requireVersion(session.getGameVersionId());
         GuessStockConfig config = gameService.readConfig(version.getConfigJson());
         GuessStockParticipant ai = participantMapper.selectById(task.getParticipantId());
@@ -1281,10 +1310,6 @@ public class GuessStockSessionService {
         double currentPositionPercent = positionPercent(markPrice, position.getQuantity(), totalAsset);
         double maxPositionPercent = clamp(aiConfig.riskPercent().doubleValue(), 0,
                 Boolean.TRUE.equals(config.loanEnabled()) ? 300 : 100);
-        List<GuessStockRound> history = roundMapper.selectList(new LambdaQueryWrapper<GuessStockRound>()
-                .eq(GuessStockRound::getSessionId, session.getId()).isNotNull(GuessStockRound::getClosePrice)
-                .orderByDesc(GuessStockRound::getRoundNo).last("LIMIT 50"));
-        Collections.reverse(history);
         AiMarketSnapshot snapshot = readFrozenAiMarketSnapshot(task, session, config);
         GuessStockCreditService.CreditStatus decisionCredit = creditService.status(session.getId(), ai, position,
                 markPrice, config);
@@ -1314,13 +1339,28 @@ public class GuessStockSessionService {
         AiInvestmentThesis previousThesis = aiThesisService.findActive(session.getId(), ai.getId());
         AiThesisConditionEvaluator.ValidationResult validation = aiConditionEvaluator.evaluate(previousThesis, snapshot);
         AiEvidenceDetector.EvidenceResult evidence = aiEvidenceDetector.detect(previousThesis, snapshot, validation);
+        AiStrategyPlanner.State previousStrategy = previousAiStrategy(task);
+        AiPublicInputs publicInputs = aiPublicInputs(session, ai, config, task.getStage());
+        AiStrategyPlanner.Context strategyContext = strategyContext(snapshot, ai, aiConfig, config,
+                position, totalAsset, currentPositionPercent, maxPositionPercent, decisionCredit, publicInputs, ranked.size());
+        AiStrategyPlanner.Plan strategy = AiStrategyPlanner.evaluate(strategyContext, previousStrategy);
+        evidence = strategyEvidence(evidence, strategy, previousStrategy, publicInputs);
         List<GuessStockTrade> roundTrades = tradesForRound(session.getId(), ai.getId(), session.getCurrentRound());
         BigDecimal usedTurnover = roundTrades.stream().map(GuessStockTrade::getAmount).reduce(ZERO, BigDecimal::add);
         BigDecimal roundStartAsset = roundStartAsset(ai, position, round.getPreviousClosePrice(), roundTrades)
                 .subtract(creditService.debt(session.getId(), ai.getId()));
         double roundTurnoverPct = roundStartAsset.signum() == 0 ? 0 : usedTurnover.divide(roundStartAsset, 10,
                 RoundingMode.HALF_UP).multiply(new BigDecimal("100")).doubleValue();
-        double estimatedImpact = estimatedImpactPercent(aiConfig.maxOrderQuantity(), config, ranked.size());
+        BigDecimal remainingTurnover = roundStartAsset.multiply(aiConfig.maxRoundTurnoverPct())
+                .divide(new BigDecimal("100"), 8, RoundingMode.HALF_UP).subtract(usedTurnover).max(ZERO);
+        BigDecimal stepValue = totalAsset.max(ZERO).multiply(aiConfig.highUrgencyPositionStepPctPoints())
+                .divide(new BigDecimal("100"), 8, RoundingMode.HALF_UP);
+        double estimatedBuyImpact = estimatedImpactPercent(aiConfig.maxOrderQuantity(), stepValue.min(remainingTurnover)
+                .min(adjustableCash.add(decisionCredit.availableCredit()).max(ZERO)), markPrice,
+                aiConfig.maxEstimatedImpactPct(), config, ranked.size());
+        double estimatedSellImpact = estimatedImpactPercent(aiConfig.maxOrderQuantity(), stepValue.multiply(new BigDecimal("2"))
+                .min(remainingTurnover).min(markPrice.multiply(BigDecimal.valueOf(position.getQuantity()))), markPrice,
+                aiConfig.maxEstimatedImpactPct(), config, ranked.size());
         String publicEventName = snapshot.eventName();
         String publicEventDescription = snapshot.eventDescription();
         String modelEventDescription = snapshot.hasPublicEvent() ? publicEventDescription
@@ -1329,19 +1369,12 @@ public class GuessStockSessionService {
                 + "，事件强度=" + snapshot.eventStrength() + "，发布时间=" + snapshot.eventPublishedStage()
                 : publicEventDescription;
         ModelAiDecisionService.Decision decision;
-        if (canKeepWithoutModel(previousThesis, validation, evidence)) {
-            task.setModelRoute("KEEP");
-            decision = keepDecision(previousThesis, "观点有效且没有事件、价格、趋势或时间方面的重要新证据");
+        if (!allowModel || !AiModelCallPolicy.shouldCall(previousStrategy, snapshot, validation.invalidated(),
+                previousStrategy == null || publicInputs.reportRound() > previousStrategy.reportRound(),
+                previousStrategy == null || publicInputs.researchId() > previousStrategy.researchId(), aiModelSettings)) {
+            task.setModelRoute("LOCAL");
+            decision = localStrategyDecision(previousThesis, validation, strategy, snapshot);
         } else {
-            AiTradingPolicy.Context fallbackContext = new AiTradingPolicy.Context(
-                    ai.getAiProfile(), config.aiDifficulty(), session.getCurrentRound(), config.roundCount(), task.getStage(),
-                    markPrice, position.getAverageCost(), adjustableCash, position.getQuantity(),
-                    history.stream().map(item -> new AiTradingPolicy.MarketPoint(item.getOpenPrice(), item.getClosePrice())).toList(),
-                    marketBuyQuantity, marketSellQuantity, assetRank, ranked.size(), publicEventName, publicEventDescription,
-                    round.getEventType(), round.getEventRelevance(), round.getEventCredibility(), round.getEventSurprise(),
-                    round.getEventStrength(), config.baseVolatilityPercent().doubleValue(),
-                    config.marketLiquidityShares().doubleValue(), memory,
-                    mix(sessionSeed(session, version), aiIndex + 1, 4701), revision);
             List<GameAiCredentialService.DecryptedCredential> credentials = credentialService.credentialsFor(session.getId(), session.getRoomId());
             try {
                 if (credentials.isEmpty()) throw new ModelAiDecisionService.ModelDecisionException("未配置模型");
@@ -1371,7 +1404,7 @@ public class GuessStockSessionService {
                                 write(validation.triggeredConditions()), aiEvidencePacket(evidence, session.getId(), ai.getId()),
                                 aiConfig.rebalanceBandPctPoints().toPlainString(), aiConfig.minHoldRounds(),
                                 aiConfig.minTradeAssetPct().toPlainString(), aiConfig.maxRoundTurnoverPct().toPlainString(),
-                                roundTurnoverPct, estimatedImpact, estimatedImpact,
+                                roundTurnoverPct, estimatedBuyImpact, estimatedSellImpact,
                                 snapshot.drawdownFromHighPct(), snapshot.maxDrawdownPct(), snapshot.trendState(),
                                 snapshot.volatilityState(), snapshot.trendAge(), snapshot.regimeAge(),
                                 snapshot.consecutiveDirectionRounds(), snapshot.publicEventDigest().residualSignal().name(),
@@ -1380,7 +1413,8 @@ public class GuessStockSessionService {
                                 decisionCredit.principal().add(decisionCredit.accruedInterest()).toPlainString(),
                                 decisionCredit.accruedInterest().toPlainString(), decisionCredit.risk().ltvPercent().doubleValue(),
                                 decisionCredit.risk().riskState(), decisionCredit.availableCredit().toPlainString(),
-                                decisionCredit.nearestMaturityRound());
+                                decisionCredit.nearestMaturityRound(), config.tradingMode(), publicInputs.sharedJson(),
+                                compactStrategy(strategy), publicInputs.costsJson());
                 decision = cachedAgentDecision(task);
                 if (decision != null) {
                     task.setModelRoute("CACHE");
@@ -1395,19 +1429,25 @@ public class GuessStockSessionService {
                     decision = withClampedTarget(decision, maxPositionPercent);
                     decision = aiDecisionValidator.validate(decision, previousThesis, validation, evidence);
                 }
+                strategy = AiStrategyPlanner.evaluate(strategyContext, strategy.state().withModel(
+                        session.getCurrentRound(), decision.targetPositionPct(), decision.reason(),
+                        "CLOSE_THESIS".equals(decision.decisionType()) || "BEARISH".equals(decision.direction())));
             } catch (ModelAiDecisionService.ModelDecisionException exception) {
                 task.setFallbackReason(exception.getMessage());
-                if (previousThesis != null && validation.invalidated()) {
-                    aiThesisService.invalidate(previousThesis, session.getCurrentRound());
-                    if (existingOrder != null) cancelPendingOrder(session, ai);
-                    throw new AiDecisionUnresolvedException("活动观点已经失效，模型未能生成有效的新观点：" + exception.getMessage());
-                }
-                decision = aiTradingFallbackPolicy.decide(previousThesis, validation.invalidated(), fallbackContext,
-                        currentPositionPercent, maxPositionPercent, "模型决策降级：" + exception.getMessage());
+                // A failed review is cooled down too; otherwise every stage repeats a paid failing request.
+                strategy = AiStrategyPlanner.evaluate(strategyContext, strategy.state().withModel(
+                        session.getCurrentRound(), strategy.state().strategicTargetPct()));
+                task.setModelRoute("LOCAL");
+                decision = localStrategyDecision(previousThesis, validation, strategy, snapshot);
                 decision = aiDecisionValidator.validate(decision, previousThesis, validation, evidence);
             }
         }
 
+        if (validation.invalidated() && "LOCAL".equals(task.getModelRoute())) {
+            strategy = AiStrategyPlanner.exitInvalidatedThesis(strategy, session.getCurrentRound());
+            decision = localStrategyDecision(previousThesis, validation, strategy, snapshot);
+        }
+        storeAgentDecision(task, decision);
         GameSession executableSession = sessionMapper.selectByIdForUpdate(session.getId());
         if (executableSession == null || !"ACTIVE".equals(executableSession.getStatus())
                 || !task.getRoundNo().equals(executableSession.getCurrentRound())
@@ -1435,12 +1475,32 @@ public class GuessStockSessionService {
                 .subtract(creditService.debt(session.getId(), ai.getId()));
 
         maybePerformAiResearch(session, ai, config, decision, task);
+        if (!"NONE".equals(decision.researchAction())) {
+            // Research updates the current trade locally; do not pay for a second model round trip.
+            publicInputs = aiPublicInputs(session, ai, config, task.getStage());
+            strategyContext = strategyContext(snapshot, ai, aiConfig, config, position, totalAsset,
+                    currentPositionPercent, maxPositionPercent, decisionCredit, publicInputs, ranked.size());
+            strategy = AiStrategyPlanner.evaluate(strategyContext, strategy.state());
+        }
+        if (strategy.risk()) {
+            evidence = strategyEvidence(evidence, strategy, previousStrategy, publicInputs);
+            decision = localStrategyDecision(previousThesis, validation, strategy, snapshot);
+        } else if (decision.targetPositionPct() > currentPositionPercent) {
+            double allowed = Math.max(currentPositionPercent, strategy.target());
+            if (allowed < decision.targetPositionPct()) {
+                decision = executableTargetDecision(decision, previousThesis, allowed);
+            }
+        }
+        decision = aiDecisionValidator.validate(decision, previousThesis, validation, evidence);
+        task.setStrategyStateJson(write(strategy.state()));
 
         GuessStockCreditService.AiCreditCapacity creditCapacity = creditService.aiCapacity(session.getId(),
                 session.getCurrentRound(), session.getPhase(), ai, position, markPrice, config,
                 BigDecimal.valueOf(decision.targetPositionPct()));
-        decision = withClampedTarget(decision, Math.min(maxPositionPercent,
-                creditCapacity.executableExposure().doubleValue()));
+        double creditLimit = Math.min(maxPositionPercent, creditCapacity.executableExposure().doubleValue());
+        if (decision.targetPositionPct() > creditLimit) {
+            decision = executableTargetDecision(decision, previousThesis, creditLimit);
+        }
 
         double previousTarget = previousThesis == null ? currentPositionPercent
                 : previousThesis.getTargetPositionPct().doubleValue();
@@ -1458,9 +1518,10 @@ public class GuessStockSessionService {
                         creditCapacity.availableCredit().add(adjustableCash), totalAsset,
                         roundStartAsset, usedTurnover, markPrice, decision.urgency(),
                         lastBuyRound(session.getId(), ai.getId()), roundTradeDirection(roundTrades),
-                        validation.invalidated(), evidence.criticalRisk(), config.marketLiquidityShares(), ranked.size(),
+                        validation.invalidated(), strategy.risk(), config.marketLiquidityShares(), ranked.size(),
                         config.maxOrderImpactPercent(), lastTrade == null ? null : lastTrade.getRoundNo(),
-                        lastTrade == null ? null : lastTrade.getSide(), snapshot.regimeChanged()));
+                        lastTrade == null ? null : lastTrade.getSide(), snapshot.regimeChanged(),
+                        "TARGET_AUCTION".equals(config.tradingMode())));
         storeAgentDecision(task, decision);
 
         if ("HOLD".equals(plan.direction()) && existingOrder != null) {
@@ -1474,15 +1535,16 @@ public class GuessStockSessionService {
             }
             if ("TARGET_AUCTION".equals(config.tradingMode())) {
                 placeTargetOrder(session, ai, BigDecimal.valueOf(plan.targetPositionPct()), task.getIdempotencyKey());
+                constrainAiAuctionOrder(session, ai, task, plan, strategy, aiConfig, roundStartAsset, usedTurnover, totalAsset);
             } else {
                 placeOrder(session, ai, plan.direction(), plan.shares(), false, task.getIdempotencyKey(), "AI");
             }
         }
         auditAiDecision(session, ai, task, appliedThesis, previousTarget, currentPositionPercent,
-                decision, evidence, validation, plan, totalAsset);
+                decision, evidence, validation, plan);
         return (revision ? "Agent 二次评估：" : "Agent 决策：") + decision.decisionType()
                 + "，目标敞口 " + BigDecimal.valueOf(plan.targetPositionPct()).setScale(1, RoundingMode.HALF_UP).toPlainString()
-                + "%；执行 " + plan.direction() + (plan.shares() > 0 ? " " + plan.shares() + " 股" : "")
+                + "%；计划 " + plan.direction() + (plan.shares() > 0 ? " " + plan.shares() + " 股" : "")
                 + "；" + plan.reason();
     }
 
@@ -1498,6 +1560,130 @@ public class GuessStockSessionService {
         }
     }
 
+    private AiStrategyPlanner.State previousAiStrategy(GuessStockAiTask task) {
+        GuessStockAiTask previous = aiTaskMapper.selectOne(new LambdaQueryWrapper<GuessStockAiTask>()
+                .eq(GuessStockAiTask::getSessionId, task.getSessionId())
+                .eq(GuessStockAiTask::getParticipantId, task.getParticipantId())
+                .eq(GuessStockAiTask::getDecisionStatus, "EXECUTED")
+                .isNotNull(GuessStockAiTask::getStrategyStateJson).orderByDesc(GuessStockAiTask::getId).last("LIMIT 1"));
+        if (previous == null) return null;
+        try { return objectMapper.readValue(previous.getStrategyStateJson(), AiStrategyPlanner.State.class); }
+        catch (JsonProcessingException ignored) { return null; }
+    }
+
+    private String compactStrategy(AiStrategyPlanner.Plan plan) {
+        var state = plan.state();
+        return write(Map.of("phase", state.phase(), "fair", List.of(compactNumber(state.fairLow()), compactNumber(state.fairHigh())),
+                "stop", compactNumber(state.stopPrice()), "peak", compactNumber(state.peakPrice()), "entry", state.entryRound(),
+                "strategicTarget", compactNumber(state.strategicTargetPct()), "tacticalTarget", compactNumber(plan.target()),
+                "costPct", compactNumber(plan.estimatedRoundTripCostPct()), "edgePct", compactNumber(plan.expectedEdgePct()),
+                "intent", state.modelReason()));
+    }
+
+    private static BigDecimal compactNumber(double value) {
+        return BigDecimal.valueOf(value).setScale(4, RoundingMode.HALF_UP).stripTrailingZeros();
+    }
+
+    private AiPublicInputs aiPublicInputs(GameSession session, GuessStockParticipant ai, GuessStockConfig config, String stage) {
+        GuessStockFinancialReport report = financialReportMapper.selectOne(new LambdaQueryWrapper<GuessStockFinancialReport>()
+                .eq(GuessStockFinancialReport::getSessionId, session.getId())
+                .lt(GuessStockFinancialReport::getRoundNo, session.getCurrentRound())
+                .orderByDesc(GuessStockFinancialReport::getRoundNo).last("LIMIT 1"));
+        GuessStockResearchAction research = researchActionMapper.selectOne(new LambdaQueryWrapper<GuessStockResearchAction>()
+                .eq(GuessStockResearchAction::getSessionId, session.getId())
+                .eq(GuessStockResearchAction::getParticipantId, ai.getId())
+                .orderByDesc(GuessStockResearchAction::getId).last("LIMIT 1"));
+        double fair = report == null ? 0 : config.initialPrice().doubleValue()
+                * (1 + (report.getFundamentalScore().doubleValue() - 100) * .0075);
+        int valuationRound = report == null ? 0 : report.getRoundNo();
+        if (research != null && "PREVIEW_REPORT".equals(research.getActionType())
+                && session.getCurrentRound() - research.getRoundNo() <= 4) {
+            EntertainmentDtos.ResearchResponse result = readResearchResponse(research.getResultJson());
+            fair = config.initialPrice().doubleValue()
+                    * (1 + ((result.rangeLow() + result.rangeHigh()) / 2 - 100) * .0075);
+            valuationRound = research.getRoundNo();
+        }
+        List<Long> visibleOpeningOrders = CLOSING.equals(stage) ? orderMapper.selectList(new LambdaQueryWrapper<GuessStockOrder>()
+                .eq(GuessStockOrder::getSessionId, session.getId()).eq(GuessStockOrder::getRoundNo, session.getCurrentRound())
+                .eq(GuessStockOrder::getStage, OPENING).in(GuessStockOrder::getStatus, "FILLED", "PARTIALLY_FILLED"))
+                .stream().map(GuessStockOrder::getId).toList() : List.of();
+        List<GuessStockTrade> settled = tradeMapper.selectList(new LambdaQueryWrapper<GuessStockTrade>()
+                .eq(GuessStockTrade::getSessionId, session.getId()).and(query -> {
+                    query.lt(GuessStockTrade::getRoundNo, session.getCurrentRound());
+                    if (!visibleOpeningOrders.isEmpty()) query.or().in(GuessStockTrade::getOrderId, visibleOpeningOrders);
+                })
+                .orderByDesc(GuessStockTrade::getId).last("LIMIT 200"));
+        AiPublicOpponentModel.Summary opponents = AiPublicOpponentModel.summarize(settled);
+        Map<String, Object> common = new LinkedHashMap<>();
+        if (report != null) common.put("report", Map.of("round", report.getRoundNo(),
+                "score", report.getFundamentalScore(), "expected", report.getExpectedScore(),
+                "surprise", report.getSurprisePercent()));
+        common.put("settledOpponents", opponents);
+        common.put("researchPoints", config.researchPoints());
+        List<Map<String, Object>> banks = config.creditProducts() == null ? List.of() : config.creditProducts().stream()
+                .filter(bank -> Boolean.TRUE.equals(bank.enabled())).map(bank -> Map.<String, Object>of(
+                        "code", bank.code(), "interestPctPerRound", bank.interestRatePerRound(),
+                        "maturityRounds", bank.maturityRounds())).toList();
+        return new AiPublicInputs(report == null ? 0 : report.getRoundNo(), research == null ? 0 : research.getId(),
+                fair, valuationRound, opponents.buyConcentration(), opponents.sellConcentration(), write(common), write(Map.of("feePct", config.feePercent(),
+                "slippagePct", config.slippagePercent(), "banks", banks)));
+    }
+
+    private static AiStrategyPlanner.Context strategyContext(AiMarketSnapshot snapshot, GuessStockParticipant ai,
+            GuessStockConfig.AiPlayerConfig aiConfig, GuessStockConfig config, GuessStockPosition position,
+            BigDecimal assets, double exposure, double maxExposure, GuessStockCreditService.CreditStatus credit,
+            AiPublicInputs inputs, int participantCount) {
+        return new AiStrategyPlanner.Context(snapshot, ai.getAiProfile(), config.aiDifficulty(), exposure,
+                maxExposure, position.getQuantity(), position.getAverageCost().doubleValue(), assets.doubleValue(),
+                inputs.fairValue(), inputs.reportRound(), inputs.researchId(),
+                credit.principal().add(credit.accruedInterest()).doubleValue(), credit.risk().riskState(),
+                credit.nearestMaturityRound(), config.feePercent().doubleValue(), config.slippagePercent().doubleValue(),
+                credit.product() == null ? 0 : credit.product().interestRatePerRound().doubleValue(),
+                config.marketLiquidityShares().doubleValue() * Math.max(1, participantCount),
+                config.maxOrderImpactPercent().doubleValue(), inputs.buyConcentration(), inputs.sellConcentration(), inputs.valuationRound());
+    }
+
+    private static AiEvidenceDetector.EvidenceResult strategyEvidence(AiEvidenceDetector.EvidenceResult original,
+            AiStrategyPlanner.Plan plan, AiStrategyPlanner.State previous, AiPublicInputs inputs) {
+        List<AiEvidenceDetector.Evidence> values = new ArrayList<>(original.evidences());
+        if (plan.transition() || previous != null && Math.abs(previous.tacticalTargetPct() - plan.target()) >= .5) {
+            values.add(new AiEvidenceDetector.Evidence("STRATEGY_PHASE_CHANGED", "MEDIUM", plan.target()));
+        }
+        if (plan.risk()) values.add(new AiEvidenceDetector.Evidence("PORTFOLIO_RISK", "HIGH", plan.target()));
+        if (previous != null && inputs.reportRound() > previous.reportRound()) {
+            values.add(new AiEvidenceDetector.Evidence("PUBLIC_REPORT_PUBLISHED", "HIGH", inputs.reportRound()));
+        }
+        if (previous != null && inputs.researchId() > previous.researchId()) {
+            values.add(new AiEvidenceDetector.Evidence("OWN_RESEARCH_UPDATED", "MEDIUM", inputs.researchId()));
+        }
+        return new AiEvidenceDetector.EvidenceResult(!values.isEmpty(), original.criticalRisk() || plan.risk(), List.copyOf(values));
+    }
+
+    private ModelAiDecisionService.Decision localStrategyDecision(AiInvestmentThesis thesis,
+            AiThesisConditionEvaluator.ValidationResult validation, AiStrategyPlanner.Plan plan, AiMarketSnapshot snapshot) {
+        String direction = List.of("EXIT", "DISTRIBUTE").contains(plan.state().phase()) ? "BEARISH"
+                : List.of("PROBE", "ACCUMULATE", "RIDE").contains(plan.state().phase()) ? "BULLISH" : "NEUTRAL";
+        boolean same = thesis != null && !validation.invalidated()
+                && Math.abs(plan.target() - thesis.getTargetPositionPct().doubleValue()) < .5;
+        if (same) {
+            var keep = keepDecision(thesis, "本地持续执行：" + plan.reasonCode());
+            return "HIGH".equals(plan.urgency()) ? new ModelAiDecisionService.Decision("KEEP", keep.targetPositionPct(),
+                    plan.confidence(), "HIGH", keep.marketRegime(), keep.direction(), keep.timeHorizon(),
+                    keep.reasonCodes(), keep.invalidConditions(), keep.reviewAfterRounds(), keep.expireAfterRounds(), keep.reason()) : keep;
+        }
+        String type = thesis == null ? "CREATE_THESIS" : validation.invalidated()
+                || !direction.equals(thesis.getDirection()) ? "REPLACE_THESIS" : "ADJUST";
+        List<AiInvalidCondition> conditions =
+                "BULLISH".equals(direction) ? List.of(new AiInvalidCondition(
+                        "PRICE_BELOW", BigDecimal.valueOf(plan.state().stopPrice()), null, null, null, null, null)) : List.of();
+        return new ModelAiDecisionService.Decision(type, plan.target(), plan.confidence(), plan.urgency(),
+                snapshot.marketRegime(), direction, "MEDIUM", List.of("LOCAL_STRATEGY", plan.reasonCode()),
+                conditions, 8, 24, plan.reasonCode());
+    }
+
+    private record AiPublicInputs(int reportRound, long researchId, double fairValue, int valuationRound, double buyConcentration, double sellConcentration,
+                                  String sharedJson, String costsJson) {}
+
     private String aiEvidencePacket(AiEvidenceDetector.EvidenceResult evidence, Long sessionId, Long participantId) {
         GuessStockResearchAction latest = researchActionMapper.selectOne(
                 new LambdaQueryWrapper<GuessStockResearchAction>()
@@ -1508,12 +1694,6 @@ public class GuessStockSessionService {
         packet.put("marketEvidence", evidence.evidences());
         if (latest != null) packet.put("lastResearch", readResearchResponse(latest.getResultJson()));
         return write(packet);
-    }
-
-    private static boolean canKeepWithoutModel(AiInvestmentThesis thesis,
-                                                AiThesisConditionEvaluator.ValidationResult validation,
-                                                AiEvidenceDetector.EvidenceResult evidence) {
-        return thesis != null && !validation.invalidated() && !evidence.materialChange();
     }
 
     private ModelAiDecisionService.Decision requestValidatedModelDecision(
@@ -1527,38 +1707,9 @@ public class GuessStockSessionService {
             AiEvidenceDetector.EvidenceResult evidence,
             int roundCount,
             int aiPlayerCount) {
-        if (!"FAST".equals(modelRoute)) {
-            return validateModelDecision(invokeModel(task, credential, context, modelRoute, roundCount, aiPlayerCount), maxPositionPercent,
-                    previousThesis, validation, evidence);
-        }
-
-        ModelAiDecisionService.Decision fastDecision;
-        try {
-            fastDecision = validateModelDecision(invokeModel(task, credential, context, "FAST", roundCount, aiPlayerCount), maxPositionPercent,
-                    previousThesis, validation, evidence);
-        } catch (ModelAiDecisionService.ModelDecisionException fastFailure) {
-            switchTaskToStrong(task);
-            try {
-                return validateModelDecision(invokeModel(task, credential, context, "STRONG", roundCount, aiPlayerCount), maxPositionPercent,
-                        previousThesis, validation, evidence);
-            } catch (ModelAiDecisionService.ModelDecisionException strongFailure) {
-                throw new ModelAiDecisionService.ModelDecisionException(
-                        "快速模型和强模型均未生成有效决策：" + strongFailure.getMessage());
-            }
-        }
-        if (fastDecision.confidence() >= .55) return fastDecision;
-
-        switchTaskToStrong(task);
-        try {
-            return validateModelDecision(invokeModel(task, credential, context, "STRONG", roundCount, aiPlayerCount), maxPositionPercent,
-                    previousThesis, validation, evidence);
-        } catch (ModelAiDecisionService.ModelDecisionException ignored) {
-            task.setModelRoute("FAST");
-            if (task.getDecisionCacheKey() != null) {
-                task.setDecisionCacheKey(task.getDecisionCacheKey().replace(":STRONG", ":FAST"));
-            }
-            return fastDecision;
-        }
+        // FAST/STRONG are timeout routes, not different models. Repeating the same snapshot adds cost, not evidence.
+        return validateModelDecision(invokeModel(task, credential, context, modelRoute, roundCount, aiPlayerCount),
+                maxPositionPercent, previousThesis, validation, evidence);
     }
 
     private ModelAiDecisionService.Decision invokeModel(
@@ -1568,36 +1719,38 @@ public class GuessStockSessionService {
             String modelRoute,
             int roundCount,
             int aiPlayerCount) {
-        ensureAiModelBudget(task.getSessionId(), roundCount, aiPlayerCount);
+        int priorCalls = aiTaskMapper.selectList(new LambdaQueryWrapper<GuessStockAiTask>()
+                .eq(GuessStockAiTask::getSessionId, task.getSessionId())
+                .eq(GuessStockAiTask::getParticipantId, task.getParticipantId())
+                .gt(GuessStockAiTask::getAttemptCount, 0)).stream()
+                .mapToInt(value -> value.getAttemptCount() == null ? 0 : value.getAttemptCount()).sum();
+        int pacedLimit = Math.min(Math.max(1, aiModelSettings.getMaxCallsPerAi()),
+                1 + task.getRoundNo() / Math.max(1, aiModelSettings.reviewInterval() * 2 / 3));
+        if (priorCalls >= pacedLimit) {
+            throw new ModelAiDecisionService.ModelDecisionException("本AI本阶段复核预算已使用，继续执行本地计划");
+        }
+        AiModelBudgetService.Reservation reservation = aiModelBudgetService.reserve(task.getSessionId(),
+                roundCount, aiPlayerCount, AiModelCostPolicy.rates(credential.baseUrl(), credential.model(), aiModelSettings),
+                aiModelGateway.inputTokenUpperBound(credential, context, modelRoute));
         try {
             return aiModelGateway.decide(credential, context, modelRoute);
         } finally {
             ModelAiDecisionService.InvocationTelemetry telemetry = aiModelGateway.consumeLastTelemetry();
+            BigDecimal charged = aiModelBudgetService.settle(reservation, telemetry);
+            task.setEstimatedCostYuan((task.getEstimatedCostYuan() == null ? ZERO : task.getEstimatedCostYuan()).add(charged));
             if (telemetry != null) {
                 task.setLatencyMs((task.getLatencyMs() == null ? 0 : task.getLatencyMs()) + telemetry.latencyMs());
                 task.setPromptTokens((task.getPromptTokens() == null ? 0 : task.getPromptTokens()) + telemetry.promptTokens());
                 task.setCompletionTokens((task.getCompletionTokens() == null ? 0 : task.getCompletionTokens())
                         + telemetry.completionTokens());
+                task.setPromptCacheHitTokens((task.getPromptCacheHitTokens() == null ? 0 : task.getPromptCacheHitTokens())
+                        + telemetry.promptCacheHitTokens());
+                task.setPromptCacheMissTokens((task.getPromptCacheMissTokens() == null ? 0 : task.getPromptCacheMissTokens())
+                        + telemetry.promptCacheMissTokens());
                 task.setHttpStatus(telemetry.httpStatus() == 0 ? task.getHttpStatus() : telemetry.httpStatus());
                 task.setAttemptCount((task.getAttemptCount() == null ? 0 : task.getAttemptCount())
                         + telemetry.attemptCount());
             }
-        }
-    }
-
-    private void ensureAiModelBudget(Long sessionId, int roundCount, int aiPlayerCount) {
-        List<GuessStockAiTask> tasks = aiTaskMapper.selectList(new LambdaQueryWrapper<GuessStockAiTask>()
-                .eq(GuessStockAiTask::getSessionId, sessionId));
-        int attempts = tasks.stream().map(GuessStockAiTask::getAttemptCount).filter(Objects::nonNull)
-                .mapToInt(Integer::intValue).sum();
-        long tokens = tasks.stream().mapToLong(item -> (long) (item.getPromptTokens() == null ? 0 : item.getPromptTokens())
-                + (item.getCompletionTokens() == null ? 0 : item.getCompletionTokens())).sum();
-        long failures = tasks.stream().filter(item -> item.getFallbackReason() != null && !item.getFallbackReason().isBlank()).count();
-        int maxAttempts = Math.max(16, roundCount * Math.max(1, aiPlayerCount) * 3);
-        long maxTokens = Math.max(40_000L, maxAttempts * 3_000L);
-        int maxFailures = Math.max(4, roundCount * Math.max(1, aiPlayerCount) / 3);
-        if (attempts >= maxAttempts || tokens >= maxTokens || failures >= maxFailures) {
-            throw new ModelAiDecisionService.ModelDecisionException("本局 AI 模型预算已用尽，改用连续观点或本地策略");
         }
     }
 
@@ -1611,18 +1764,12 @@ public class GuessStockSessionService {
         return aiDecisionValidator.validate(clamped, previousThesis, validation, evidence);
     }
 
-    private static void switchTaskToStrong(GuessStockAiTask task) {
-        task.setModelRoute("STRONG");
-        if (task.getDecisionCacheKey() != null) {
-            task.setDecisionCacheKey(task.getDecisionCacheKey().replace(":FAST", ":STRONG"));
-        }
-    }
-
     private ModelAiDecisionService.Decision cachedAgentDecision(GuessStockAiTask task) {
         if (task.getDecisionCacheKey() == null) return null;
         GuessStockAiTask cached = aiTaskMapper.selectOne(new LambdaQueryWrapper<GuessStockAiTask>()
                 .eq(GuessStockAiTask::getDecisionCacheKey, task.getDecisionCacheKey())
-                .eq(GuessStockAiTask::getDecisionStatus, "EXECUTED")
+                .in(GuessStockAiTask::getDecisionStatus, "EXECUTED", "CANCELLED")
+                .in(GuessStockAiTask::getModelRoute, "FAST", "STRONG", "CACHE")
                 .isNotNull(GuessStockAiTask::getDecisionJson)
                 .ne(task.getId() != null, GuessStockAiTask::getId, task.getId())
                 .orderByDesc(GuessStockAiTask::getId).last("LIMIT 1"));
@@ -1641,6 +1788,8 @@ public class GuessStockSessionService {
         if (thesis == null) return "null";
         Map<String, Object> value = new LinkedHashMap<>();
         value.put("id", thesis.getThesisCode());
+        value.put("entryPrice", thesis.getCreatedPrice());
+        value.put("reasons", readJsonList(thesis.getReasonCodesJson()));
         value.put("version", thesis.getVersion());
         value.put("direction", thesis.getDirection());
         value.put("target", thesis.getTargetPositionPct());
@@ -1666,13 +1815,20 @@ public class GuessStockSessionService {
         GuessStockRound round = currentRound(session);
         List<GuessStockRound> history = roundMapper.selectList(new LambdaQueryWrapper<GuessStockRound>()
                 .eq(GuessStockRound::getSessionId, session.getId()).isNotNull(GuessStockRound::getClosePrice)
-                .orderByDesc(GuessStockRound::getRoundNo).last("LIMIT 20"));
+                .orderByDesc(GuessStockRound::getRoundNo).last("LIMIT 50"));
         Collections.reverse(history);
         GuessStockRound lastSettled = history.isEmpty() ? null : history.get(history.size() - 1);
         long buys = lastSettled == null || lastSettled.getOpeningBuyQuantity() == null
                 ? 0 : lastSettled.getOpeningBuyQuantity();
         long sells = lastSettled == null || lastSettled.getClosingSellQuantity() == null
                 ? 0 : lastSettled.getClosingSellQuantity();
+        if (CLOSING.equals(stage)) {
+            List<GuessStockTrade> openingTrades = tradeMapper.selectList(new LambdaQueryWrapper<GuessStockTrade>()
+                    .eq(GuessStockTrade::getSessionId, session.getId())
+                    .eq(GuessStockTrade::getRoundNo, session.getCurrentRound()));
+            buys = openingTrades.stream().filter(trade -> "BUY".equals(trade.getSide())).mapToLong(GuessStockTrade::getQuantity).sum();
+            sells = openingTrades.stream().filter(trade -> "SELL".equals(trade.getSide())).mapToLong(GuessStockTrade::getQuantity).sum();
+        }
         PublicEventDigest eventDigest = publicEventDigest(round, stage);
         return aiMarketSnapshotService.create(session.getCurrentRound(), config.roundCount(), stage,
                 referencePrice(round, stage), round.getPreviousClosePrice(), history, round, buys, sells,
@@ -1719,6 +1875,16 @@ public class GuessStockSessionService {
                 decision.researchAction());
     }
 
+    private ModelAiDecisionService.Decision executableTargetDecision(ModelAiDecisionService.Decision decision,
+            AiInvestmentThesis thesis, double target) {
+        boolean wasKeep = "KEEP".equals(decision.decisionType());
+        return new ModelAiDecisionService.Decision(wasKeep ? "ADJUST" : decision.decisionType(),
+                Math.max(0, target), decision.confidence(), decision.urgency(), decision.marketRegime(),
+                wasKeep ? thesis.getDirection() : decision.direction(), decision.timeHorizon(), decision.reasonCodes(),
+                wasKeep ? aiThesisService.conditions(thesis) : decision.invalidConditions(),
+                decision.reviewAfterRounds(), decision.expireAfterRounds(), decision.reason(), decision.researchAction());
+    }
+
     private List<GuessStockTrade> tradesForRound(Long sessionId, Long participantId, int roundNo) {
         return tradeMapper.selectList(new LambdaQueryWrapper<GuessStockTrade>()
                 .eq(GuessStockTrade::getSessionId, sessionId).eq(GuessStockTrade::getParticipantId, participantId)
@@ -1741,11 +1907,14 @@ public class GuessStockSessionService {
         return GuessStockRules.money(cash.add(previousClose.multiply(BigDecimal.valueOf(Math.max(0, shares)))));
     }
 
-    private static double estimatedImpactPercent(long maxOrderQuantity, GuessStockConfig config, int participantCount) {
+    static double estimatedImpactPercent(long maxOrderQuantity, BigDecimal executionNotional, BigDecimal price,
+                                         BigDecimal impactBudget, GuessStockConfig config, int participantCount) {
         double denominator = config.marketLiquidityShares().doubleValue() * Math.max(1, participantCount);
-        if (denominator <= 0) return 0;
-        return Math.min(config.maxOrderImpactPercent().doubleValue(),
-                maxOrderQuantity / denominator * config.maxOrderImpactPercent().doubleValue());
+        if (denominator <= 0 || price.signum() <= 0) return 0;
+        long executableShares = Math.max(0, Math.min(maxOrderQuantity,
+                executionNotional.max(ZERO).divide(price, 0, RoundingMode.FLOOR).longValue()));
+        return Math.max(0, Math.min(impactBudget.doubleValue(), Math.min(config.maxOrderImpactPercent().doubleValue(),
+                executableShares / denominator * config.maxOrderImpactPercent().doubleValue())));
     }
 
     private Integer lastBuyRound(Long sessionId, Long participantId) {
@@ -1776,7 +1945,7 @@ public class GuessStockSessionService {
                                  ModelAiDecisionService.Decision decision,
                                  AiEvidenceDetector.EvidenceResult evidence,
                                  AiThesisConditionEvaluator.ValidationResult validation,
-                                 AiTargetPositionExecutor.ExecutionPlan plan, BigDecimal totalAsset) {
+                                  AiTargetPositionExecutor.ExecutionPlan plan) {
         AiInvestmentDecision audit = new AiInvestmentDecision();
         audit.setSessionId(session.getId());
         audit.setParticipantId(ai.getId());
@@ -1789,11 +1958,6 @@ public class GuessStockSessionService {
         audit.setRequestedTargetPositionPct(BigDecimal.valueOf(plan.requestedTargetPositionPct())
                 .setScale(4, RoundingMode.HALF_UP));
         audit.setStepTargetPositionPct(BigDecimal.valueOf(plan.targetPositionPct()).setScale(4, RoundingMode.HALF_UP));
-        double executedDeltaPct = totalAsset.signum() <= 0 ? 0 : plan.estimatedValue()
-                .divide(totalAsset, 10, RoundingMode.HALF_UP).multiply(new BigDecimal("100")).doubleValue();
-        if ("SELL".equals(plan.direction())) executedDeltaPct = -executedDeltaPct;
-        audit.setResultingPositionPct(BigDecimal.valueOf(clamp(currentPosition + executedDeltaPct, 0, 300))
-                .setScale(4, RoundingMode.HALF_UP));
         audit.setCurrentPositionPct(BigDecimal.valueOf(currentPosition).setScale(4, RoundingMode.HALF_UP));
         audit.setConfidence(BigDecimal.valueOf(decision.confidence()).setScale(4, RoundingMode.HALF_UP));
         audit.setUrgency(decision.urgency());
@@ -1801,11 +1965,63 @@ public class GuessStockSessionService {
         audit.setNewEvidenceJson(write(evidence.evidences()));
         audit.setTriggeredConditionsJson(write(validation.triggeredConditions()));
         audit.setReasonCodesJson(write(decision.reasonCodes()));
-        audit.setExecutedDirection(plan.direction());
-        audit.setExecutedShares(plan.shares());
-        audit.setExecutedValue(GuessStockRules.money(plan.estimatedValue()));
+        audit.setPlannedDirection(plan.direction());
+        audit.setPlannedShares(plan.shares());
+        audit.setPlannedValue(GuessStockRules.money(plan.estimatedValue()));
+        GuessStockOrder order = "HOLD".equals(plan.direction()) ? null : orderMapper.selectOne(
+                new LambdaQueryWrapper<GuessStockOrder>().eq(GuessStockOrder::getSessionId, session.getId())
+                        .eq(GuessStockOrder::getClientRequestId, task.getIdempotencyKey()).last("LIMIT 1"));
+        if (order != null) {
+            for (AiInvestmentDecision old : aiDecisionMapper.selectList(new LambdaQueryWrapper<AiInvestmentDecision>()
+                    .eq(AiInvestmentDecision::getOrderId, order.getId()).eq(AiInvestmentDecision::getExecutionStatus, "PLANNED"))) {
+                old.setExecutionStatus("SUPERSEDED");
+                aiDecisionMapper.updateById(old);
+            }
+            audit.setOrderId(order.getId());
+        }
+        audit.setExecutionStatus(order == null ? "NO_TRADE" : "PLANNED");
+        audit.setExecutedDirection("HOLD");
+        audit.setExecutedShares(0L);
+        audit.setExecutedValue(ZERO);
+        audit.setResultingPositionPct(BigDecimal.valueOf(currentPosition).setScale(4, RoundingMode.HALF_UP));
         audit.setExecutionReason(plan.reason());
         aiDecisionMapper.insert(audit);
+    }
+
+    private void constrainAiAuctionOrder(GameSession session, GuessStockParticipant ai, GuessStockAiTask task,
+            AiTargetPositionExecutor.ExecutionPlan plan, AiStrategyPlanner.Plan strategy,
+            GuessStockConfig.AiPlayerConfig profile, BigDecimal roundStartAssets, BigDecimal usedTurnover,
+            BigDecimal assets) {
+        GuessStockOrder order = orderMapper.selectOne(new LambdaQueryWrapper<GuessStockOrder>()
+                .eq(GuessStockOrder::getSessionId, session.getId())
+                .eq(GuessStockOrder::getClientRequestId, task.getIdempotencyKey()).last("LIMIT 1"));
+        if (order == null) throw new IllegalStateException("AI auction order was not persisted");
+        order.setAllowedSide(plan.direction());
+        order.setExecutionMaxShares(plan.shares());
+        order.setExecutionMaxNotional(roundStartAssets.multiply(profile.maxRoundTurnoverPct())
+                .divide(new BigDecimal("100"), 4, RoundingMode.DOWN).subtract(usedTurnover).max(ZERO));
+        order.setExecutionMinNotional(strategy.risk() ? ZERO : assets.multiply(profile.minTradeAssetPct())
+                .divide(new BigDecimal("100"), 4, RoundingMode.DOWN));
+        order.setExecutionMinPrice("SELL".equals(plan.direction()) ? BigDecimal.valueOf(strategy.minSellPrice()) : null);
+        order.setExecutionMaxPrice("BUY".equals(plan.direction()) ? BigDecimal.valueOf(strategy.maxBuyPrice()) : null);
+        orderMapper.updateById(order);
+    }
+
+    private void reconcileAiExecution(GuessStockOrder order, GuessStockParticipant participant,
+            GuessStockPosition position, BigDecimal price, long filled, BigDecimal amount, String side) {
+        if (!"AI".equals(participant.getParticipantType())) return;
+        BigDecimal assets = participant.getCashBalance().add(price.multiply(BigDecimal.valueOf(position.getQuantity())))
+                .subtract(creditService.debt(order.getSessionId(), participant.getId()));
+        for (AiInvestmentDecision audit : aiDecisionMapper.selectList(new LambdaQueryWrapper<AiInvestmentDecision>()
+                .eq(AiInvestmentDecision::getOrderId, order.getId()).eq(AiInvestmentDecision::getExecutionStatus, "PLANNED"))) {
+            audit.setExecutedDirection(filled > 0 ? side : "HOLD");
+            audit.setExecutedShares(filled);
+            audit.setExecutedValue(amount);
+            audit.setExecutionStatus(order.getStatus());
+            audit.setResultingPositionPct(BigDecimal.valueOf(positionPercent(price, position.getQuantity(), assets))
+                    .setScale(4, RoundingMode.HALF_UP));
+            aiDecisionMapper.updateById(audit);
+        }
     }
 
     private void storeAgentDecision(GuessStockAiTask task, ModelAiDecisionService.Decision decision) {
@@ -2037,7 +2253,7 @@ public class GuessStockSessionService {
         for (GuessStockParticipant participant : participants(session.getId())) {
             if (!"AI".equals(participant.getParticipantType())) continue;
             AiInvestmentThesis thesis = aiThesisService.findActive(session.getId(), participant.getId());
-            if (thesis != null && thesis.getTargetPositionPct().compareTo(new BigDecimal("100")) <= 0) {
+            if (thesis == null || thesis.getTargetPositionPct().compareTo(new BigDecimal("100")) <= 0) {
                 creditService.autoRepayAll(session.getId(), session.getCurrentRound(),
                         participantMapper.selectByIdForUpdate(participant.getId()));
             }
@@ -2131,7 +2347,7 @@ public class GuessStockSessionService {
         for (GuessStockParticipant participant : participants(session.getId())) {
             if (!"AI".equals(participant.getParticipantType())) continue;
             AiInvestmentThesis thesis = aiThesisService.findActive(session.getId(), participant.getId());
-            if (thesis != null && thesis.getTargetPositionPct().compareTo(new BigDecimal("100")) <= 0) {
+            if (thesis == null || thesis.getTargetPositionPct().compareTo(new BigDecimal("100")) <= 0) {
                 creditService.autoRepayAll(session.getId(), session.getCurrentRound(),
                         participantMapper.selectByIdForUpdate(participant.getId()));
             }
@@ -2171,7 +2387,9 @@ public class GuessStockSessionService {
             GuessStockPosition position = positionMapper.selectByParticipantForUpdate(order.getParticipantId());
             targets.add(new AuctionClearingEngine.TargetOrder(order.getParticipantId().toString(),
                     participant.getCashBalance(), position.getQuantity(), order.getTargetExposurePercent().doubleValue(),
-                    creditService.debt(session.getId(), participant.getId())));
+                    creditService.debt(session.getId(), participant.getId()), order.getAllowedSide(),
+                    order.getExecutionMaxShares(), order.getExecutionMaxNotional(), order.getExecutionMinNotional(),
+                    order.getExecutionMinPrice(), order.getExecutionMaxPrice()));
         }
         return targets;
     }
@@ -2437,6 +2655,7 @@ public class GuessStockSessionService {
         trade.setSource(participant.getParticipantType());
         trade.setTradedAt(LocalDateTime.now());
         tradeMapper.insert(trade);
+        reconcileAiExecution(order, participant, position, executionPrice, order.getQuantity(), amount, order.getSide());
     }
 
     private void fillAuctionOrder(GuessStockOrder order, AuctionClearingEngine.Fill fill) {
@@ -2448,7 +2667,10 @@ public class GuessStockSessionService {
                 : fill.filledShares() < fill.requestedShares() ? "PARTIALLY_FILLED" : "FILLED");
         order.setReservedAmount(ZERO);
         orderMapper.updateById(order);
-        if (fill.filledShares() == 0) return;
+        if (fill.filledShares() == 0) {
+            reconcileAiExecution(order, participant, position, fill.executionPrice(), 0, ZERO, fill.side());
+            return;
+        }
         if ("BUY".equals(fill.side())) {
             long oldQuantity = position.getQuantity();
             BigDecimal oldCost = position.getAverageCost().multiply(BigDecimal.valueOf(oldQuantity));
@@ -2483,6 +2705,7 @@ public class GuessStockSessionService {
         trade.setSource(participant.getParticipantType());
         trade.setTradedAt(LocalDateTime.now());
         tradeMapper.insert(trade);
+        reconcileAiExecution(order, participant, position, fill.executionPrice(), fill.filledShares(), fill.grossAmount(), fill.side());
     }
 
     private void settle(GameSession session, GuessStockConfig config, BigDecimal finalPrice, LocalDateTime now) {
@@ -2717,6 +2940,10 @@ public class GuessStockSessionService {
         positionMapper.updateById(position);
         order.setStatus(status);
         orderMapper.updateById(order);
+        if ("AI".equals(participant.getParticipantType())) {
+            BigDecimal mark = referencePrice(currentRound(sessionMapper.selectById(order.getSessionId())), order.getStage());
+            reconcileAiExecution(order, participant, position, mark, 0, ZERO, order.getSide());
+        }
     }
 
     private void releaseReservation(GuessStockOrder order, GuessStockParticipant participant,
@@ -3128,6 +3355,7 @@ public class GuessStockSessionService {
                 ? aiReviewResponses(session, participants, positions, rounds, config) : List.of();
         EntertainmentDtos.CreditStatusResponse credit = creditResponse(creditService.status(session.getId(), player,
                 positions.get(player.getId()), markPrice, config), session.getCurrentRound());
+        AiModelBudgetService.Usage aiUsage = aiModelBudgetService.usage(session.getId());
         return new EntertainmentDtos.SessionResponse(session.getId(), session.getGameId(), session.getGameVersionId(),
                 version.getVersionNo(), session.getStatus(), session.getCurrentRound(), session.getPhase(), session.getStartedAt(), LocalDateTime.now(),
                 session.getPhaseEndsAt(), session.getPhaseRemainingMs(), playbackSpeed(session), autoAdvance(session),
@@ -3137,7 +3365,10 @@ public class GuessStockSessionService {
                 trades.stream().map(trade -> tradeResponse(trade, names)).toList(),
                 playerTrades.stream().map(trade -> tradeResponse(trade, names)).toList(),
                 decimal(result.get("finalAsset")), decimal(result.get("profitAmount")), decimal(result.get("returnPercent")),
-                integer(result.get("inSessionRank")), leaderboardRank, roomResponse, aiDecisions, credit, aiReviews);
+                integer(result.get("inSessionRank")), leaderboardRank, roomResponse, aiDecisions, credit, aiReviews,
+                new EntertainmentDtos.AiUsageResponse(aiUsage.estimatedCostYuan(), aiUsage.reservedYuan(),
+                        aiUsage.budgetYuan(), aiUsage.requestCount(), aiUsage.promptTokens(),
+                        aiUsage.promptCacheHitTokens(), aiUsage.completionTokens()));
     }
 
     private List<EntertainmentDtos.AiReviewResponse> aiReviewResponses(
@@ -3175,10 +3406,11 @@ public class GuessStockSessionService {
             }
             List<GuessStockAiTask> aiTasks = tasks.stream()
                     .filter(value -> ai.getId().equals(value.getParticipantId())).toList();
-            int modelCalls = (int) aiTasks.stream().filter(value -> value.getProvider() != null
-                    && !Integer.valueOf(1).equals(value.getCacheHit())).count();
+            int modelCalls = aiTasks.stream().mapToInt(value -> value.getAttemptCount() == null ? 0 : value.getAttemptCount()).sum();
             int fallbackCount = (int) aiTasks.stream().filter(value -> value.getFallbackReason() != null
                     && !value.getFallbackReason().isBlank()).count();
+            boolean historicalCostUnknown = aiTasks.stream().anyMatch(value -> value.getProvider() != null
+                    && value.getEstimatedCostYuan() == null && !Integer.valueOf(1).equals(value.getCacheHit()));
             GuessStockCreditService.CreditStatus credit = creditService.status(session.getId(), ai,
                     positions.get(ai.getId()), finalMark, config);
             BigDecimal initial = ai.getInitialCash() == null ? config.initialCash() : ai.getInitialCash();
@@ -3187,7 +3419,13 @@ public class GuessStockSessionService {
                     returnPercent(finalAsset.subtract(initial), initial), ai.getFinalRank(), best, mistake,
                     (int) aiDecisions.stream().filter(value -> "REPLACE_THESIS".equals(value.getDecisionType())).count(),
                     reversals, modelCalls, fallbackCount, credit.totalInterestCharged(),
-                    credit.totalForcedLiquidationShares()));
+                    credit.totalForcedLiquidationShares(),
+                    aiTasks.stream().mapToLong(value -> value.getPromptTokens() == null ? 0 : value.getPromptTokens()).sum(),
+                    aiTasks.stream().mapToLong(value -> value.getPromptCacheHitTokens() == null ? 0 : value.getPromptCacheHitTokens()).sum(),
+                    aiTasks.stream().mapToLong(value -> value.getCompletionTokens() == null ? 0 : value.getCompletionTokens()).sum(),
+                    historicalCostUnknown ? null : aiTasks.stream()
+                            .map(value -> value.getEstimatedCostYuan() == null ? ZERO : value.getEstimatedCostYuan())
+                            .reduce(ZERO, BigDecimal::add)));
         }
         return result.stream().sorted(Comparator.comparing(EntertainmentDtos.AiReviewResponse::finalRank,
                 Comparator.nullsLast(Comparator.naturalOrder()))).toList();

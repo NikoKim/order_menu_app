@@ -4,6 +4,7 @@ import com.baomidou.mybatisplus.annotation.IdType;
 import com.baomidou.mybatisplus.annotation.TableId;
 import com.baomidou.mybatisplus.annotation.TableName;
 import java.time.LocalDateTime;
+import java.math.BigDecimal;
 import lombok.Data;
 
 @Data
@@ -28,6 +29,10 @@ public class GuessStockAiTask {
     private Long latencyMs;
     private Integer promptTokens;
     private Integer completionTokens;
+    private Integer promptCacheHitTokens;
+    private Integer promptCacheMissTokens;
+    private BigDecimal estimatedCostYuan;
+    private String strategyStateJson;
     private Integer cacheHit;
     private String fallbackReason;
     private Integer httpStatus;

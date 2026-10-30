@@ -99,14 +99,30 @@ public final class AuctionClearingEngine {
         BigDecimal buyUnitCost = price.multiply(BigDecimal.ONE.add(feePct.divide(HUNDRED, 10, RoundingMode.HALF_UP)));
         long requested = delta >= 0 ? Math.min(delta, order.cash().divide(buyUnitCost, 0, RoundingMode.FLOOR).longValue())
                 : Math.min(-delta, order.currentShares());
-        return new Intent(order.participantKey(), delta >= 0 ? "BUY" : "SELL", Math.max(0, requested));
+        String side = delta >= 0 ? "BUY" : "SELL";
+        if ((order.allowedSide() != null && !order.allowedSide().equals(side))
+                || (order.minPrice() != null && price.compareTo(order.minPrice()) < 0)
+                || (order.maxPrice() != null && price.compareTo(order.maxPrice()) > 0)) requested = 0;
+        if (order.maxShares() != null) requested = Math.min(requested, Math.max(0, order.maxShares()));
+        if (order.maxNotional() != null) requested = Math.min(requested,
+                order.maxNotional().max(BigDecimal.ZERO).divide(price, 0, RoundingMode.FLOOR).longValue());
+        if (order.minNotional() != null && price.multiply(BigDecimal.valueOf(Math.max(0, requested)))
+                .compareTo(order.minNotional()) < 0) requested = 0;
+        return new Intent(order.participantKey(), side, Math.max(0, requested));
     }
 
     private static double clamp(double value, double min, double max) { return Math.max(min, Math.min(max, value)); }
     public record TargetOrder(String participantKey, BigDecimal cash, long currentShares,
-                              double targetExposurePct, BigDecimal debt) {
+                              double targetExposurePct, BigDecimal debt, String allowedSide, Long maxShares,
+                              BigDecimal maxNotional, BigDecimal minNotional,
+                              BigDecimal minPrice, BigDecimal maxPrice) {
+        public TargetOrder(String participantKey, BigDecimal cash, long currentShares,
+                           double targetExposurePct, BigDecimal debt) {
+            this(participantKey, cash, currentShares, targetExposurePct, debt, null, null, null, null, null, null);
+        }
         public TargetOrder(String participantKey, BigDecimal cash, long currentShares, double targetExposurePct) {
-            this(participantKey, cash, currentShares, targetExposurePct, BigDecimal.ZERO);
+            this(participantKey, cash, currentShares, targetExposurePct, BigDecimal.ZERO,
+                    null, null, null, null, null, null);
         }
     }
     private record Intent(String participantKey, String side, long requestedShares) {}

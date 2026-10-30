@@ -122,7 +122,7 @@
 
     <!-- Action bar -->
     <div class="mc-actions">
-      <button class="mc-act-btn" :class="{ active: moment.likedByMe }" @click.stop="$emit('like', moment)">
+      <button class="mc-act-btn" :class="{ active: moment.likedByMe }" :disabled="moment.likePending" :aria-busy="Boolean(moment.likePending)" :aria-label="moment.likedByMe ? '取消点赞' : '点赞'" @click.stop="$emit('like', moment)">
         <Heart class="mc-act-icon" :size="19" :fill="moment.likedByMe ? 'currentColor' : 'none'" />
         <Transition name="count" mode="out-in"><span :key="moment.likeCount || 0" class="mc-act-num">{{ moment.likeCount || 0 }}</span></Transition>
       </button>

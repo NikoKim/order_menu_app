@@ -1,5 +1,5 @@
 <template>
-  <div v-if="session" class="play-page">
+  <div v-if="session" class="play-page" :class="{ 'tutorial-play': isTutorial, 'confirming-restart': showRestart }" :style="isTutorial ? { '--tutorial-guide-height': `${tutorialGuideHeight}px` } : {}">
     <header class="play-header">
       <button class="icon-btn" title="返回游戏" @click="leaveToDetail"><ArrowLeft :size="19" /></button>
       <div class="symbol"><span>{{ session.game.stockCode }}</span><strong>{{ session.game.title }}</strong></div>
@@ -10,34 +10,34 @@
         <div class="speed-selector" role="group" aria-label="每个阶段的游戏速度"><button v-for="speed in speedOptions" :key="speed" type="button" :disabled="submitting" :class="{ active: autoAdvanceSpeed === speed }" @click="setAutoAdvanceSpeed(speed)">x{{ speed }}</button></div>
       </div>
       <button class="icon-btn" title="规则" @click="showRules = true"><BookOpen :size="18" /></button>
-      <button v-if="session.credit?.enabled" class="icon-btn credit-trigger" :data-risk="session.credit.riskState" :disabled="session.phase === 'ROUND_START'" title="银行融资" @click="openCredit"><Landmark :size="18" /></button>
-      <button v-if="session.config.fundamentalEnabled" class="icon-btn" title="市场研究" @click="showResearch = true"><FlaskConical :size="18" /></button>
-      <button v-if="session.status === 'ACTIVE'" class="icon-btn" title="重新开始" @click="showRestart = true"><RotateCcw :size="18" /></button>
+      <button v-if="session.credit?.enabled" class="icon-btn credit-trigger" data-tutorial="bank-trigger" :data-risk="session.credit.riskState" :disabled="session.phase === 'ROUND_START'" title="银行融资" @click="openCredit"><Landmark :size="18" /></button>
+      <button v-if="session.config.fundamentalEnabled" class="icon-btn" data-tutorial="research-trigger" title="市场研究" :disabled="isTutorial && (session.currentRound !== 1 || session.phase !== 'OPENING_TRADING')" @click="showResearch = true"><FlaskConical :size="18" /></button>
+      <button v-if="session.status === 'ACTIVE'" class="icon-btn" title="重新开始" @click="requestTutorialRestart"><RotateCcw :size="18" /></button>
       <button v-if="session.status === 'ACTIVE' && session.room?.host" class="icon-btn room-close-trigger" title="关闭多人房间" @click="showCloseRoom = true"><DoorClosed :size="18" /></button>
-      <button v-if="session.status === 'ACTIVE' && !session.room" class="icon-btn desktop-only" title="暂停" @click="pause"><Pause :size="18" /></button>
+      <button v-if="session.status === 'ACTIVE' && !session.room && !isTutorial" class="icon-btn desktop-only" title="暂停" @click="pause"><Pause :size="18" /></button>
     </header>
 
     <Transition name="stage"><div v-if="stageNotice" class="stage-notice"><Zap :size="18" /><div><strong>{{ stageNotice }}</strong><span>{{ stageNoticeDetail }}</span></div></div></Transition>
-    <Transition name="curtain"><div v-if="session.phase === 'ROUND_START'" class="round-curtain"><div><strong>第 {{ session.currentRound }} 回合</strong><small>新一轮市场即将开始</small></div></div></Transition>
+    <Transition name="curtain"><div v-if="session.phase === 'ROUND_START' && !isTutorial" class="round-curtain"><div><strong>第 {{ session.currentRound }} 回合</strong><small>新一轮市场即将开始</small></div></div></Transition>
 
-    <section class="market-strip">
-      <div class="main-price"><span>{{ priceLabel }}</span><strong :class="priceTone">{{ price(currentPrice) }}</strong><small :class="priceTone">{{ currentChangeLabel }}</small></div>
+    <section class="market-strip" data-tutorial="overview">
+      <div class="main-price" data-tutorial="market-price"><span>{{ priceLabel }}</span><strong :class="priceTone">{{ price(currentPrice) }}</strong><small :class="priceTone">{{ currentChangeLabel }}</small></div>
       <div><span>当前收益率</span><strong :class="tone(currentReturn)">{{ signed(currentReturn) }}%</strong></div>
-      <div><span>现金</span><strong :class="tone(player.cash)">{{ money(player.cash) }}</strong></div>
-      <div><span>持仓</span><strong>{{ player.quantity }} 股</strong></div>
-      <div><span>总资产</span><strong>{{ money(player.asset) }}</strong></div>
+      <div data-tutorial="market-cash"><span>现金</span><strong :class="tone(player.cash)">{{ money(player.cash) }}</strong></div>
+      <div data-tutorial="market-position"><span>持仓</span><strong>{{ player.quantity }} 股</strong></div>
+      <div data-tutorial="market-asset"><span>总资产</span><strong>{{ money(player.asset) }}</strong></div>
     </section>
 
     <section v-if="session.credit?.enabled && Number(session.credit.effectiveDebt) > 0" :class="['credit-strip', `risk-${String(session.credit.riskState).toLowerCase()}`]" @click="openCredit">
       <span>借贷银行 <strong>{{ indebtedBankCount }} 家</strong></span><span>总有效债务 <strong>{{ money(session.credit.effectiveDebt) }}</strong></span><span>股票敞口 <strong>{{ fixed(session.credit.exposurePercent, 1) }}%</strong></span><span>LTV <strong>{{ fixed(session.credit.ltvPercent, 1) }}%</strong></span><b>{{ creditRiskLabel(session.credit.riskState) }}</b>
     </section>
 
-    <section v-if="session.status === 'COMPLETED'" class="final-result">
+    <section v-if="session.status === 'COMPLETED'" class="final-result" data-tutorial="summary">
       <div><span>最终净资产</span><strong>{{ money(session.finalAsset) }}</strong></div>
       <div><span>最终收益率</span><strong :class="tone(session.returnPercent)">{{ signed(session.returnPercent) }}%</strong></div>
       <div><span>净收益</span><strong :class="tone(session.profitAmount)">{{ signedMoney(session.profitAmount) }}</strong></div>
       <div><span>收益率排名</span><strong>{{ currentPlayerRank }} / {{ session.participants.length }}</strong></div>
-      <router-link class="primary-command" :to="`/customer/entertainment/games/${session.gameId}`"><Trophy :size="17" />查看排行榜</router-link>
+      <router-link class="primary-command" :to="isTutorial ? '/customer/entertainment' : `/customer/entertainment/games/${session.gameId}`"><Trophy :size="17" />{{ isTutorial ? '返回股票大厅' : '查看排行榜' }}</router-link>
     </section>
     <section v-if="challengeResult" class="challenge-result">
       <strong>今日挑战第 {{ challengeResult.rank }} 名</strong><span>研究 {{ challengeResult.accurateResearchCount }}/{{ challengeResult.researchAttemptCount }} · {{ fixed(challengeResult.researchAccuracyPercent, 0) }}%</span><span>回撤 {{ fixed(challengeResult.maxDrawdownPercent, 2) }}%</span><span v-if="challengeResult.lowDrawdownBadge">低回撤</span><span v-if="challengeResult.noLiquidationBadge">无强平</span><span v-if="challengeResult.noDebtCostBadge">零利息</span><router-link :to="`/customer/entertainment/challenges/${challengeResult.challengeId || challengeId}/leaderboard`">挑战榜</router-link>
@@ -46,20 +46,20 @@
       <div><span>累计贷款利息</span><strong class="sell">-{{ money(session.credit.totalInterestCharged) }}</strong></div><div><span>强制卖出</span><strong>{{ session.credit.totalForcedLiquidationShares || 0 }} 股</strong></div><div><span>剩余债务</span><strong :class="{ sell: Number(session.credit.effectiveDebt) > 0 }">{{ money(session.credit.effectiveDebt) }}</strong></div><div><span>最终净资产</span><strong>{{ money(session.finalAsset) }}</strong></div>
     </section>
     <section v-if="session.status === 'COMPLETED' && session.aiReviews?.length" class="ai-review">
-      <header><div><Bot :size="18" /><h2>AI 决策复盘</h2></div><span>以决策后一个可观察周期的方向收益评价</span></header>
+      <header><div><Bot :size="18" /><h2>AI 决策复盘</h2></div><span v-if="session.aiReviews.every(review => review.estimatedCostYuan != null)">模型费用合计估算 {{ Number(session.aiUsage?.estimatedCostYuan ?? session.aiReviews.reduce((total, review) => total + Number(review.estimatedCostYuan), 0)).toFixed(4) }} 元</span><span v-else>历史模型费用未统计</span></header>
       <div class="ai-review-table">
         <article v-for="review in session.aiReviews" :key="review.participantId">
           <div class="ai-review-name"><strong>{{ review.participantName }}</strong><small>#{{ review.finalRank }} · {{ signed(review.returnPercent) }}%</small></div>
           <div><span>最佳决策</span><strong v-if="review.bestDecision" class="positive">第 {{ review.bestDecision.roundNo }} 回合 {{ tradeDirection(review.bestDecision.direction) }} · {{ signed(review.bestDecision.outcomePercent) }}%</strong><strong v-else>暂无可评价成交</strong><small v-if="review.bestDecision">{{ review.bestDecision.shares }} 股 · {{ review.bestDecision.reason || '按目标仓位执行' }}</small></div>
           <div><span>最大错误</span><strong v-if="review.biggestMistake" class="negative">第 {{ review.biggestMistake.roundNo }} 回合 {{ tradeDirection(review.biggestMistake.direction) }} · {{ signed(review.biggestMistake.outcomePercent) }}%</strong><strong v-else>未出现负向决策</strong><small v-if="review.biggestMistake">{{ review.biggestMistake.shares }} 股 · {{ review.biggestMistake.reason || '方向与后续价格相反' }}</small></div>
-          <div class="ai-review-stats"><span>换观点 {{ review.thesisReplacementCount }}</span><span>反向交易 {{ review.reverseTradeCount }}</span><span>模型 {{ review.modelCallCount }}</span><span>降级 {{ review.fallbackCount }}</span><span>利息 {{ money(review.totalInterestCost) }}</span><span>强平 {{ review.forcedLiquidationShares }} 股</span></div>
+          <div class="ai-review-stats"><span>换观点 {{ review.thesisReplacementCount }}</span><span>反向交易 {{ review.reverseTradeCount }}</span><span>模型 {{ review.modelCallCount }}</span><span>降级 {{ review.fallbackCount }}</span><span>输入 {{ review.promptTokens || 0 }} Token</span><span>缓存 {{ review.promptTokens ? ((review.promptCacheHitTokens || 0) / review.promptTokens * 100).toFixed(0) : 0 }}%</span><span>输出 {{ review.completionTokens || 0 }} Token</span><span v-if="review.estimatedCostYuan != null">估算费用 {{ Number(review.estimatedCostYuan).toFixed(4) }} 元</span><span v-else>历史费用未统计</span><span>利息 {{ money(review.totalInterestCost) }}</span><span>强平 {{ review.forcedLiquidationShares }} 股</span></div>
         </article>
       </div>
     </section>
 
     <div class="play-grid">
       <main class="market-main">
-        <section class="chart-panel">
+        <section class="chart-panel" data-tutorial="chart">
           <header>
             <div><Activity :size="18" /><h2>价格走势</h2></div>
             <div class="chart-actions">
@@ -126,8 +126,8 @@
 
       <aside :class="['order-panel', isTargetAuction ? 'auction-mode' : isOpening ? 'buy-mode' : 'sell-mode', { locked: !canTrade }]">
         <header><div><component :is="isTargetAuction ? Scale : isOpening ? TrendingUp : TrendingDown" :size="21" /><span><small>{{ isOpening ? '开盘前' : '收盘前' }}</small><h2>{{ isTargetAuction ? '目标仓位竞价' : `当前操作：${isOpening ? '买入' : '卖出'}` }}</h2></span></div><strong>{{ canTrade ? (isTargetAuction ? 'SEALED 竞价' : isOpening ? 'BUY 买入' : 'SELL 卖出') : (tradingExpired ? '本阶段已截止' : '等待阶段') }}</strong></header>
-        <div class="stage-price"><span>{{ isOpening ? '价格基准' : '当前开盘价' }}</span><strong>{{ price(orderReferencePrice) }}</strong><small>{{ isOpening ? '实际按开盘价成交' : '实际按收盘价成交' }}</small></div>
-        <div class="order-account"><span>可用现金 <b :class="tone(player.cash)">{{ money(player.cash) }}</b></span><span>可卖持仓 <b>{{ player.quantity }} 股</b></span></div>
+        <div class="stage-price" data-tutorial="order-reference"><span>{{ isOpening ? '价格基准' : '当前开盘价' }}</span><strong>{{ price(orderReferencePrice) }}</strong><small>{{ isOpening ? '实际按开盘价成交' : '实际按收盘价成交' }}</small></div>
+        <div class="order-account" data-tutorial="order-account"><span>可用现金 <b :class="tone(player.cash)">{{ money(player.cash) }}</b></span><span>可卖持仓 <b>{{ player.quantity }} 股</b></span></div>
         <template v-if="isTargetAuction">
           <label class="quantity-field"><span>目标股票敞口 %</span><input v-model.number="targetExposure" type="number" min="0" :max="targetExposureMax" step="1" :disabled="!canTrade" /></label>
           <input v-model.number="targetExposure" class="quantity-slider" type="range" min="0" :max="targetExposureMax" step="1" :disabled="!canTrade" />
@@ -140,37 +140,54 @@
         <template v-else>
         <label class="quantity-field"><span>{{ isOpening ? '买入' : '卖出' }}股数</span><input v-model.number="quantity" type="number" min="0" :max="orderMax" step="1" :disabled="!canTrade" @input="onQuantityInput" @blur="scheduleOrderCommit(0)" /></label>
         <input v-model.number="quantity" class="quantity-slider" :class="{ sell: !isOpening }" type="range" min="0" :max="Math.max(1, orderMax)" step="1" :disabled="!canTrade || orderMax === 0" @input="onQuantityInput" />
-        <div class="quick-row"><button v-for="ratio in [.25,.5,.75,1]" :key="ratio" :disabled="!canTrade || submitting" :class="{ active: !allIn && ratio === selectedRatio }" @click="selectRatio(ratio)">{{ ratio * 100 }}%</button><button :class="{ active: isOpening ? allIn : Number(quantity) === orderMax && orderMax > 0 }" :disabled="!canTrade || submitting || orderMax === 0" @click="selectAllIn">全部</button></div>
-        <div class="order-preview">
+        <div class="quick-row" data-tutorial="order-ratios"><button v-for="ratio in [.25,.5,.75,1]" :key="ratio" :data-tutorial="ratio === .25 ? 'order-quarter' : ratio === .5 ? 'order-half' : null" :disabled="!canTrade || submitting" :class="{ active: !allIn && ratio === selectedRatio }" @click="selectRatio(ratio)">{{ ratio * 100 }}%</button><button data-tutorial="order-all" :class="{ active: isOpening ? allIn : Number(quantity) === orderMax && orderMax > 0 }" :disabled="!canTrade || submitting || orderMax === 0" @click="selectAllIn">全部</button></div>
+        <div class="order-preview" data-tutorial="order-preview">
           <span>{{ allIn ? '成交口径' : '参考金额' }} <strong>{{ allIn ? '按实际开盘价全仓' : money(orderReferencePrice * quantity) }}</strong></span>
           <span v-if="isOpening">预计现金 <strong :class="tone(estimatedCash)">{{ allIn ? '尽可能接近 ¥0.00' : money(estimatedCash) }}</strong></span>
           <span v-else>预计回笼 <strong>{{ money(orderReferencePrice * quantity) }}</strong></span>
         </div>
-        <button v-if="session.currentOrder" class="cancel-order" :disabled="submitting || !canTrade" @click="cancelOrder"><X :size="15" />撤销订单</button>
-        <div v-if="session.currentOrder" class="pending-order"><Clock3 :size="15" /><span>已保存 {{ session.currentOrder.allIn ? '全部资金买入' : `${session.currentOrder.side === 'SELL' ? '卖出' : '买入'} ${session.currentOrder.quantity} 股` }}</span></div>
+        <button v-if="session.currentOrder" class="cancel-order" data-tutorial="order-cancel" :disabled="submitting || !canTrade" @click="cancelOrder"><X :size="15" />撤销订单</button>
+        <div v-if="session.currentOrder" class="pending-order" data-tutorial="pending-order"><Clock3 :size="15" /><span>已保存 {{ session.currentOrder.allIn ? '全部资金买入' : `${session.currentOrder.side === 'SELL' ? '卖出' : '买入'} ${session.currentOrder.quantity} 股` }}</span></div>
         </template>
 
         <section v-if="showReadyGate" class="ready-gate">
           <header><Flag :size="16" /><strong>{{ gateTitle }}</strong></header>
           <div class="ready-list"><span v-for="item in readiness" :key="item.key" :class="{ done: item.ready }"><CircleCheck :size="14" />{{ item.name }}</span></div>
-          <button class="primary-command" :disabled="myReady || submitting" @click="readyNext"><ChevronRight :size="18" />{{ myReady ? '已完成，等待其他参与者' : gateButton }}</button>
+          <button class="primary-command" data-tutorial="trade-ready" :disabled="myReady || submitting" @click="readyNext"><ChevronRight :size="18" />{{ myReady ? '已完成，等待其他参与者' : gateButton }}</button>
         </section>
       </aside>
     </div>
 
     <Transition name="modal"><div v-if="session.status === 'PAUSED' && !showRestart" class="overlay"><div class="dialog compact"><PauseCircle :size="34" /><h2>存档可以恢复</h2><p>游戏数据完整，恢复后会从第 {{ session.currentRound }} 回合的“{{ phaseName }}”继续，不会重新结算已经完成的阶段。</p><button class="primary-command" :disabled="submitting" @click="resume"><Play :size="17" />恢复游戏</button><button class="restart-save-command" :disabled="submitting" @click="showRestart = true"><RotateCcw :size="16" />重新开始本局</button><button class="text-command" @click="leaveToDetail">稍后再玩</button></div></div></Transition>
 
-    <Transition name="phase-modal"><div v-if="isEventAck" class="overlay"><div class="dialog event-dialog"><Newspaper :size="34" /><span>{{ stage === 'OPENING' ? '开盘前事件' : '收盘前事件' }}</span><h2>{{ currentRound.eventName }}</h2><p>{{ currentRound.eventDescription }}</p><small>计时已暂停，事件对价格的实际影响将在本阶段价格公布时说明。</small><div v-if="session.room" class="ack-count">{{ acknowledgedCount }} / {{ session.room.members.length }} 位玩家已知晓</div><button class="primary-command" :disabled="myEventAck || submitting" @click="ackEvent"><CircleCheck :size="17" />{{ myEventAck ? '等待其他玩家' : '我已知晓' }}</button></div></div></Transition>
+    <Transition name="phase-modal"><div v-if="isEventAck" class="overlay"><div class="dialog event-dialog" data-tutorial="event-ack"><Newspaper :size="34" /><span>{{ stage === 'OPENING' ? '开盘前事件' : '收盘前事件' }}</span><h2>{{ currentRound.eventName }}</h2><p data-tutorial="event-description">{{ currentRound.eventDescription }}</p><small>计时已暂停，事件对价格的实际影响将在本阶段价格公布时说明。</small><div v-if="session.room" class="ack-count">{{ acknowledgedCount }} / {{ session.room.members.length }} 位玩家已知晓</div><button class="primary-command" data-tutorial="event-confirm" :disabled="myEventAck || submitting" @click="ackEvent"><CircleCheck :size="17" />{{ myEventAck ? '等待其他玩家' : '我已知晓' }}</button></div></div></Transition>
 
-    <Transition name="phase-modal"><div v-if="session.phase === 'OPENING_RESULT_ACK'" class="overlay"><div class="dialog result-dialog"><div class="result-icon"><BellRing :size="25" /></div><span>第 {{ session.currentRound }} 回合已开盘</span><h2>{{ price(currentRound.openPrice) }}</h2><div class="result-grid"><div><span>上一收盘</span><strong>{{ price(currentRound.previousClosePrice) }}</strong></div><div><span>全场买入</span><strong>{{ currentRound.openingBuyQuantity || 0 }} 股</strong></div><div><span>开盘基础变化</span><strong :class="tone(currentRound.openingBaseChangePercent)">{{ signed(currentRound.openingBaseChangePercent) }}%</strong></div><div><span>买盘影响</span><strong class="buy">{{ signed(currentRound.openingOrderFlowChangePercent) }}%</strong></div><div><span>事件影响</span><strong :class="tone(currentRound.openingEventChangePercent)">{{ signed(currentRound.openingEventChangePercent) }}%</strong></div><div><span>我的成交</span><strong>{{ myRoundBuy ? `${myRoundBuy.quantity} 股` : '0 股' }}</strong></div></div><div :class="['event-result', { empty: !currentRound.openingEventOccurred }]" role="status"><span>事件结果</span><strong>{{ currentRound.openingEventOccurred ? eventOutcome('OPENING') : '开盘前没有发生随机事件' }}</strong><small v-if="currentRound.openingEventOccurred">{{ eventReason('OPENING') }}</small></div><button class="primary-command" :disabled="myReady || submitting" @click="readyNext"><ChevronRight :size="18" />{{ myReady ? '等待其他参与者' : '进入收盘前' }}</button></div></div></Transition>
+    <Transition name="phase-modal">
+      <div v-if="session.phase === 'OPENING_RESULT_ACK'" class="overlay">
+        <div class="dialog result-dialog" data-tutorial="opening-next">
+          <div class="result-icon"><BellRing :size="25" /></div>
+          <span>第 {{ session.currentRound }} 回合已开盘</span><h2 data-tutorial="opening-price">{{ price(currentRound.openPrice) }}</h2>
+          <div class="result-grid" data-tutorial="opening-breakdown">
+            <div><span>上一收盘</span><strong>{{ price(currentRound.previousClosePrice) }}</strong></div>
+            <div><span>全场买入</span><strong>{{ currentRound.openingBuyQuantity || 0 }} 股</strong></div>
+            <div><span>开盘基础变化</span><strong :class="tone(currentRound.openingBaseChangePercent)">{{ signed(currentRound.openingBaseChangePercent) }}%</strong></div>
+            <div data-tutorial="opening-flow"><span>买盘影响</span><strong class="buy">{{ signed(currentRound.openingOrderFlowChangePercent) }}%</strong></div>
+            <div><span>事件影响</span><strong :class="tone(currentRound.openingEventChangePercent)">{{ signed(currentRound.openingEventChangePercent) }}%</strong></div>
+            <div><span>我的成交</span><strong>{{ myRoundBuy ? `${myRoundBuy.quantity} 股` : '0 股' }}</strong></div>
+          </div>
+          <div :class="['event-result', { empty: !currentRound.openingEventOccurred }]" role="status"><span>事件结果</span><strong>{{ currentRound.openingEventOccurred ? eventOutcome('OPENING') : '开盘前没有发生随机事件' }}</strong><small v-if="currentRound.openingEventOccurred">{{ eventReason('OPENING') }}</small></div>
+          <button class="primary-command" data-tutorial="opening-next-button" :disabled="myReady || submitting" @click="readyNext"><ChevronRight :size="18" />{{ myReady ? '等待其他参与者' : '进入收盘前' }}</button>
+        </div>
+      </div>
+    </Transition>
 
     <Transition name="phase-modal">
       <div v-if="session.phase === 'ROUND_RESULT_ACK'" class="overlay">
-        <div class="dialog result-dialog">
+        <div class="dialog result-dialog" data-tutorial="round-next">
           <div class="result-icon close"><CandlestickChart :size="25" /></div>
           <span>第 {{ session.currentRound }} 回合已收盘</span>
-          <h2>{{ price(currentRound.closePrice) }}</h2>
-          <div class="result-grid">
+          <h2 data-tutorial="closing-price">{{ price(currentRound.closePrice) }}</h2>
+          <div class="result-grid" data-tutorial="closing-breakdown">
             <div><span>开盘价</span><strong>{{ price(currentRound.openPrice) }}</strong></div>
             <div><span>普通卖出</span><strong>{{ currentRound.closingSellQuantity || 0 }} 股</strong></div>
             <template v-if="['V2', 'V3'].includes(currentRound.pricingEngineVersion)">
@@ -187,43 +204,44 @@
             <template v-else>
               <div><span>收盘基础变化</span><strong :class="tone(currentRound.baseChangePercent)">{{ signed(currentRound.baseChangePercent) }}%</strong></div>
               <div><span>事件影响</span><strong :class="tone(currentRound.closingEventChangePercent)">{{ signed(currentRound.closingEventChangePercent) }}%</strong></div>
-              <div><span>均值回归</span><strong :class="tone(currentRound.meanReversionChangePercent)">{{ signed(currentRound.meanReversionChangePercent) }}%</strong></div>
+              <div data-tutorial="closing-reversion"><span>均值回归</span><strong :class="tone(currentRound.meanReversionChangePercent)">{{ signed(currentRound.meanReversionChangePercent) }}%</strong></div>
             </template>
             <div><span>强制卖出</span><strong :class="{ sell: Number(currentRound.forcedSellQuantity) > 0 }">{{ currentRound.forcedSellQuantity || 0 }} 股</strong></div>
-            <div><span>卖盘影响</span><strong class="sell">{{ signed(currentRound.orderFlowChangePercent) }}%</strong></div>
+            <div data-tutorial="closing-flow"><span>卖盘影响</span><strong class="sell">{{ signed(currentRound.orderFlowChangePercent) }}%</strong></div>
           </div>
           <div :class="['event-result', { empty: !currentRound.closingEventOccurred }]" role="status"><span>事件结果</span><strong>{{ currentRound.closingEventOccurred ? eventOutcome('CLOSING') : '收盘前没有发生随机事件' }}</strong><small v-if="currentRound.closingEventOccurred">{{ eventReason('CLOSING') }}</small></div>
-          <button class="primary-command" :disabled="myReady || submitting" @click="readyNext"><ChevronRight :size="18" />{{ myReady ? '等待其他参与者' : session.config.loanEnabled ? '进入银行还贷期' : session.currentRound >= session.config.roundCount ? '查看最终收益' : '进入下一回合' }}</button>
+          <button class="primary-command" data-tutorial="round-next-button" :disabled="myReady || submitting" @click="readyNext"><ChevronRight :size="18" />{{ myReady ? '等待其他参与者' : session.config.loanEnabled ? '进入银行还贷期' : session.currentRound >= session.config.roundCount ? '查看最终收益' : '进入下一回合' }}</button>
         </div>
       </div>
     </Transition>
 
     <GameManualDialog :open="showRules" :config="session.config" @close="showRules = false" />
 
-    <Transition name="modal"><div v-if="showResearch" class="overlay" @click.self="showResearch = false"><div class="dialog compact"><button class="dialog-close" title="关闭" @click="showResearch = false"><X :size="18" /></button><FlaskConical :size="31" /><h2>市场研究</h2><p v-if="researchResult">{{ researchDirectionLabel(researchResult.direction) }} · 估计区间 {{ researchResult.rangeLow }}～{{ researchResult.rangeHigh }}</p><div class="credit-kind-tabs"><button v-for="action in researchActions" :key="action.value" :disabled="submitting" @click="runResearch(action.value)">{{ action.label }}</button></div><small v-if="researchResult">剩余研究点 {{ researchResult.remainingPoints }}</small></div></div></Transition>
+    <Transition name="modal"><div v-if="showResearch" class="overlay" @click.self="showResearch = false"><div class="dialog compact"><button class="dialog-close" data-tutorial="research-close" title="关闭" @click="showResearch = false"><X :size="18" /></button><FlaskConical :size="31" /><h2>市场研究</h2><p v-if="researchResult" data-tutorial="research-result">{{ researchDirectionLabel(researchResult.direction) }} · 估计区间 {{ researchResult.rangeLow }}～{{ researchResult.rangeHigh }}<br />剩余研究点 {{ researchResult.remainingPoints }}</p><div class="credit-kind-tabs" data-tutorial="research-actions"><button v-for="action in researchActions" :key="action.value" :data-tutorial="action.value === 'VERIFY_EVENT' ? 'research-verify' : null" :disabled="submitting || (isTutorial && session.tutorial.remainingPoints === 0)" @click="runResearch(action.value)">{{ action.label }}</button></div></div></div></Transition>
 
-    <Transition name="modal"><div v-if="showCredit" class="overlay credit-overlay" @click.self="showCredit = false"><div class="dialog credit-dialog"><button class="dialog-close" title="关闭" @click="showCredit = false"><X :size="18" /></button><Landmark :size="31" /><span>{{ creditStageActive ? `第 ${session.currentRound} 回合 · 银行贷款阶段` : repaymentStageActive ? `第 ${session.currentRound} 回合 · 银行还贷阶段` : '银行融资' }}</span>
+    <Transition name="modal"><div v-if="showCredit" class="overlay credit-overlay" @click.self="closeCredit"><div class="dialog credit-dialog"><button class="dialog-close" data-tutorial="credit-close" title="关闭" @click="closeCredit"><X :size="18" /></button><Landmark :size="31" /><span>{{ creditStageActive ? `第 ${session.currentRound} 回合 · 银行贷款阶段` : repaymentStageActive ? `第 ${session.currentRound} 回合 · 银行还贷阶段` : '银行融资' }}</span>
       <label class="bank-select"><span>选择银行</span><CustomSelect v-model="selectedCreditProduct" :options="bankSelectOptions" @change="selectCreditProductCode" /><small>本行债务 {{ money(selectedBankDebt) }} · 可借 {{ money(selectedCreditAvailable) }}</small></label>
-      <div class="credit-metrics"><div><span>净资产</span><strong>{{ money(session.credit.netAsset) }}</strong></div><div><span>本行可用额度</span><strong>{{ money(selectedCreditAvailable) }}</strong></div><div><span>本行贷款本金</span><strong>{{ money(selectedCreditBank?.principal || 0) }}</strong></div><div><span>本行未付利息</span><strong>{{ money(selectedCreditBank?.accruedInterest || 0) }}</strong></div><div><span>总股票敞口</span><strong>{{ fixed(session.credit.exposurePercent, 1) }}%</strong></div><div><span>总债务 LTV</span><strong>{{ fixed(session.credit.ltvPercent, 1) }}%</strong></div><div v-if="selectedCreditBank?.nearestMaturityRound"><span>本行最近到期</span><strong>第 {{ selectedCreditBank.nearestMaturityRound }} 回合</strong></div></div>
+      <div class="credit-metrics"><div data-tutorial="credit-net-asset"><span>净资产</span><strong>{{ money(session.credit.netAsset) }}</strong></div><div data-tutorial="credit-available"><span>本行可用额度</span><strong>{{ money(selectedCreditAvailable) }}</strong></div><div><span>本行贷款本金</span><strong>{{ money(selectedCreditBank?.principal || 0) }}</strong></div><div data-tutorial="credit-interest"><span>本行未付利息</span><strong>{{ money(selectedCreditBank?.accruedInterest || 0) }}</strong></div><div><span>总股票敞口</span><strong>{{ fixed(session.credit.exposurePercent, 1) }}%</strong></div><div><span>总债务 LTV</span><strong>{{ fixed(session.credit.ltvPercent, 1) }}%</strong></div><div v-if="selectedCreditBank?.nearestMaturityRound"><span>本行最近到期</span><strong>第 {{ selectedCreditBank.nearestMaturityRound }} 回合</strong></div></div>
       <div class="ltv-track"><i :style="{ width: `${Math.min(100, Number(session.credit.ltvPercent || 0))}%` }"></i><span>{{ creditRiskLabel(session.credit.riskState) }}</span><b v-if="selectedCreditBank?.warningLtv" :style="{ left: `${selectedCreditBank.warningLtv}%` }" title="警戒线"></b><b v-if="selectedCreditBank?.blockLtv" :style="{ left: `${selectedCreditBank.blockLtv}%` }" title="禁借线"></b><b v-if="selectedCreditBank?.liquidationLtv" :style="{ left: `${selectedCreditBank.liquidationLtv}%` }" title="强平线"></b></div>
-      <div class="credit-kind-tabs"><button :class="{ active: creditMode === 'BORROW' }" :disabled="repaymentStageActive" @click="creditMode = 'BORROW'">借款</button><button :class="{ active: creditMode === 'REPAY' }" :disabled="selectedBankDebt <= 0" @click="creditMode = 'REPAY'">还款</button><button :class="{ active: creditMode === 'LOANS' }" @click="creditMode = 'LOANS'">本行贷款</button></div>
+      <div class="credit-kind-tabs" data-tutorial="credit-repay"><button :class="{ active: creditMode === 'BORROW' }" :disabled="repaymentStageActive" @click="creditMode = 'BORROW'">借款</button><button :class="{ active: creditMode === 'REPAY' }" :disabled="selectedBankDebt <= 0" @click="creditMode = 'REPAY'">还款</button><button :class="{ active: creditMode === 'LOANS' }" @click="creditMode = 'LOANS'">本行贷款</button></div>
       <template v-if="creditMode !== 'LOANS'">
         <label v-if="creditMode === 'BORROW'" class="credit-amount"><span>贷款期限</span><CustomSelect v-model="creditMaturityRounds" :options="maturityOptions" /></label>
-        <label class="credit-amount"><span>{{ creditMode === 'BORROW' ? '借款' : '还款' }}金额</span><input v-model.number="creditAmount" type="number" min="0" :step="creditMode === 'BORROW' ? 100 : .0001" /></label>
-        <div class="credit-quick"><button v-for="ratio in [.25,.5,1]" :key="ratio" type="button" @click="setCreditRatio(ratio)">{{ ratio * 100 }}%</button></div>
-        <div class="credit-actions"><button v-if="creditMode === 'BORROW'" class="primary-command" :disabled="submitting || !canBorrowCredit || selectedCreditAvailable <= 0 || Number(creditAmount) <= 0 || Number(creditAmount) > selectedCreditAvailable" @click="borrowCredit">确认借款</button><button v-else class="danger-command" :disabled="submitting || !canRepayCredit || selectedBankDebt <= 0 || repayableCash <= 0 || Number(creditAmount) <= 0" @click="repayCredit">确认还款</button></div>
+        <label class="credit-amount" data-tutorial="credit-borrow"><span>{{ creditMode === 'BORROW' ? '借款' : '还款' }}金额</span><input v-model.number="creditAmount" data-tutorial="credit-input" type="number" min="0" :step="creditMode === 'BORROW' ? 100 : .0001" /></label>
+        <div class="credit-quick"><button v-for="ratio in [.25,.5,1]" :key="ratio" :data-tutorial="ratio === 1 ? 'credit-full' : null" type="button" @click="setCreditRatio(ratio)">{{ ratio * 100 }}%</button></div>
+        <div class="credit-actions"><button v-if="creditMode === 'BORROW'" class="primary-command" data-tutorial="credit-borrow-confirm" :disabled="submitting || !canBorrowCredit || selectedCreditAvailable <= 0 || Number(creditAmount) <= 0 || Number(creditAmount) > selectedCreditAvailable" @click="borrowCredit">确认借款</button><button v-else class="danger-command" data-tutorial="credit-repay-confirm" :disabled="submitting || !canRepayCredit || selectedBankDebt <= 0 || repayableCash <= 0 || Number(creditAmount) <= 0" @click="repayCredit">确认还款</button></div>
         <small>每家银行独立维护贷款、利息和还款记录；可以切换银行继续借款。总额度与风险仍按全部银行债务共同计算。</small>
       </template>
       <template v-else-if="selectedBankLoans.length"><div class="loan-list"><article v-for="loan in pagedLoans" :key="loan.id" :class="{ closed: loan.status === 'CLOSED' }"><header><strong>贷款 #{{ loan.id }}</strong><span>{{ loan.status === 'CLOSED' ? '已结清' : `第 ${loan.maturityRound} 回合到期` }}</span></header><div v-if="loan.status === 'CLOSED'" class="loan-settlement"><span>借款 <strong>{{ money(loan.principalOriginal) }}</strong></span><span>还款（本金） <strong>{{ money(Number(loan.principalOriginal) - Number(loan.principalOutstanding)) }}</strong></span></div><div v-else><span>剩余本金 {{ money(loan.principalOutstanding) }}</span><span>未付利息 {{ money(loan.accruedInterest) }}</span><span>利率 {{ fixed(loan.interestRate, 2) }}%/回合</span><span>剩余 {{ loan.remainingRounds }} 回合</span></div><small>原到期第 {{ loan.originalMaturityRound }} 回合 · 已延期 {{ loan.extensionCount }} 次 / {{ loan.totalExtendedRounds }} 回合</small><div v-if="loan.canExtend" class="loan-extension"><CustomSelect v-model="extensionRounds[loan.id]" :options="extensionOptions" /><button class="btn btn-outline" :disabled="submitting" @click="extendLoan(loan)">延期</button></div></article></div><PaginationBar v-model="loanPage" :total-pages="loanPages" :total-items="selectedBankLoans.length" /></template>
       <div v-else-if="creditMode === 'LOANS'" class="no-loans">该银行暂无贷款合同</div>
       <div v-if="selectedBankLedger.length" class="credit-ledger"><div v-for="row in selectedBankLedger" :key="row.id"><span>第{{ row.roundNo }}回合 · {{ ledgerLabel(row.type) }}</span><strong :class="ledgerTone(row)">{{ ledgerAmount(row) }}</strong></div></div>
-      <div v-if="creditFlowActive" class="credit-stage-footer"><div v-if="session.room" class="credit-readiness"><span v-for="member in creditReadiness" :key="member.id" :class="{ done: member.ready }"><i>{{ member.initial }}</i><b>{{ member.name }}</b><small>{{ member.ready ? '已完成' : '未完成' }}</small></span></div><span>{{ myReady ? '已完成操作，等待其他玩家' : repaymentStageActive ? '可按需还款，完成后进入下一回合' : '借款或还款完成后进入开盘前交易' }}</span><button class="primary-command" :disabled="submitting || myReady" @click="readyNext"><ChevronRight :size="18" />{{ myReady ? '等待其他玩家' : repaymentStageActive ? '完成还贷' : '完成融资，进入开盘前' }}</button></div>
+      <div v-if="creditFlowActive" class="credit-stage-footer" data-tutorial="credit-ready"><div v-if="session.room" class="credit-readiness"><span v-for="member in creditReadiness" :key="member.id" :class="{ done: member.ready }"><i>{{ member.initial }}</i><b>{{ member.name }}</b><small>{{ member.ready ? '已完成' : '未完成' }}</small></span></div><span>{{ myReady ? '已完成操作，等待其他玩家' : repaymentStageActive ? '可按需还款，完成后进入下一回合' : '借款或还款完成后进入开盘前交易' }}</span><button class="primary-command" data-tutorial="credit-ready-button" :disabled="submitting || myReady" @click="readyNext"><ChevronRight :size="18" />{{ myReady ? '等待其他玩家' : repaymentStageActive ? '完成还贷' : '完成融资，进入开盘前' }}</button></div>
     </div></div></Transition>
 
     <Transition name="modal"><div v-if="showEvent" class="overlay" @click.self="showEvent = false"><div class="dialog event-dialog"><button class="dialog-close" title="关闭" @click="showEvent = false"><X :size="18" /></button><Newspaper :size="31" /><span>第 {{ session.currentRound }} 回合{{ stage === 'OPENING' ? '开盘前' : '收盘前' }}事件</span><h2>{{ stageEventOccurred ? currentRound.eventName : '本阶段暂未发生事件' }}</h2><p>{{ stageEventOccurred ? currentRound.eventDescription : '本阶段没有抽到随机事件。' }}</p><div v-if="stageEventOccurred" class="event-tags"><span>{{ eventTypeLabel(currentRound.eventType) }}</span><span>{{ relevanceLabel(currentRound.eventRelevance) }}</span><span>{{ credibilityLabel(currentRound.eventCredibility) }}</span><span>{{ surpriseLabel(currentRound.eventSurprise) }}</span><span>{{ strengthLabel(currentRound.eventStrength) }}</span></div><div v-if="eventResultVisible" :class="['event-result', { empty: !stageEventOccurred }]" role="status"><span>事件结果</span><strong>{{ stageEventOccurred ? eventOutcome(stage) : '本阶段没有发生随机事件' }}</strong><small v-if="stageEventOccurred">{{ eventReason(stage) }}</small></div><div v-else-if="stageEventOccurred" class="event-pending" role="status"><Clock3 :size="16" /><span>结果将在本阶段价格公布后揭晓</span></div></div></div></Transition>
 
-    <Transition name="modal"><div v-if="showRestart" class="overlay" @click.self="showRestart = false"><div class="dialog compact"><RotateCcw :size="32" /><h2>确认重新开始？</h2><p>{{ session.room ? '提交后需所有真人玩家确认；全员确认后本局结束并返回游戏主界面。' : '当前进度将结束，并返回游戏主界面重新创建一局。' }}</p><div v-if="session.room" class="ack-count">{{ restartCount }} / {{ session.room.members.length }} 位玩家已确认</div><button class="danger-command" :disabled="submitting || myRestartReady" @click="confirmRestart"><RotateCcw :size="17" />{{ myRestartReady ? '已确认，等待其他玩家' : '确认重新开始' }}</button><button class="text-command" @click="showRestart = false">取消</button></div></div></Transition>
+    <Transition name="modal"><div v-if="showRestart" class="overlay restart-overlay" @click.self="showRestart = false"><div class="dialog compact" role="dialog" aria-modal="true" aria-labelledby="restart-title"><RotateCcw :size="32" /><h2 id="restart-title">确认重新开始？</h2><p>{{ isTutorial ? '仅重置新手教程的虚拟账户和练习进度，不影响正式存档。' : session.room ? '提交后需所有真人玩家确认；全员确认后本局结束并返回游戏主界面。' : '当前进度将结束，并返回游戏主界面重新创建一局。' }}</p><div v-if="session.room" class="ack-count">{{ restartCount }} / {{ session.room.members.length }} 位玩家已确认</div><button class="danger-command" :disabled="submitting || myRestartReady" @click="confirmRestart"><RotateCcw :size="17" />{{ myRestartReady ? '已确认，等待其他玩家' : '确认重新开始' }}</button><button class="text-command" @click="showRestart = false">取消</button></div></div></Transition>
     <Transition name="modal"><div v-if="showCloseRoom" class="room-close-confirm" @click.self="showCloseRoom = false"><div><DoorClosed :size="28" /><h2>关闭多人房间？</h2><p>多人场次会立即结束，所有玩家返回游戏主界面；各自的单人进度不会改变。</p><button class="danger-command" :disabled="submitting" @click="confirmCloseRoom">确认关闭房间</button><button class="text-command" @click="showCloseRoom = false">取消</button></div></div></Transition>
+    <StockTutorialGuide v-if="isTutorial && !showRestart && !showRules" :step="currentTutorialStep" :completed="session.status === 'COMPLETED'" :busy="submitting" @start="readyNext" @continue="continueTutorialLesson" @exit="leaveToDetail" @restart="requestTutorialRestart" @locate="locateTutorialTarget" @resize="tutorialGuideHeight = $event" />
   </div>
   <div v-else class="loading">
     <LoadingSpinner v-if="!error" text="正在读取游戏存档" />
@@ -235,14 +253,19 @@
 import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { onBeforeRouteLeave, useRoute, useRouter } from 'vue-router'
 import { Activity, ArrowLeft, BellRing, BookOpen, Bot, CandlestickChart, ChevronRight, CircleCheck, Clock3, DoorClosed, FastForward, Flag, FlaskConical, Landmark, Newspaper, Pause, PauseCircle, Play, RotateCcw, Scale, TrendingDown, TrendingUp, TriangleAlert, Trophy, X, Zap } from 'lucide-vue-next'
-import { abandonGameSession, borrowGameCredit, closeGameRoom, ensureEntertainmentGuest, extendGameLoan, getGameSession, pauseGameSession, performGameResearch, repayGameCredit, resumeGameSession, sendGameAction, submitDailyChallenge, syncGameSession } from '../../api/entertainment'
+import { abandonGameSession, borrowGameCredit as borrowLiveCredit, closeGameRoom, ensureEntertainmentGuest, extendGameLoan, getGameSession, pauseGameSession, performGameResearch, repayGameCredit as repayLiveCredit, resumeGameSession, sendGameAction, submitDailyChallenge, syncGameSession } from '../../api/entertainment'
 import LoadingSpinner from '../../components/LoadingSpinner.vue'
 import GameManualDialog from './GameManualDialog.vue'
 import CustomSelect from '../../components/CustomSelect.vue'
 import PaginationBar from '../../components/PaginationBar.vue'
 import { notifyError } from '../../services/notice'
+import StockTutorialGuide from './StockTutorialGuide.vue'
+import { createTutorialSession, loadTutorialSession, saveTutorialSession, transitionTutorial, tutorialStep } from '../../games/guessStockTutorial'
 
 const route = useRoute(); const router = useRouter(); const session = ref(null); const error = ref(''); const submitting = ref(false); const challengeResult = ref(null); let challengeSubmitted = false
+const isTutorial = computed(() => Boolean(route.meta.tutorial))
+const tutorialGuideHeight = ref(180)
+const currentTutorialStep = computed(() => isTutorial.value && session.value ? tutorialStep(session.value, { researchOpen: showResearch.value, creditAmount: creditAmount.value }) : null)
 const now = ref(Date.now()); const quantity = ref(0); const allIn = ref(false); const targetExposure = ref(0); const hovered = ref(null); const chartGroupSize = ref(1); const showRules = ref(false); const showEvent = ref(false); const showRestart = ref(false); const showCloseRoom = ref(false); const showCredit = ref(false); const showResearch = ref(false); const researchResult = ref(null); const creditAmount = ref(0); const creditMode = ref('BORROW'); const selectedCreditProduct = ref('')
 const researchActions = [{ value: 'VERIFY_EVENT', label: '核验事件' }, { value: 'SURVEY_DEMAND', label: '需求调查' }, { value: 'PREVIEW_REPORT', label: '财报预览' }, { value: 'CHECK_LIQUIDITY', label: '流动性观察' }]
 const creditMaturityRounds = ref(1); const extensionRounds = ref({}); const loanPagesByBank = ref({})
@@ -285,7 +308,7 @@ const maturityOptions = computed(() => Array.from({ length: Math.max(1, Number(s
 const extensionOptions = computed(() => Array.from({ length: Math.max(1, Number(selectedCreditConfig.value?.maturityRounds || 1)) }, (_, index) => ({ value: index + 1, label: `延期 ${index + 1} 回合` })))
 const selectedCreditAvailable = computed(() => Number(selectedCreditBank.value?.availableCredit ?? session.value.credit.productAvailableCredit?.[selectedCreditProduct.value]
   ?? session.value.credit.availableCredit ?? 0))
-const roundProgress = computed(() => Math.max(0, ((session.value.currentRound - 1) / session.value.config.roundCount) * 100))
+const roundProgress = computed(() => isTutorial.value && session.value.status === 'COMPLETED' ? 100 : Math.max(0, ((session.value.currentRound - 1) / session.value.config.roundCount) * 100))
 const serverOffset = computed(() => session.value ? new Date(session.value.serverTime).getTime() - Date.now() : 0)
 const configuredUnlimitedCreditPhase = computed(() => session.value.phase === 'CREDIT_TRADING'
   ? !session.value.config.creditPhaseTimed
@@ -298,10 +321,10 @@ const creditStageActive = computed(() => session.value.phase === 'CREDIT_TRADING
 const repaymentStageActive = computed(() => session.value.phase === 'CREDIT_REPAYMENT')
 const creditFlowActive = computed(() => creditStageActive.value || repaymentStageActive.value)
 const creditStageExpired = computed(() => creditStageActive.value && session.value.phaseEndsAt && remainingMs.value === 0)
-const canBorrowCredit = computed(() => session.value.status === 'ACTIVE'
+const canBorrowCredit = computed(() => session.value.status === 'ACTIVE' && !myReady.value
   && (creditStageActive.value ? !creditStageExpired.value : session.value.phase === 'OPENING_TRADING' && !tradingExpired.value))
 const repayableCash = computed(() => Math.max(0, Number(player.value.cash || 0) - Number(player.value.reservedCash || 0)))
-const canRepayCredit = computed(() => session.value.status === 'ACTIVE' && !['ROUND_START', 'COMPLETED'].includes(session.value.phase))
+const canRepayCredit = computed(() => session.value.status === 'ACTIVE' && !(creditFlowActive.value && myReady.value) && !['ROUND_START', 'COMPLETED'].includes(session.value.phase))
 const countdown = computed(() => tradingExpired.value ? '已截止' : remainingMs.value == null ? (creditFlowActive.value ? '不限时' : isManual.value ? '手动' : '暂停') : `${Math.ceil(remainingMs.value / 1000)}s`)
 const autoAdvanceEnabled = computed(() => session.value?.autoAdvance ?? preferredAutoAdvance)
 const autoAdvanceSpeed = computed(() => Number(session.value?.playbackSpeed || (speedOptions.includes(preferredSpeed) ? preferredSpeed : 1)))
@@ -357,6 +380,7 @@ function eventOutcome(eventStage) {
   const change = Number(opening ? currentRound.value.openingEventChangePercent : currentRound.value.closingEventChangePercent)
   const tier = opening ? currentRound.value.openingEventTier : currentRound.value.closingEventTier
   const tierText = ({ WEAK: '轻微', NORMAL: '常规', STRONG: '强烈' }[tier] || '')
+  if (isTutorial.value) return effective ? `${currentRound.value.eventName}贡献 ${signed(change)} 的事件冲击，并非最终涨跌幅` : '事件未形成可观察的价格冲击'
   return effective ? `${currentRound.value.eventName}形成${tierText}影响，令本阶段价格${change >= 0 ? '上升' : '下降'} ${Math.abs(change).toFixed(2)}%` : `${currentRound.value.eventName}发生，但未造成可观察的价格变化`
 }
 function eventReason(eventStage) { return eventStage === 'OPENING' ? currentRound.value.openingEventReason : currentRound.value.closingEventReason }
@@ -371,7 +395,7 @@ const gateButton = computed(() => isOpening.value ? '完成开盘前操作' : '�
 const readiness = computed(() => {
   const humans = session.value.room ? session.value.room.members.map(item => ({ key: `H${item.id}`, name: item.displayName, ready: item.readyStage === session.value.phase })) : [{ key: 'ME', name: player.value.displayName || '我', ready: false }]
   const aiStage = session.value.aiDecisions.filter(item => item.roundNo === session.value.currentRound && item.stage === stage.value)
-  const ais = session.value.participants.filter(item => item.type === 'AI').map(item => { const decision = aiStage.find(task => task.participantId === item.id); return { key: `A${item.id}`, name: item.displayName, ready: decision && decision.status !== 'PENDING' } })
+  const ais = session.value.participants.filter(item => item.type === 'AI').map(item => { const decision = aiStage.find(task => task.participantId === item.id); return { key: `A${item.id}`, name: item.displayName, ready: decision && !['PENDING', 'PROCESSING'].includes(decision.status) } })
   return [...humans, ...ais]
 })
 
@@ -464,17 +488,24 @@ const currentChangeLabel = computed(() => `${signed(latestRoundChange.value)}%`)
 
 function moveHover(event) { if (!roundBars.value.length) { hovered.value = null; return } const rect = event.currentTarget.getBoundingClientRect(); const x = (event.clientX - rect.left) / rect.width * 820; hovered.value = roundBars.value.reduce((best, bar) => Math.abs(bar.x - x) < Math.abs(best.x - x) ? bar : best, roundBars.value[0]) }
 function setChartGroupSize(size) { chartGroupSize.value = size; hovered.value = null }
-function action(actionType, extra = {}) { return sendGameAction(sessionId.value, { clientRequestId: `${actionType}-${Date.now()}-${Math.random().toString(16).slice(2)}`, actionType, ...extra }) }
+function tutorialAction(actionType, payload = {}) { const next = transitionTutorial(session.value, actionType, payload); saveTutorialSession(next); return next }
+function continueTutorialLesson() { return run(() => tutorialAction('CONTINUE_LESSON', { lessonId: currentTutorialStep.value.id, ui: { researchOpen: showResearch.value, creditAmount: creditAmount.value } })) }
+function closeCredit() { if (isTutorial.value && currentTutorialStep.value.id === 'r1-bank-close') session.value = tutorialAction('CLOSE_BANK'); showCredit.value = false }
+function action(actionType, extra = {}) { if (isTutorial.value) return tutorialAction(actionType, extra); return sendGameAction(sessionId.value, { clientRequestId: `${actionType}-${Date.now()}-${Math.random().toString(16).slice(2)}`, actionType, ...extra }) }
+function borrowGameCredit(id, payload) { return isTutorial.value ? tutorialAction('BORROW', payload) : borrowLiveCredit(id, payload) }
+function repayGameCredit(id, payload) { return isTutorial.value ? tutorialAction('REPAY', payload) : repayLiveCredit(id, payload) }
+function requestTutorialRestart() { showRestart.value = true }
+function locateTutorialTarget() { if (currentTutorialStep.value.open === 'credit') { showResearch.value = false; openCredit() } else if (currentTutorialStep.value.open === 'research') { showCredit.value = false; showResearch.value = true } }
 async function run(task) { submitting.value = true; try { session.value = await task(); return true } catch (e) { notifyError(e.message); return false } finally { submitting.value = false } }
-function openCredit() { const indebted = (session.value.credit.banks || []).find(item => Number(item.effectiveDebt) > 0); selectedCreditProduct.value = selectedCreditProduct.value || indebted?.productCode || enabledCreditProducts.value[0]?.code || ''; creditMaturityRounds.value = Number(selectedCreditConfig.value?.maturityRounds || 1); creditMode.value = repaymentStageActive.value ? (selectedBankDebt.value > 0 ? 'REPAY' : 'LOANS') : 'BORROW'; creditAmount.value = 0; loanPage.value = Math.min(loanPage.value, loanPages.value); for (const loan of selectedBankLoans.value) if (!extensionRounds.value[loan.id]) extensionRounds.value[loan.id] = 1; showCredit.value = true }
-function setCreditRatio(ratio) { const base = creditMode.value === 'BORROW' ? selectedCreditAvailable.value : Math.min(selectedBankDebt.value, repayableCash.value); creditAmount.value = creditMode.value === 'REPAY' ? Number((base * ratio).toFixed(4)) : Math.floor(base * ratio) }
+function openCredit() { if (isTutorial.value && showCredit.value) return; if (isTutorial.value && currentTutorialStep.value.id === 'r1-bank-reopen') session.value = tutorialAction('REOPEN_BANK'); const indebted = (session.value.credit.banks || []).find(item => Number(item.effectiveDebt) > 0); selectedCreditProduct.value = selectedCreditProduct.value || indebted?.productCode || enabledCreditProducts.value[0]?.code || ''; creditMaturityRounds.value = Number(selectedCreditConfig.value?.maturityRounds || 1); creditMode.value = repaymentStageActive.value || !canBorrowCredit.value ? (selectedBankDebt.value > 0 ? 'REPAY' : 'LOANS') : 'BORROW'; creditAmount.value = isTutorial.value ? Number(repaymentStageActive.value ? session.value.tutorial.repayInput : session.value.tutorial.creditInput) : 0; loanPage.value = Math.min(loanPage.value, loanPages.value); for (const loan of selectedBankLoans.value) if (!extensionRounds.value[loan.id]) extensionRounds.value[loan.id] = 1; showCredit.value = true }
+function setCreditRatio(ratio) { const base = creditMode.value === 'BORROW' ? selectedCreditAvailable.value : Math.min(selectedBankDebt.value, repayableCash.value); creditAmount.value = creditMode.value === 'REPAY' ? Number((base * ratio).toFixed(4)) : Math.floor(base * ratio); if (isTutorial.value && repaymentStageActive.value) session.value = tutorialAction('PREPARE_REPAY', { amount: creditAmount.value }) }
 function selectCreditProductCode(code) { const product = enabledCreditProducts.value.find(item => item.code === code); if (product) selectCreditProduct(product) }
 function selectCreditProduct(product) { selectedCreditProduct.value = product.code; creditMaturityRounds.value = Number(product.maturityRounds || 1); creditAmount.value = 0; if (creditMode.value === 'REPAY' && selectedBankDebt.value <= 0) creditMode.value = repaymentStageActive.value ? 'LOANS' : 'BORROW'; loanPage.value = Math.min(loanPage.value, loanPages.value); for (const loan of selectedBankLoans.value) if (!extensionRounds.value[loan.id]) extensionRounds.value[loan.id] = 1 }
 async function borrowCredit() { const ok = await run(() => borrowGameCredit(sessionId.value, { requestId: `BORROW-${Date.now()}-${Math.random().toString(16).slice(2)}`, productCode: selectedCreditProduct.value, amount: Number(creditAmount.value), maturityRounds: Number(creditMaturityRounds.value) })); if (ok) creditAmount.value = 0 }
 async function repayCredit() { const ok = await run(() => repayGameCredit(sessionId.value, { requestId: `REPAY-${Date.now()}-${Math.random().toString(16).slice(2)}`, amount: Number(creditAmount.value), productCode: selectedCreditProduct.value })); if (ok) creditAmount.value = 0 }
 async function runResearch(actionType) {
   submitting.value = true
-  try { researchResult.value = await performGameResearch(sessionId.value, { requestId: `RESEARCH-${Date.now()}-${Math.random().toString(16).slice(2)}`, actionType }) }
+  try { if (isTutorial.value) { session.value = tutorialAction('RESEARCH', { actionType }); researchResult.value = session.value.tutorial.researchResult } else researchResult.value = await performGameResearch(sessionId.value, { requestId: `RESEARCH-${Date.now()}-${Math.random().toString(16).slice(2)}`, actionType }) }
   catch (e) { notifyError(e.message) }
   finally { submitting.value = false }
 }
@@ -531,9 +562,19 @@ async function commitOrder(desired, revision) {
   finally { submitting.value = false }
 }
 async function cancelOrder() { if (!canTrade.value) return; clearTimeout(orderTimer); orderRevision++; await run(() => action('CANCEL_ORDER')); quantity.value = 0; allIn.value = false; targetExposure.value = Number(player.value.exposurePercent || 0) }
-async function readyNext() { await run(() => action('READY_NEXT_ROUND')) }
+async function readyNext() {
+  if (isTutorial.value && currentTutorialStep.value.mode !== 'action') return
+  if (isTutorial.value && canTrade.value) {
+    clearTimeout(orderTimer)
+    const revision = ++orderRevision
+    await orderCommitChain
+    await commitOrder({ side: isOpening.value ? 'BUY' : 'SELL', quantity: Math.max(0, Math.floor(Number(quantity.value) || 0)), allIn: Boolean(allIn.value && isOpening.value), stage: stage.value }, revision)
+  }
+  await run(() => action('READY_NEXT_ROUND'))
+}
 function scheduleRoundIntro() {
   clearTimeout(roundIntroTimer)
+  if (isTutorial.value) return
   if (session.value?.phase !== 'ROUND_START' || session.value?.status !== 'ACTIVE') return
   const delay = Math.max(650, Math.round(1500 / Math.max(1, autoAdvanceSpeed.value)))
   roundIntroTimer = setTimeout(async () => {
@@ -543,13 +584,28 @@ function scheduleRoundIntro() {
   }, delay)
 }
 async function ackEvent() { await run(() => action('ACK_EVENT')) }
-async function confirmRestart() { if (session.value.room) { await run(() => action('REQUEST_RESTART')) } else { submitting.value = true; try { await abandonGameSession(sessionId.value); leaving = true; await router.replace(`/customer/entertainment/games/${session.value.gameId}`) } catch (e) { notifyError(e.message); submitting.value = false } } }
+async function confirmRestart() { if (isTutorial.value) { clearTimeout(orderTimer); orderRevision++; showCredit.value = false; showResearch.value = false; showEvent.value = false; showRestart.value = false; researchResult.value = null; creditAmount.value = 0; quantity.value = 0; allIn.value = false; chartGroupSize.value = 1; session.value = createTutorialSession(); saveTutorialSession(session.value); return } if (session.value.room) { await run(() => action('REQUEST_RESTART')) } else { submitting.value = true; try { await abandonGameSession(sessionId.value); leaving = true; await router.replace(`/customer/entertainment/games/${session.value.gameId}`) } catch (e) { notifyError(e.message); submitting.value = false } } }
 async function confirmCloseRoom() { submitting.value = true; try { await closeGameRoom(session.value.room.id); showCloseRoom.value = false; leaving = true; await router.replace(`/customer/entertainment/games/${session.value.gameId}`) } catch (e) { notifyError(e.message) } finally { submitting.value = false } }
 async function pause() { await run(() => pauseGameSession(sessionId.value)) }
 async function resume() { await run(() => resumeGameSession(sessionId.value)) }
 async function sync() { if (syncing) return; syncing = true; try { const next = await syncGameSession(sessionId.value); if (next.status === 'ABANDONED') { leaving = true; await router.replace(`/customer/entertainment/games/${next.gameId}`); return } session.value = next } catch { } finally { syncing = false } }
-async function load() { error.value = ''; try { await ensureEntertainmentGuest(); session.value = await getGameSession(sessionId.value); chartGroupSize.value = 1; targetExposure.value = Number(session.value.currentOrder?.targetExposurePercent ?? player.value.exposurePercent ?? 0); if (session.value.phase === 'ROUND_START') scheduleRoundIntro(); else if (['CREDIT_TRADING', 'CREDIT_REPAYMENT'].includes(session.value.phase)) openCredit(); if (session.value.status === 'COMPLETED') submitChallengeScore(); startLoops() } catch (e) { error.value = e.message } }
+async function load() {
+  error.value = ''
+  try {
+    if (isTutorial.value) {
+      session.value = loadTutorialSession()
+      quantity.value = session.value.currentOrder?.quantity || 0
+      allIn.value = Boolean(session.value.currentOrder?.allIn)
+      researchResult.value = session.value.tutorial.researchResult
+      saveTutorialSession(session.value)
+      if (['CREDIT_TRADING', 'CREDIT_REPAYMENT'].includes(session.value.phase)) openCredit()
+      return
+    }
+    await ensureEntertainmentGuest(); session.value = await getGameSession(sessionId.value); chartGroupSize.value = 1; targetExposure.value = Number(session.value.currentOrder?.targetExposurePercent ?? player.value.exposurePercent ?? 0); if (session.value.phase === 'ROUND_START') scheduleRoundIntro(); else if (['CREDIT_TRADING', 'CREDIT_REPAYMENT'].includes(session.value.phase)) openCredit(); if (session.value.status === 'COMPLETED') submitChallengeScore(); startLoops()
+  } catch (e) { error.value = e.message }
+}
 async function submitChallengeScore() {
+  if (isTutorial.value) return
   if (challengeSubmitted || session.value?.status !== 'COMPLETED') return
   if (!challengeId.value) return
   challengeSubmitted = true
@@ -557,7 +613,7 @@ async function submitChallengeScore() {
   catch (e) { challengeSubmitted = false; notifyError(e.message) }
 }
 watch(() => session.value?.status, status => { if (status === 'COMPLETED') submitChallengeScore() })
-async function leaveToDetail() { leaving = true; if (session.value.status === 'ACTIVE' && !session.value.room) await pauseGameSession(sessionId.value).catch(() => {}); router.push(`/customer/entertainment/games/${session.value.gameId}`) }
+async function leaveToDetail() { leaving = true; if (isTutorial.value) { saveTutorialSession(session.value); router.push('/customer/entertainment'); return } if (session.value.status === 'ACTIVE' && !session.value.room) await pauseGameSession(sessionId.value).catch(() => {}); router.push(`/customer/entertainment/games/${session.value.gameId}`) }
 function startLoops() { timer = window.setInterval(() => { now.value = Date.now() }, 200); poller = window.setInterval(sync, 900) }
 function stopLoops() { clearInterval(timer); clearInterval(poller) }
 async function toggleAutoAdvance() {
@@ -575,7 +631,7 @@ async function setAutoAdvanceSpeed(speed) {
 function updatePlaybackSettings(enabled, speed) {
   return run(() => action('SET_PLAYBACK_SETTINGS', { autoAdvance: enabled, playbackSpeed: speed }))
 }
-function showStageNotice(phase, round) { const map = { CREDIT_TRADING: [`第 ${round} 回合 · 银行贷款`, '选择贷款或归还欠款，完成后进入开盘前交易'], OPENING_TRADING: [`第 ${round} 回合 · 开盘前`, '买入股数自动保存，阶段结束后公布开盘价'], CLOSING_TRADING: [`第 ${round} 回合 · 收盘前`, '卖出股数自动保存，阶段结束后公布收盘价'], CREDIT_REPAYMENT: [`第 ${round} 回合 · 银行还贷`, '查看贷款并按需还款，完成后进入下一回合'] }; if (!map[phase]) return; [stageNotice.value, stageNoticeDetail.value] = map[phase]; clearTimeout(noticeTimer); noticeTimer = setTimeout(() => { stageNotice.value = '' }, 1700) }
+function showStageNotice(phase, round) { if (isTutorial.value) return; const map = { CREDIT_TRADING: [`第 ${round} 回合 · 银行贷款`, '选择贷款或归还欠款，完成后进入开盘前交易'], OPENING_TRADING: [`第 ${round} 回合 · 开盘前`, '买入股数自动保存，阶段结束后公布开盘价'], CLOSING_TRADING: [`第 ${round} 回合 · 收盘前`, '卖出股数自动保存，阶段结束后公布收盘价'], CREDIT_REPAYMENT: [`第 ${round} 回合 · 银行还贷`, '查看贷款并按需还款，完成后进入下一回合'] }; if (!map[phase]) return; [stageNotice.value, stageNoticeDetail.value] = map[phase]; clearTimeout(noticeTimer); noticeTimer = setTimeout(() => { stageNotice.value = '' }, 1700) }
 function price(value) { return Number(value || 0).toLocaleString('zh-CN', { minimumFractionDigits: 2, maximumFractionDigits: 4 }) }
 function money(value) { return `¥${Number(value || 0).toLocaleString('zh-CN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}` }
 function fixed(value, digits = 2) { return Number(value || 0).toFixed(digits) }
@@ -585,8 +641,9 @@ function tradeDirection(value) { return value === 'BUY' ? '买入' : value === '
 function tone(value) { const n = Number(value || 0); return n > 0 ? 'positive' : n < 0 ? 'negative' : '' }
 function availableFunds(item) { return Math.max(0, Number(item.cash || 0) - Number(item.reservedCash || 0)) }
 function handleKeydown(event) {
+  if (isTutorial.value) return
   if (event.key !== 'Enter' || event.repeat || event.ctrlKey || event.metaKey || event.altKey || submitting.value) return
-  if (showRules.value || showEvent.value || showRestart.value || showCloseRoom.value || showCredit.value) return
+  if (showRules.value || showEvent.value || showRestart.value || showCloseRoom.value || showCredit.value || (isTutorial.value && showResearch.value)) return
   if (!['OPENING_RESULT_ACK', 'ROUND_RESULT_ACK'].includes(session.value?.phase) || myReady.value) return
   const target = event.target
   if (target instanceof HTMLInputElement || target instanceof HTMLTextAreaElement || target instanceof HTMLSelectElement || target?.isContentEditable) return
@@ -595,7 +652,7 @@ function handleKeydown(event) {
 }
 
 watch(() => session.value ? `${session.value.currentRound}-${session.value.phase}-${session.value.status}` : '', (next, old) => { if (old && next !== old) { showStageNotice(session.value.phase, session.value.currentRound); if (session.value.phase === 'ROUND_START') scheduleRoundIntro(); else { clearTimeout(roundIntroTimer); if (['CREDIT_TRADING', 'CREDIT_REPAYMENT'].includes(session.value.phase)) openCredit() } if ((old.includes('-CREDIT_TRADING-') || old.includes('-CREDIT_REPAYMENT-')) && !['CREDIT_TRADING', 'CREDIT_REPAYMENT'].includes(session.value.phase)) showCredit.value = false; quantity.value = session.value.currentOrder?.quantity || 0; allIn.value = Boolean(session.value.currentOrder?.allIn); targetExposure.value = Number(session.value.currentOrder?.targetExposurePercent ?? player.value.exposurePercent ?? 0); hovered.value = null } })
-onMounted(() => { load(); window.addEventListener('keydown', handleKeydown) }); onBeforeUnmount(() => { stopLoops(); clearTimeout(noticeTimer); clearTimeout(roundIntroTimer); clearTimeout(orderTimer); window.removeEventListener('keydown', handleKeydown) }); onBeforeRouteLeave(async () => { if (!leaving && session.value?.status === 'ACTIVE' && !session.value.room) await pauseGameSession(sessionId.value).catch(() => {}); return true })
+onMounted(() => { load(); window.addEventListener('keydown', handleKeydown) }); onBeforeUnmount(() => { stopLoops(); clearTimeout(noticeTimer); clearTimeout(roundIntroTimer); clearTimeout(orderTimer); window.removeEventListener('keydown', handleKeydown) }); onBeforeRouteLeave(async () => { if (isTutorial.value) { if (session.value) saveTutorialSession(session.value); return true } if (!leaving && session.value?.status === 'ACTIVE' && !session.value.room) await pauseGameSession(sessionId.value).catch(() => {}); return true })
 </script>
 
 <style scoped>
@@ -627,4 +684,19 @@ onMounted(() => { load(); window.addEventListener('keydown', handleKeydown) }); 
 .loan-list article.closed{border-color:#cbded3;background:#f3f8f5}.loan-settlement span{display:flex;flex-direction:column;gap:2px;color:#6e7973}.loan-settlement strong{color:#245f43;font-size:11px}
 @media(max-width:768px){.credit-strip{grid-template-columns:repeat(2,minmax(0,1fr));gap:7px}.credit-strip>b{grid-column:1/-1;text-align:center}.final-credit-summary{grid-template-columns:repeat(2,1fr)}}
 .final-credit-summary,.ai-review{width:min(1450px,100%);margin-left:auto;margin-right:auto}.order-panel.auction-mode>header{background:#edf5f7}.order-panel.auction-mode>header svg,.order-panel.auction-mode>header h2{color:#246579}.order-panel.auction-mode>header>strong{color:#fff;background:#2d7183}.order-panel.auction-mode .stage-price{background:#f2f7f8}.target-quick{grid-template-columns:repeat(5,1fr)}.auction-submit{width:calc(100% - 26px);margin:0 13px}.auction-mode .quick-row button.active{color:#fff;border-color:#2d7183;background:#2d7183}.challenge-result a{color:#286248;font-size:9px;font-weight:800}.ai-review{margin-bottom:11px;border:1px solid #d9dfdc;border-radius:7px;background:#fff}.ai-review>header{min-height:46px;display:flex;align-items:center;justify-content:space-between;padding:9px 13px;border-bottom:1px solid #e5e9e7}.ai-review>header>div{display:flex;align-items:center;gap:7px}.ai-review h2{font-size:13px}.ai-review>header span{color:#77817c;font-size:9px}.ai-review-table article{display:grid;grid-template-columns:145px minmax(190px,1fr) minmax(190px,1fr) minmax(260px,1.25fr);gap:12px;align-items:center;min-height:72px;padding:10px 13px;border-bottom:1px solid #edf0ee}.ai-review-table article:last-child{border-bottom:0}.ai-review-table article>div{min-width:0;display:flex;flex-direction:column;gap:3px}.ai-review-table span,.ai-review-table small{color:#758079;font-size:8px}.ai-review-table strong{overflow:hidden;text-overflow:ellipsis;font-size:10px;white-space:nowrap}.ai-review-name strong{font-size:12px}.ai-review-stats{display:grid!important;grid-template-columns:repeat(3,1fr);gap:5px!important}.ai-review-stats span{padding:5px;background:#f4f6f5;color:#46554d;text-align:center}@media(max-width:1000px){.ai-review-table article{grid-template-columns:120px 1fr 1fr}.ai-review-stats{grid-column:1/-1}}@media(max-width:768px){.challenge-result{align-items:flex-start;flex-wrap:wrap}.challenge-result strong{width:100%}.ai-review>header{align-items:flex-start;flex-direction:column}.ai-review-table article{grid-template-columns:1fr}.ai-review-stats{grid-column:auto}.ai-review-table strong{white-space:normal}}
+.tutorial-play{padding-bottom:calc(var(--tutorial-guide-height) + 35px)}
+.tutorial-play .overlay{bottom:var(--tutorial-guide-height);padding:14px;overflow:hidden}
+.tutorial-play .dialog{max-height:calc(100dvh - var(--tutorial-guide-height) - 28px);overflow-y:auto;flex-shrink:0}
+.tutorial-play .dialog>*{flex-shrink:0}
+.tutorial-play .credit-dialog{max-height:calc(100dvh - var(--tutorial-guide-height) - 28px)}
+.tutorial-play .play-header{height:auto;min-height:54px;flex-wrap:wrap}
+.tutorial-play .credit-trigger{z-index:auto}
+.tutorial-play .symbol{min-width:0;flex:1}.tutorial-play .symbol strong{max-width:none;white-space:normal}
+.tutorial-play [data-tutorial]{scroll-margin:16px 0 calc(var(--tutorial-guide-height) + 16px)}
+.tutorial-play .dialog [data-tutorial]{scroll-margin:10px}
+@media(max-width:768px){.tutorial-play .price-chart{width:100%;min-width:0}.tutorial-play .dialog{padding:18px 15px}.tutorial-play .dialog>h2{font-size:18px}.tutorial-play .credit-metrics strong{font-size:11px}.tutorial-play .round-meter{order:7}.tutorial-play .symbol strong{font-size:12px}.tutorial-play .symbol{flex-basis:calc(100% - 54px)}.tutorial-play .final-result{grid-template-columns:repeat(2,minmax(0,1fr))}.tutorial-play .final-result strong{font-size:16px;white-space:nowrap}.tutorial-play .final-result>div{min-width:0}}
+/* Preserve the current dialog on cancel, but never let it hide the restart confirmation. */
+.play-page.confirming-restart > .overlay:not(.restart-overlay){display:none!important}
+.play-page > .restart-overlay{z-index:1900;display:grid!important;bottom:0}
+.tutorial-play .restart-overlay .dialog{max-height:calc(100dvh - 28px)}
 </style>

@@ -125,6 +125,7 @@ import ExternalShareOptions from '../../components/ExternalShareOptions.vue'
 import MomentReactionPicker from '../../components/MomentReactionPicker.vue'
 import { shareMomentExternally } from '../../services/shareCard'
 import { getMomentFeedCache } from '../../services/momentFeedCache'
+import { optimisticLike, preservePendingLike } from '../../services/optimisticLike'
 import { confirmNotice, notifyError, notifySuccess } from '../../services/notice'
 import { connectCustomerWebSocket, subscribeCustomerWebSocket } from '../../services/customerWebSocket'
 
@@ -184,6 +185,7 @@ function removeCachedMoment(momentId) {
 }
 
 function replaceCachedMoment(latest) {
+  latest = preservePendingLike(latest)
   let activeChanged = false
   for (const [type, state] of Object.entries(tabStates)) {
     const index = state.records.findIndex(item => Number(item.id) === Number(latest.id))
@@ -414,10 +416,7 @@ function requireLogin() {
 async function handleLike(moment) {
   if (!requireLogin()) return
   try {
-    const liked = !moment.likedByMe
-    await setMomentLike(moment.id, liked)
-    moment.likedByMe = liked
-    moment.likeCount = (moment.likeCount || 0) + (liked ? 1 : -1)
+    await optimisticLike(moment, active => setMomentLike(moment.id, active))
   } catch (e) { notifyError(e.message) }
 }
 
@@ -649,7 +648,8 @@ onUnmounted(() => {
   position: absolute; top: 66px; z-index: 10; left: 50%; transform: translateX(-50%);
 }
 
-.feed-list { min-height: 0; flex: 1; overflow-y: auto; overscroll-behavior: contain; }
+.feed-list { min-height: 0; flex: 1; overflow-y: auto; overscroll-behavior: contain; padding: 20px 28px 12px; scrollbar-gutter: stable; }
+.feed-list > :deep(.moment-card) { width: 100%; max-width: 1080px; margin-inline: auto; padding: 22px 24px; }
 .error-wrap { min-height: 20vh; display: flex; align-items: center; justify-content: center; }
 
 .feed-refresh-status {
@@ -692,6 +692,11 @@ onUnmounted(() => {
   .feed-tab { min-width: 54px; padding-inline: 8px; }
   .feed-actions { gap: 0; }
   .feed-icon-btn { width: 36px; }
+}
+
+@media (max-width: 768px) {
+  .feed-list { padding: 0; scrollbar-gutter: auto; background: var(--color-bg); }
+  .feed-list > :deep(.moment-card) { padding: 14px 12px; border-radius: 0; margin-bottom: 8px; }
 }
 
 /* Modals */

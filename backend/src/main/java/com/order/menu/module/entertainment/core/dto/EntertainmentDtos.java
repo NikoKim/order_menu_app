@@ -156,7 +156,9 @@ public final class EntertainmentDtos {
                                    AiDecisionHighlightResponse biggestMistake,
                                    int thesisReplacementCount, int reverseTradeCount,
                                    int modelCallCount, int fallbackCount,
-                                   BigDecimal totalInterestCost, long forcedLiquidationShares) {}
+                                   BigDecimal totalInterestCost, long forcedLiquidationShares,
+                                   long promptTokens, long promptCacheHitTokens, long completionTokens,
+                                   BigDecimal estimatedCostYuan) {}
 
     public record ParticipantResponse(
             Long id, String type, String displayName, String aiProfile,
@@ -216,8 +218,12 @@ public final class EntertainmentDtos {
             BigDecimal finalAsset, BigDecimal profitAmount, BigDecimal returnPercent,
             Integer inSessionRank, Long leaderboardRank, RoomResponse room,
             List<AiDecisionResponse> aiDecisions, CreditStatusResponse credit,
-            List<AiReviewResponse> aiReviews
+            List<AiReviewResponse> aiReviews,
+            AiUsageResponse aiUsage
     ) {}
+
+    public record AiUsageResponse(BigDecimal estimatedCostYuan, BigDecimal reservedYuan, BigDecimal budgetYuan,
+                                  int requestCount, long promptTokens, long promptCacheHitTokens, long completionTokens) {}
 
     public record LeaderboardEntryResponse(long rank, Long sessionId, String playerType,
                                            String displayName, BigDecimal returnPercent,

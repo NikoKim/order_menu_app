@@ -83,7 +83,7 @@
 
         <!-- Action bar -->
         <div class="moment-actions">
-          <button class="act-btn" :class="{ active: moment.likedByMe }" @click="handleLike">
+          <button class="act-btn" :class="{ active: moment.likedByMe }" :disabled="moment.likePending" :aria-busy="Boolean(moment.likePending)" @click="handleLike">
             <Heart class="act-icon" :size="19" :fill="moment.likedByMe ? 'currentColor' : 'none'" />
             <span>{{ moment.likedByMe ? '已赞' : '点赞' }}</span>
             <span class="act-num">{{ moment.likeCount || 0 }}</span>
@@ -145,7 +145,7 @@
                 <img v-for="(img, i) in c.imageUrls" :key="i" :src="imageUrl(img)" class="comment-img" @click="viewCommentImage(c.imageUrls, i)" />
               </div>
               <div class="comment-actions">
-                <button class="comment-like-btn" :class="{ liked: c.likedByMe }" @click="handleCommentLike(c)">
+                <button class="comment-like-btn" :class="{ liked: c.likedByMe }" :disabled="c.likePending" @click="handleCommentLike(c)">
                   <Heart :size="17" :fill="c.likedByMe ? 'currentColor' : 'none'" />
                   <span v-if="c.likeCount">{{ c.likeCount }}</span>
                 </button>
@@ -183,7 +183,7 @@
                       <img v-for="(img, i) in r.imageUrls" :key="i" :src="imageUrl(img)" class="comment-img" @click="viewCommentImage(r.imageUrls, i)" />
                     </div>
                     <div class="comment-actions reply-actions">
-                      <button class="comment-like-btn" :class="{ liked: r.likedByMe }" @click="handleCommentLike(r)">
+                      <button class="comment-like-btn" :class="{ liked: r.likedByMe }" :disabled="r.likePending" @click="handleCommentLike(r)">
                         <Heart :size="16" :fill="r.likedByMe ? 'currentColor' : 'none'" />
                         <span v-if="r.likeCount">{{ r.likeCount }}</span>
                       </button>
@@ -214,7 +214,7 @@
       <div v-else class="comment-input-bar">
         <div v-if="replyTarget" class="reply-indicator">
           <span>回复 {{ replyTarget.author?.nickname }}</span>
-          <button class="reply-cancel" title="取消回复" @click="replyTarget = null"><X :size="16" /></button>
+          <button class="reply-cancel" title="取消回复" :disabled="commentSending" @click="replyTarget = null"><X :size="16" /></button>
         </div>
         <div v-if="commentImages.length" class="comment-image-previews">
           <div v-for="item in commentImages" :key="item.id" class="comment-image-preview" :class="`is-${item.status}`">
@@ -222,19 +222,19 @@
             <span v-if="item.status === 'uploading'" class="comment-image-loading">上传中</span>
             <button v-if="item.status === 'failed'" class="comment-image-retry" type="button" title="重新上传" aria-label="重新上传图片" @click="uploadCommentImageItem(item)"><RefreshCw :size="16" /></button>
             <div class="comment-image-rotate">
-              <button type="button" title="向左旋转" :disabled="item.status === 'uploading'" @click="rotateCommentImage(item, -1)"><RotateCcw :size="14" /></button>
-              <button type="button" title="向右旋转" :disabled="item.status === 'uploading'" @click="rotateCommentImage(item, 1)"><RotateCw :size="14" /></button>
+              <button type="button" title="向左旋转" :disabled="commentSending || item.status === 'uploading'" @click="rotateCommentImage(item, -1)"><RotateCcw :size="14" /></button>
+              <button type="button" title="向右旋转" :disabled="commentSending || item.status === 'uploading'" @click="rotateCommentImage(item, 1)"><RotateCw :size="14" /></button>
             </div>
-            <button class="comment-image-remove" type="button" title="移除图片" aria-label="移除图片" @click="removeCommentImage(item)"><X :size="15" /></button>
+            <button class="comment-image-remove" type="button" title="移除图片" aria-label="移除图片" :disabled="commentSending" @click="removeCommentImage(item)"><X :size="15" /></button>
           </div>
         </div>
         <div class="comment-input-row">
           <label class="comment-img-btn" :class="{ disabled: commentImages.length >= 6 }">
             <ImagePlus :size="22" aria-label="添加图片" />
-            <input type="file" accept="image/*" multiple hidden :disabled="commentImages.length >= 6" @change="handleCommentImage" />
+            <input type="file" accept="image/*" multiple hidden :disabled="commentSending || commentImages.length >= 6" @change="handleCommentImage" />
           </label>
-          <input ref="commentInputEl" v-model="commentText" class="comment-text-input" :placeholder="replyTarget ? '写回复...，输入 @ 提及用户' : '写评论...，输入 @ 提及用户'" @input="handleCommentInput" @keyup.enter="handleCommentSend" />
-          <button class="comment-send-btn" :disabled="!canSendComment" @click="handleCommentSend">{{ commentImages.some(item => item.status === 'uploading') ? '上传中' : '发送' }}</button>
+          <input ref="commentInputEl" v-model="commentText" class="comment-text-input" :disabled="commentSending" :placeholder="replyTarget ? '写回复...，输入 @ 提及用户' : '写评论...，输入 @ 提及用户'" @input="handleCommentInput" @keydown.enter.prevent="!$event.isComposing && handleCommentSend()" />
+          <button class="comment-send-btn" :disabled="!canSendComment" :aria-busy="commentSending" @click="handleCommentSend">{{ commentSending ? '发送中' : commentImages.some(item => item.status === 'uploading') ? '上传中' : '发送' }}</button>
         </div>
       </div>
     </template>
@@ -304,6 +304,7 @@ import MomentReactionPicker from '../../components/MomentReactionPicker.vue'
 import { shareMomentExternally } from '../../services/shareCard'
 import { prepareUploadImage } from '../../services/imageUpload'
 import { confirmNotice, notifyError, notifySuccess } from '../../services/notice'
+import { optimisticLike } from '../../services/optimisticLike'
 
 const route = useRoute()
 const router = useRouter()
@@ -312,11 +313,13 @@ const loading = ref(true)
 const error = ref('')
 const comments = ref([])
 const commentPage = ref(1)
+let commentRevision = 0
 const hasMoreComments = ref(false)
 const loadingComments = ref(false)
 const isLoggedIn = Boolean(localStorage.getItem('token'))
 
 const commentText = ref('')
+const commentSending = ref(false)
 const commentImages = ref([])
 const commentMentionUsers = ref([])
 const mentionPickerOpen = ref(false)
@@ -334,7 +337,7 @@ const isIsolatedShare = computed(() => route.query.shareMode === 'isolated')
 const canSendComment = computed(() => {
   const hasContent = Boolean(commentText.value.trim()) || commentImages.value.some(item => item.status === 'ready')
   const imagesSettled = commentImages.value.every(item => item.status === 'ready')
-  return hasContent && imagesSettled
+  return !commentSending.value && hasContent && imagesSettled
 })
 let lastScrollY = 0
 
@@ -370,8 +373,10 @@ async function loadDetail() {
 }
 
 async function loadComments() {
+  const revision = commentRevision
   try {
     const res = await getMomentComments(Number(route.params.id), { page: 1, pageSize: 20 })
+    if (revision !== commentRevision) return
     comments.value = (res.records || []).map(normalizeLegacyComment)
     hasMoreComments.value = res.hasMore !== false
     commentPage.value = 1
@@ -403,10 +408,14 @@ async function loadComments() {
 }
 
 async function loadMoreComments() {
+  if (loadingComments.value) return
+  const revision = commentRevision
   loadingComments.value = true
   try {
     const res = await getMomentComments(Number(route.params.id), { page: commentPage.value + 1, pageSize: 20 })
-    comments.value.push(...(res.records || []).map(normalizeLegacyComment))
+    if (revision !== commentRevision) return
+    const known = new Set(comments.value.map(item => item.id))
+    comments.value.push(...(res.records || []).filter(item => !known.has(item.id)).map(normalizeLegacyComment))
     hasMoreComments.value = res.hasMore !== false
     commentPage.value++
   } catch { }
@@ -414,8 +423,10 @@ async function loadMoreComments() {
 }
 
 async function loadReplies(c) {
+  const revision = commentRevision
   try {
     const res = await getCommentReplies(Number(route.params.id), c.id, { page: 1, pageSize: 10 })
+    if (revision !== commentRevision) return
     c.replies = (res.records || []).map(normalizeLegacyComment)
   } catch { }
 }
@@ -439,44 +450,53 @@ async function handleLike() {
   const m = moment.value
   if (!m) return
   try {
-    const liked = !m.likedByMe
-    await setMomentLike(m.id, liked)
-    m.likedByMe = liked
-    m.likeCount = (m.likeCount || 0) + (liked ? 1 : -1)
+    await optimisticLike(m, active => setMomentLike(m.id, active))
   } catch (e) { notifyError(e.message) }
 }
 
 async function handleCommentLike(c) {
   if (!requireLogin()) return
   try {
-    const liked = !c.likedByMe
-    await setCommentLike(Number(route.params.id), c.id, liked)
-    c.likedByMe = liked
-    c.likeCount = (c.likeCount || 0) + (liked ? 1 : -1)
+    await optimisticLike(c, active => setCommentLike(Number(route.params.id), c.id, active), `comment:${c.id}`)
   } catch (e) { notifyError(e.message) }
 }
 
 async function handleCommentSend() {
   if (!requireLogin()) return
   if (!canSendComment.value) return
+  commentSending.value = true
+  const parentId = replyTarget.value ? (replyTarget.value.parentCommentId || replyTarget.value.id) : null
   try {
-    await addMomentComment(Number(route.params.id), {
+    const saved = normalizeLegacyComment(await addMomentComment(Number(route.params.id), {
       content: commentText.value.trim(),
-      parentCommentId: replyTarget.value ? (replyTarget.value.parentCommentId || replyTarget.value.id) : null,
+      parentCommentId: parentId,
       replyToCommentId: replyTarget.value?.parentCommentId ? replyTarget.value.id : null,
       imageUrls: commentImages.value.map(item => item.url),
       mentionedUserIds: activeCommentMentions().map(user => user.id)
-    })
+    }))
+    commentRevision++
+    if (parentId) {
+      const parent = comments.value.find(item => item.id === parentId)
+      if (parent) {
+        parent.replies = [...(parent.replies || []).filter(item => item.id !== saved.id), saved]
+        parent.replyCount = (parent.replyCount || 0) + 1
+      }
+    } else {
+      comments.value = [...comments.value.filter(item => item.id !== saved.id), saved]
+    }
     commentText.value = ''
     commentMentionUsers.value = []
     clearCommentImages()
     replyTarget.value = null
-    loadComments()
     if (moment.value) moment.value.commentCount = (moment.value.commentCount || 0) + 1
+    await nextTick()
+    document.getElementById(`comment-${saved.id}`)?.scrollIntoView({ behavior: 'smooth', block: 'center' })
   } catch (e) { notifyError(e.message) }
+  finally { commentSending.value = false }
 }
 
 function startReply(c) {
+  if (commentSending.value) return
   if (!requireLogin()) return
   replyTarget.value = c; commentText.value = ''; commentMentionUsers.value = []; commentInputEl.value?.focus()
 }
@@ -512,6 +532,7 @@ async function handleDeleteComment(c) {
   if (!await confirmNotice('确认删除评论？')) return
   try {
     await deleteMomentComment(Number(route.params.id), c.id)
+    commentRevision++
     comments.value = comments.value.filter(x => x.id !== c.id)
     if (moment.value) moment.value.commentCount = Math.max(0, (moment.value.commentCount || 1) - 1)
   } catch (e) { notifyError(e.message) }
@@ -522,6 +543,7 @@ async function handleDeleteReply(parent, reply) {
   if (!await confirmNotice('确认删除回复？')) return
   try {
     await deleteMomentComment(Number(route.params.id), reply.id)
+    commentRevision++
     parent.replies = (parent.replies || []).filter(item => item.id !== reply.id)
     parent.replyCount = Math.max(0, (parent.replyCount || 1) - 1)
     if (moment.value) moment.value.commentCount = Math.max(0, (moment.value.commentCount || 1) - 1)

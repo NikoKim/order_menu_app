@@ -38,4 +38,27 @@ class AuctionClearingEngineTest {
                 new BigDecimal("3"), BigDecimal.ZERO, BigDecimal.ZERO);
         assertEquals(2, result.fills().stream().mapToLong(AuctionClearingEngine.Fill::filledShares).sum());
     }
+
+    @Test
+    void finalClearingPreservesAiShareTurnoverAndDirectionGuards() {
+        var buyer = new AuctionClearingEngine.TargetOrder("AI", new BigDecimal("10000"), 0, 100,
+                BigDecimal.ZERO, "BUY", 4L, new BigDecimal("250"), BigDecimal.ZERO, null, null);
+        var result = AuctionClearingEngine.clear(new BigDecimal("100"), List.of(buyer), 1000,
+                new BigDecimal("10"), BigDecimal.ZERO, BigDecimal.ZERO);
+        var fill = result.fills().get(0);
+        assertTrue(fill.filledShares() <= 4);
+        assertTrue(fill.grossAmount().compareTo(new BigDecimal("250")) <= 0);
+        var wrongDirection = new AuctionClearingEngine.TargetOrder("AI", BigDecimal.ZERO, 100, 0,
+                BigDecimal.ZERO, "BUY", 4L, new BigDecimal("250"), BigDecimal.ZERO, null, null);
+        assertEquals(0, AuctionClearingEngine.clear(new BigDecimal("100"), List.of(wrongDirection), 1000,
+                new BigDecimal("10"), BigDecimal.ZERO, BigDecimal.ZERO).fills().get(0).filledShares());
+    }
+
+    @Test
+    void priceOutsideTheAcceptedRangeDoesNotFill() {
+        var buyer = new AuctionClearingEngine.TargetOrder("AI", new BigDecimal("10000"), 0, 100,
+                BigDecimal.ZERO, "BUY", 100L, null, null, null, new BigDecimal("99"));
+        assertEquals(0, AuctionClearingEngine.clear(new BigDecimal("100"), List.of(buyer), 1000,
+                new BigDecimal("10"), BigDecimal.ZERO, BigDecimal.ZERO).fills().get(0).filledShares());
+    }
 }

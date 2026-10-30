@@ -1,0 +1,20 @@
+DROP TABLE IF EXISTS guess_stock_ai_budgets;
+ALTER TABLE guess_stock_ai_tasks
+  DROP COLUMN strategy_state_json,
+  DROP COLUMN estimated_cost_yuan,
+  DROP COLUMN prompt_cache_miss_tokens,
+  DROP COLUMN prompt_cache_hit_tokens;
+ALTER TABLE guess_stock_ai_decisions
+  DROP KEY idx_ai_decision_order,
+  DROP COLUMN planned_value,
+  DROP COLUMN planned_shares,
+  DROP COLUMN planned_direction,
+  DROP COLUMN execution_status,
+  DROP COLUMN order_id;
+ALTER TABLE guess_stock_orders
+  DROP COLUMN execution_max_price,
+  DROP COLUMN execution_min_price,
+  DROP COLUMN execution_min_notional,
+  DROP COLUMN execution_max_notional,
+  DROP COLUMN execution_max_shares,
+  DROP COLUMN allowed_side;
