@@ -1,4 +1,5 @@
 import { createRouter, createWebHistory } from 'vue-router'
+import { loadNavalPage } from '../games/navalPageLoader'
 
 const routes = [
   {
@@ -11,7 +12,8 @@ const routes = [
       { path: 'chat', name: 'customer-chat', component: () => import('../views/customer/ChatHome.vue'), meta: { auth: 'CUSTOMER', shell: true } },
       { path: 'moments', name: 'customer-moments', component: () => import('../views/customer/ChatHome.vue'), meta: { shell: true } },
       { path: 'entertainment', name: 'customer-entertainment', component: () => import('../views/entertainment/EntertainmentHub.vue'), meta: { entertainment: true, wide: true } },
-      { path: 'entertainment/tutorial', name: 'customer-entertainment-tutorial', component: () => import('../views/entertainment/GuessStockPlay.vue'), meta: { tutorial: true, wide: true, immersive: true } },
+      { path: 'entertainment/naval', name: 'customer-entertainment-naval', component: loadNavalPage, meta: { entertainment: true, wide: true, bare: true } },
+      { path: 'entertainment/tutorial', name: 'customer-entertainment-tutorial', component: () => import('../views/entertainment/GuessStockPlay.vue'), meta: { tutorial: true, entertainment: true, wide: true, immersive: true } },
       { path: 'entertainment/games/:gameId', name: 'customer-entertainment-game', component: () => import('../views/entertainment/GameDetail.vue'), meta: { entertainment: true, wide: true } },
       { path: 'entertainment/sessions/:sessionId/play', name: 'customer-entertainment-play', component: () => import('../views/entertainment/GuessStockPlay.vue'), meta: { entertainment: true, wide: true, immersive: true } },
       { path: 'entertainment/challenges/:challengeId/leaderboard', name: 'customer-entertainment-challenge-leaderboard', component: () => import('../views/entertainment/DailyChallengeLeaderboard.vue'), meta: { entertainment: true, wide: true } },

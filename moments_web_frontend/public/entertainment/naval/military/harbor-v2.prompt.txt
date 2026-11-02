@@ -1,0 +1,5 @@
+Generated with the built-in image_gen tool on 2026-11-01.
+Project asset: public/entertainment/naval/military/harbor-v2.png
+
+Final prompt:
+Use case: stylized-concept. Asset type: wide pixel-art naval tactics game harbor background, military mode. Create a new scene matching the provided game's detailed hand-crafted crisp pixel-art feel: a modern aircraft carrier with two small fighter jets visibly parked on its long deck, a submarine and two destroyers departing a fortified coastal naval base into bright teal turquoise sea, steel blue hulls, golden wooden details, green coastal rock cliffs, radar masts and stone piers. Wide panoramic 3:1 composition, overhead oblique view, carrier visible in right half, left half open navigable water. Daylight, readable vessels, no blur, no text, no UI, no logos, no borders. Detailed sharp pixel clusters and outlined sprites, coordinated teal blue, neutral steel, amber and green colors. This is an in-game harbor scene, not an interface mockup.

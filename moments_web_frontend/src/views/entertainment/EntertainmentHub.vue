@@ -2,8 +2,7 @@
   <div class="ent-page">
     <header class="ent-toolbar">
       <div>
-        <h1>娱乐</h1>
-        <p>挑一只玩家创建的虚拟股票，和本局 AI 比一比收益率。</p>
+        <h1>股票</h1>
       </div>
       <div class="toolbar-actions">
         <button class="btn btn-outline multiplayer-command" @click="showJoinRoom = true"><Users :size="17" />多人游戏</button>
@@ -94,7 +93,7 @@
 <script setup>
 import { computed, onMounted, reactive, ref } from 'vue'
 import { useRouter } from 'vue-router'
-import { BookOpen, Bot, ChevronRight, FolderKanban, Gamepad2, GraduationCap, History, LogIn, Play, Plus, RefreshCw, Search, Timer, TrendingUp, UserRound, Users, X } from 'lucide-vue-next'
+import { Anchor, BookOpen, Bot, ChevronRight, FolderKanban, Gamepad2, GraduationCap, History, LogIn, Play, Plus, RefreshCw, Search, Timer, TrendingUp, UserRound, Users, X } from 'lucide-vue-next'
 import { ensureEntertainmentGuest, getGames, joinGameRoom } from '../../api/entertainment'
 import LoadingSpinner from '../../components/LoadingSpinner.vue'
 import EmptyState from '../../components/EmptyState.vue'
@@ -165,6 +164,7 @@ onMounted(loadGames)
 
 <style scoped>
 .ent-page { max-width: 1180px; margin: 0 auto; padding: 28px 24px 56px; }
+.ent-category-tabs{display:flex;gap:25px;margin-bottom:20px;border-bottom:1px solid #dce4e7}.ent-category-tabs>a,.ent-category-tabs>span{display:flex;align-items:center;gap:8px;padding:10px 2px;font-size:14px;color:#78868b;border-bottom:2px solid transparent}.ent-category-tabs .active{border-color:#e68a37;color:#db7823;font-weight:700}
 .tutorial-entry{display:flex;align-items:center;gap:14px;padding:16px 0;margin-bottom:18px;border-top:1px solid #d5e5dc;border-bottom:1px solid #d5e5dc;color:#1a7658}.tutorial-entry>svg{flex-shrink:0}.tutorial-entry>div{flex:1;min-width:0}.tutorial-entry h2{font-size:16px;color:#263d32}.tutorial-entry h2 span{display:inline-block;margin-left:8px;font-size:11px;color:#657b6f;font-weight:500}.tutorial-entry p{display:flex;flex-wrap:wrap;gap:4px 10px;margin-top:4px;font-size:12px;color:#738279}.tutorial-entry p span{white-space:nowrap}.tutorial-entry .btn{flex-shrink:0;border-color:#a9cbb9;color:#1a7658}@media(max-width:600px){.tutorial-entry{flex-wrap:wrap;gap:10px}.tutorial-entry h2 span{display:block;margin:3px 0 0}.tutorial-entry .btn{margin-left:38px}}
 .ent-toolbar { display: flex; justify-content: space-between; align-items: flex-end; gap: 24px; margin-bottom: 22px; }
 .ent-toolbar h1 { font-size: 28px; font-weight: 800; }

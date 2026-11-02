@@ -2,6 +2,7 @@ import client from './client'
 
 const GUEST_KEY = 'entertainment_guest_token'
 const GUEST_NAME_KEY = 'entertainment_guest_name'
+let guestCreation = null
 
 function guestConfig() {
   const token = localStorage.getItem(GUEST_KEY)
@@ -15,10 +16,33 @@ export async function ensureEntertainmentGuest() {
   if (localStorage.getItem('token')) return null
   const existing = localStorage.getItem(GUEST_KEY)
   if (existing) return { token: existing, displayName: localStorage.getItem(GUEST_NAME_KEY) || '游客' }
-  const data = await client.post('/entertainment/guests', null, { skipAuthRedirect: true })
-  localStorage.setItem(GUEST_KEY, data.token)
-  localStorage.setItem(GUEST_NAME_KEY, data.displayName)
-  return data
+  if (!guestCreation) {
+    guestCreation = client.post('/entertainment/guests', null, { skipAuthRedirect: true }).then(data => {
+      if (!data?.token || typeof data.token !== 'string') throw new Error('暂时无法建立游客身份，请稍后重试')
+      localStorage.setItem(GUEST_KEY, data.token)
+      localStorage.setItem(GUEST_NAME_KEY, data.displayName || '游客')
+      return data
+    }).finally(() => { guestCreation = null })
+  }
+  return guestCreation
+}
+
+export async function withEntertainmentGuest(request) {
+  const authenticated = Boolean(localStorage.getItem('token'))
+  await ensureEntertainmentGuest()
+  const attemptedToken = entertainmentGuestToken()
+  try {
+    return await request()
+  } catch (error) {
+    if (authenticated || localStorage.getItem('token') || Number(error.code) !== 401) throw error
+    // Concurrent failures must not remove a replacement created by another request.
+    if (entertainmentGuestToken() === attemptedToken) {
+      localStorage.removeItem(GUEST_KEY)
+      localStorage.removeItem(GUEST_NAME_KEY)
+    }
+    await ensureEntertainmentGuest()
+    return request()
+  }
 }
 
 export const getModes = () => client.get('/entertainment/modes', guestConfig())

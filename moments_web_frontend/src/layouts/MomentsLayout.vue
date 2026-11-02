@@ -1,9 +1,10 @@
 <template>
   <div v-if="route.meta.bare" class="bare-layout">
+    <EntertainmentNavigation v-if="route.meta.entertainment" />
     <router-view />
   </div>
   <div v-else class="moments-shell" :class="{ immersive: route.meta.immersive, wide: route.meta.wide, 'has-mobile-nav': route.meta.entertainment, 'isolated-share': isolatedShare }">
-    <aside v-if="!isolatedShare" class="desktop-rail" aria-label="主导航">
+    <aside v-if="!isolatedShare && !route.meta.entertainment" class="desktop-rail" aria-label="主导航">
       <router-link :to="landingPath" class="brand" aria-label="香狗点餐聊天与动态">
         <img src="/app_icon.png" alt="" />
         <span>香狗</span>
@@ -46,18 +47,15 @@
     </aside>
 
     <main class="app-surface">
+      <EntertainmentNavigation v-if="route.meta.entertainment && !isolatedShare" />
       <router-view />
     </main>
-    <nav v-if="route.meta.entertainment && !isolatedShare" class="mobile-primary-nav" aria-label="移动主导航">
-      <router-link to="/customer/chat"><MessageCircle :size="22" /><span>聊天</span></router-link>
-      <router-link to="/customer/moments"><Aperture :size="22" /><span>动态</span></router-link>
-      <router-link to="/customer/entertainment"><Gamepad2 :size="22" /><span>娱乐</span></router-link>
-    </nav>
   </div>
 </template>
 
 <script setup>
 import { computed, onMounted, onUnmounted, ref } from 'vue'
+import EntertainmentNavigation from '../components/EntertainmentNavigation.vue'
 import { useRoute, useRouter } from 'vue-router'
 import { Album, Aperture, Bell, Gamepad2, LogIn, LogOut, MessageCircle, Settings, ShieldCheck, UserRound } from 'lucide-vue-next'
 import { getConversations, getNotificationUnreadCount } from '../api/messages'
@@ -120,6 +118,7 @@ onUnmounted(() => {
 .moments-shell { min-height: 100dvh; display: grid; grid-template-columns: 248px minmax(0, 760px); justify-content: center; background: #f6f7f8; }
 .moments-shell.isolated-share { grid-template-columns: minmax(0, 760px); }
 .moments-shell.wide { grid-template-columns: 248px minmax(0, 1440px); }
+.moments-shell.has-mobile-nav { grid-template-columns: minmax(0, 1fr); }
 .desktop-rail { height: 100dvh; position: sticky; top: 0; display: flex; flex-direction: column; padding: 24px 18px 18px; background: #fff; border-right: 1px solid #eaecf0; }
 .brand { display: flex; align-items: center; gap: 11px; padding: 0 10px 26px; color: #202124; font-size: 20px; font-weight: 800; }
 .brand img { width: 38px; height: 38px; border-radius: 8px; object-fit: cover; }
@@ -143,7 +142,7 @@ onUnmounted(() => {
   .moments-shell { display: block; }
   .desktop-rail { display: none; }
   .app-surface { width: 100%; border: 0; }
-  .moments-shell.has-mobile-nav .app-surface { padding-bottom: calc(64px + env(safe-area-inset-bottom)); }
+  .moments-shell.has-mobile-nav .app-surface { padding-bottom: 0; }
   .mobile-primary-nav { position: fixed; z-index: 190; right: 0; bottom: 0; left: 0; min-height: 64px; display: grid; grid-template-columns: repeat(3, 1fr); padding: 5px 8px max(5px, env(safe-area-inset-bottom)); border-top: 1px solid #eaecf0; background: rgba(255,255,255,.97); backdrop-filter: blur(12px); }
   .mobile-primary-nav a { min-height: 52px; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 2px; color: #7a7f87; font-size: 11px; font-weight: 650; }
   .mobile-primary-nav a.router-link-active { color: #d96f0a; }

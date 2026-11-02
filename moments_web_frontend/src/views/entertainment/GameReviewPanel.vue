@@ -20,7 +20,7 @@
       <div v-else-if="loaded" class="review-gate"><LockKeyhole :size="16" /><span>{{ loggedIn ? '玩过这个游戏后即可评论和评分' : '登录并玩过这个游戏后即可评价' }}</span><router-link v-if="!loggedIn" :to="{ path: '/customer/login', query: { redirect: route.fullPath } }">登录</router-link></div>
       <div v-if="data.records.length" class="review-list">
         <article v-for="review in data.records" :key="review.id" class="player-review">
-          <div class="review-author"><img v-if="review.author?.avatarUrl" :src="imageUrl(review.author.avatarUrl)" alt="" /><div v-else class="review-avatar">{{ (review.author?.nickname || '用户').slice(0, 1) }}</div><strong>{{ review.author?.nickname || '用户' }}</strong><small v-if="review.mine">我</small><button v-if="review.mine" type="button" :disabled="saving || deleting" title="删除我的评价" aria-label="删除我的评价" @click="remove"><Trash2 :size="15" /></button></div>
+          <div class="review-author"><NavalAvatar v-if="naval" :person="{...review.author,name:review.author?.nickname,registered:true}" :size="18" /><img v-else-if="review.author?.avatarUrl" :src="imageUrl(review.author.avatarUrl)" alt="" /><div v-else class="review-avatar">{{ (review.author?.nickname || '用户').slice(0, 1) }}</div><strong>{{ review.author?.nickname || '用户' }}</strong><small v-if="review.mine">我</small><button v-if="review.mine" type="button" :disabled="saving || deleting" title="删除我的评价" aria-label="删除我的评价" @click="remove"><Trash2 :size="15" /></button></div>
           <div class="review-meta"><div class="rating-stars" :aria-label="`${review.rating} 星`"><Star v-for="star in 5" :key="star" :size="12" :class="{ filled: star <= review.rating }" /></div><time>{{ formatDate(review.updatedAt) }}</time></div>
           <p>{{ review.content }}</p>
         </article>
@@ -32,14 +32,16 @@
 </template>
 
 <script setup>
+import NavalAvatar from './NavalAvatar.vue'
 import { computed, ref, watch } from 'vue'
 import { useRoute } from 'vue-router'
 import { ChevronLeft, ChevronRight, LoaderCircle, LockKeyhole, MessageSquare, RotateCcw, Send, Star, Trash2 } from 'lucide-vue-next'
 import { deleteGameReview, getGameReviews, saveGameReview } from '../../api/entertainment'
+import { deleteNavalReview, getNavalReviews, saveNavalReview } from '../../api/naval'
 import { imageUrl } from '../../composables/useImage'
 import { confirmNotice, notifyError, notifySuccess } from '../../services/notice'
 
-const props = defineProps({ gameId: { type: Number, required: true } })
+const props = defineProps({ gameId: { type: Number, default: 0 }, naval: Boolean })
 const route = useRoute()
 const loggedIn = computed(() => Boolean(localStorage.getItem('token')))
 const emptyData = () => ({ records: [], total: 0, averageRating: 0, canReview: false, myReview: null })
@@ -62,7 +64,7 @@ async function load(nextPage = 1, syncDraft = false) {
   loading.value = true
   error.value = ''
   try {
-    const result = await getGameReviews(props.gameId, { page: nextPage, pageSize })
+    const result = await (props.naval ? getNavalReviews : getGameReviews)(props.gameId, { page: nextPage, pageSize })
     if (request !== generation) return
     data.value = result
     page.value = nextPage
@@ -79,7 +81,7 @@ async function save() {
   if (saving.value || deleting.value || !canSave.value) return
   saving.value = true
   try {
-    const review = await saveGameReview(props.gameId, { rating: rating.value, content: content.value.trim() })
+    const review = await (props.naval ? saveNavalReview : saveGameReview)(props.gameId, { rating: rating.value, content: content.value.trim() })
     const previous = data.value.myReview
     data.value.myReview = review
     if (!previous) data.value.total++
@@ -96,7 +98,7 @@ async function remove() {
   deleting.value = true
   try {
     if (!await confirmNotice('确认删除你的评价和评分？')) return
-    await deleteGameReview(props.gameId)
+    await (props.naval ? deleteNavalReview : deleteGameReview)(props.gameId)
     const id = data.value.myReview?.id
     data.value.records = data.value.records.filter(item => item.id !== id)
     data.value.myReview = null
