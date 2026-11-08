@@ -12,7 +12,7 @@ const LESSONS = [
   { id: 'move', title: '选择并移动舰船', target: 'naval-fleet-roster', mode: 'action', chapter: '舰队布局' },
   { id: 'clear', title: '清空当前排布', target: 'naval-clear-layout', mode: 'action', chapter: '舰队布局', description: '点击清空排布。舰船会回到编成列表，不会删除你保存的阵型。' },
   { id: 'randomize', title: '生成完整阵型', target: 'naval-random-layout', mode: 'action', chapter: '舰队布局', description: '点击随机阵型，重新布置全部舰船。正式游戏中也可以逐艘摆放，或载入你保存的阵型。' },
-  { id: 'rotate', title: '旋转舰船', target: 'naval-rotate-ship', mode: 'action', chapter: '舰队布局', description: '每艘舰船旁都有旋转按钮。电脑也可以选中舰船后按 R；如果旋转后会越界或贴近其他舰船，请保持旋转预览并选择新的空位。' },
+  { id: 'rotate', title: '旋转舰船', target: 'naval-rotate-ship', mode: 'action', chapter: '舰队布局', description: '电脑部署选中舰船后点击或拖放直接生效，用工具栏旋转图标或 R 转向；手机先预览，用勾确认、叉取消。靠近边缘会自动移入棋盘；红色半透明预览表示当前不能摆放，换个位置即可。' },
   { id: 'layout', title: '第二阶段：战备补给', target: 'naval-layout-next', mode: 'action', chapter: '舰队布局', description: '布阵限时 5 分钟，双方完成后进入补给，提前完成需等待对方。点击下一步锁定舰队；进入补给后只能购买道具和调整防御，不能再移动舰船。' },
   { id: 'buy-fighter', title: '购买两架战斗机', target: 'naval-buy-fighter', mode: 'action', chapter: '战备补给', description: '每架 30 金币。选中 2 行 × 8 列后，随机选其中一行扫射 8 格；任一候选行有防空炮都会拦截。买两架，分别演示拦截与扫射。' },
   { id: 'buy-mine', title: '购买一枚水雷', target: 'naval-buy-mine', mode: 'action', chapter: '战备补给', description: '一枚水雷花费 5 金币。购买后还要将它部署在自己的空海域中，不能与舰船重叠。' },
@@ -182,7 +182,7 @@ function adaptMobileStep(step, session) {
     step.description = '左侧是完整的 12 × 12 海域，右侧是操作区。10 艘舰船之间至少空一格，斜角也不能相邻。交战时玩家信息和倒计时显示在各自棋盘上方。'
     step.cell = { x: 0, y: 0, w: 5, h: 5 }
   }
-  if (step.id === 'rotate') step.description = '点击右侧舰船旁的旋转图标。手机选中长舰船后，棋盘模型上方也有旋转按钮。点海域先预览位置，再点绿色勾确认，红色叉取消。'
+  if (step.id === 'rotate') step.description = '在海域预览中点击旋转图标转向；朝向会保留，选择位置后用绿色勾确认。红色半透明表示此处不能放置，叉号可取消。'
   if (step.id === 'hit-bonus') {
     step.cell = { ...session.targets.hit }
     step.description = '命中格置灰，击沉后可继续进攻并重置 30 秒计时。已击沉舰船周边一格，包括斜角，都不会再有舰船。'

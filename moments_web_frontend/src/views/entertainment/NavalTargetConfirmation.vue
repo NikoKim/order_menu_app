@@ -1,14 +1,14 @@
 <template>
   <div ref="controls" :class="rotateOnly ? 'model-rotate-controls' : 'target-confirmation'" :style="position" :data-tutorial="rotateOnly ? 'naval-model-rotate' : 'naval-confirm-target'" role="group" :aria-label="rotateOnly ? '舰船旋转' : '确认目标'" @pointerdown.stop @click.stop>
     <button v-if="rotateOnly" class="model-rotate" :disabled="busy" title="旋转舰船" aria-label="旋转选中舰船" @click="$emit('rotate')"><RotateCw :size="17" /></button>
-    <template v-else><button v-if="rotatable" class="preview-rotate" :disabled="busy" title="旋转舰船" aria-label="旋转预览舰船" @click="$emit('rotate')"><RotateCw :size="18" /></button><button :disabled="busy" title="确认使用" aria-label="确认使用" @click="$emit('confirm')"><Check :size="20" /></button>
+    <template v-else><button v-if="rotatable" data-tutorial="naval-rotate-ship" class="preview-rotate" :disabled="busy" title="旋转舰船" aria-label="旋转预览舰船" @click="$emit('rotate')"><RotateCw :size="18" /></button><button :disabled="busy || invalid" title="确认使用" aria-label="确认使用" @click="$emit('confirm')"><Check :size="20" /></button>
     <button :disabled="busy" title="取消预览" aria-label="取消预览" @click="$emit('cancel')"><X :size="20" /></button></template>
   </div>
 </template>
 <script setup>
 import { computed, onMounted, onBeforeUnmount, ref } from 'vue'
 import { Check, RotateCw, X } from 'lucide-vue-next'
-const props = defineProps({ point: { type: Object, required: true }, shape: Object, busy: Boolean, rotateOnly: Boolean, rotatable:Boolean })
+const props = defineProps({ point: { type: Object, required: true }, shape: Object, busy: Boolean, rotateOnly: Boolean, rotatable:Boolean, invalid:Boolean })
 defineEmits(['confirm', 'cancel', 'rotate'])
 const controls = ref(null), boardSize = ref(300)
 let observer
@@ -28,6 +28,6 @@ const position = computed(() => {
 })
 </script>
 <style scoped>
-.target-confirmation>.preview-rotate{background:#e8eff1;color:#55717b}
+.target-confirmation>button:disabled{opacity:.4;cursor:not-allowed}.target-confirmation>.preview-rotate{background:#e8eff1;color:#55717b}
 .target-confirmation,.model-rotate-controls{position:absolute;z-index:15;display:flex;gap:4px;padding:3px;box-sizing:border-box;background:#fff;border:1px solid #98beb9;border-radius:5px;box-shadow:0 3px 9px #193d4933;animation:target-pop .15s ease-out}.target-confirmation>button{width:32px;height:30px;display:grid;place-items:center;border-radius:3px;color:#fff;background:#32886c;flex:none;padding:0}.target-confirmation>button:last-child{background:#f2e6e2;color:#b35c4b}.model-rotate-controls .model-rotate{position:static!important;transform:none!important;width:26px!important;height:26px!important;display:grid;place-items:center;padding:0;background:white;color:#a57539;border:0}@keyframes target-pop{from{opacity:0;transform:translateY(5px)}}
 </style>

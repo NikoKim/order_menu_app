@@ -1,0 +1,27 @@
+[Unit]
+Description=Navy Backend
+Wants=network-online.target
+After=network-online.target
+StartLimitIntervalSec=60
+StartLimitBurst=5
+
+[Service]
+Type=simple
+User=navy
+Group=navy
+WorkingDirectory=/www/wwwroot/navy/backend
+EnvironmentFile=/www/wwwroot/navy/backend/config/navy.env
+# Replace /usr/bin/java if BaoTa installed Java 17 at a different path.
+ExecStart=/usr/bin/java -Xms128m -Xmx512m -jar /www/wwwroot/navy/backend/navy-backend.jar --spring.profiles.active=prod --spring.config.additional-location=file:/www/wwwroot/navy/backend/config/application-prod.yml
+Restart=on-failure
+RestartSec=5
+TimeoutStopSec=45
+UMask=0027
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectHome=true
+ProtectSystem=strict
+ReadWritePaths=/www/wwwroot/navy/assets /www/wwwroot/navy/logs
+
+[Install]
+WantedBy=multi-user.target

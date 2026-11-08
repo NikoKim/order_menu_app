@@ -1,13 +1,15 @@
+import {recordNavalShot} from './navalShotMarkers.js'
 const key=c=>`${c.x},${c.y}`
 const inside=c=>c.x>=0&&c.y>=0&&c.x<12&&c.y<12
 const hull=s=>Array.from({length:s.w*s.h},(_,i)=>({x:s.x+i%s.w,y:s.y+Math.floor(i/s.w)}))
 const shipAt=(p,c)=>p.ships.find(s=>hull(s).some(h=>key(h)===key(c)))
 function hit(p,c,effects){
+ const scrap=p.scrapMines?.findIndex(m=>key(m)===key(c))??-1;if(scrap>=0)p.scrapMines.splice(scrap,1)
  const victim=shipAt(p,c),mine=p.mines.findIndex(m=>key(m)===key(c));if(mine>=0)p.mines.splice(mine,1)
  if(victim&&!victim.hits.includes(key(c)))victim.hits.push(key(c))
- const shot={...c,result:victim?'hit':mine>=0?'mine':'miss'},old=p.shots.find(s=>key(s)===key(c))
- if(!old)p.shots.push(shot)
- else if(victim)old.result='hit'
+ const shot={...c,result:victim?'hit':mine>=0||scrap>=0?'mine':'miss',...(scrap>=0?{mineKind:'scrap'}:{})},old=p.shots.find(s=>key(s)===key(c))
+ recordNavalShot(p,shot)
+ if(old&&!old.uncertain&&victim)old.result='hit'
  if(!effects.some(s=>key(s)===key(c)))effects.push(shot)
 }
 function sink(p,s,effects){for(const c of hull(s))hit(p,c,effects)}
@@ -16,7 +18,7 @@ export function depthChargeAttack(attacker,defender,ship,action,activeSides,rand
  for(let x=-1;x<=action.x;x++){
   const anchor={x,y:action.y};route.push(anchor)
   const footprint=[anchor,{x:x+1,y:action.y}].filter(inside)
-  const mine=footprint.some(c=>defender.mines.some(m=>key(m)===key(c))),collision=footprint.map(c=>shipAt(defender,c)).find(Boolean)
+  const mine=footprint.some(c=>defender.mines.some(m=>key(m)===key(c))||defender.scrapMines?.some(m=>key(m)===key(c))),collision=footprint.map(c=>shipAt(defender,c)).find(Boolean)
   if(mine||collision){
    destroyed=true;sink(attacker,ship,backfire)
    if(collision)sink(defender,collision,cells)

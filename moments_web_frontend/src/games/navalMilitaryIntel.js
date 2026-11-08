@@ -11,7 +11,7 @@ export function chooseMilitaryFleet(models,random=Math.random){
   const cores=[['carrier','battleship','antiAir','radar'],['bomberCarrier','battleship','battleship','antiAir','jammer'],['torpedoCarrier','cruiser','submarine','radar','antiAir'],['submarine','battleship','cruiser','mineLayer','radar'],['carrier','bomberCarrier','cruiser','antiAir'],['battleship','battleship','cruiser','antiAir','jammer']]
   const list=[...cores[Math.floor(random()*cores.length)]],budget=[250,270,285,300][Math.floor(random()*4)],cost=()=>list.reduce((n,k)=>n+models[k].price,0)
   while(true){
-    const options=Object.keys(models).filter(k=>!models[k].legacy&&cost()+models[k].price<=budget&&list.filter(t=>models[t].group===models[k].group).length<({carrier:2,medium:4,destroyer:6,decoy:3})[models[k].group])
+    const options=Object.keys(models).filter(k=>!models[k].legacy&&cost()+models[k].price<=budget&&list.filter(t=>models[t].group===models[k].group).length<({carrier:2,medium:4,destroyer:6,decoy:3,support:2})[models[k].group])
     if(!options.length)break
     const weight=k=>(['carrier','bomberCarrier','torpedoCarrier','battleship','cruiser','submarine','depthCharge'].includes(k)?3:k==='antiAir'?4:k==='radar'?3:k==='jammer'?2:1)/(1+list.filter(t=>t===k).length*3)
     let roll=random()*options.reduce((n,k)=>n+weight(k),0),chosen=options.at(-1)
@@ -24,7 +24,7 @@ export function chooseMilitaryFleet(models,random=Math.random){
 function hypotheses(kind,hits,shots,excluded,otherHits){
   const out=[]
   for(let y=0;y<12;y++)for(let x=0;x<12;x++)for(const[dx,dy]of dirs){
-    const shape=Array.from({length:lengths[kind]},(_,i)=>({x:x+dx*i,y:y+dy*i})),keys=new Set(shape.map(key))
+    const shape=kind==='repairTug'?[{x,y},{x:x+1,y},{x,y:y+1},{x:x+1,y:y+1}]:Array.from({length:lengths[kind]},(_,i)=>({x:x+dx*i,y:y+dy*i})),keys=new Set(shape.map(key))
     if(shape.every(c=>inside(c)&&!excluded.has(key(c))&&(!shots.has(key(c))||shots.get(key(c))==='hit')&&!otherHits.has(key(c)))&&hits.every(h=>keys.has(h)))out.push(shape)
   }
   return out
@@ -41,6 +41,7 @@ function disabled(kind,shape,hits,lost){
 }
 
 export function militaryIntel(own,enemy,events=[]){
+  enemy={...enemy,shots:enemy.shots.filter(c=>!c.uncertain)}
   const shots=new Map(enemy.shots.map(c=>[key(c),c.result])),allHits=new Set(enemy.shots.filter(c=>c.result==='hit').map(key)),excluded=new Set(),resolved=[],neutralized=new Set(),revealed=new Set(),located=[],vital=new Map()
   const observed=events.filter(e=>e.player===0&&e.shipId)
   for(const s of enemy.ships){

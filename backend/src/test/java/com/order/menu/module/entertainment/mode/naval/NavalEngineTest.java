@@ -11,7 +11,7 @@ import java.util.Map;
 import org.junit.jupiter.api.Test;
 
 class NavalEngineTest {
-    @Test void waitingAndAiPreparationExitsAreCancelledButMultiplayerPlacementCounts() {
+    @Test void preBattleExitsAreCancelledInAllModes() {
         NavalState waiting = new NavalState(); waiting.mode="MULTIPLAYER"; waiting.players.add(NavalEngine.player("G:1","甲"));
         NavalEngine.leave(waiting,0,1_000);
         assertNull(waiting.winner); assertEquals("CANCELLED",waiting.finishReason);
@@ -21,7 +21,7 @@ class NavalEngineTest {
             assertNull(ai.winner); assertEquals("CANCELLED",ai.finishReason);
         }
         NavalState online = room(); NavalEngine.leave(online,0,1_000);
-        assertEquals(1,online.winner); assertEquals("PLAYER_LEFT",online.finishReason);
+        assertNull(online.winner); assertEquals("CANCELLED",online.finishReason);
         NavalState ai = battle(); ai.mode="AI"; NavalEngine.leave(ai,0,3_000);
         assertEquals(1,ai.winner);
     }
@@ -32,7 +32,7 @@ class NavalEngineTest {
         online.players.get(1).lastSeenAt=31_999;
         NavalEngine.advance(online,31_999); assertEquals("PLACEMENT",online.phase);
         NavalEngine.advance(online,32_000);
-        assertEquals("FINISHED",online.phase); assertEquals(1,online.winner); assertTrue(online.players.get(0).left);
+        assertEquals("FINISHED",online.phase); assertNull(online.winner); assertTrue(online.players.get(0).left);
         assertEquals("DISCONNECTED",online.finishReason);
         NavalState lostBrowser = battle(); lostBrowser.connectionTracking=true;
         lostBrowser.players.get(0).lastSeenAt=1_000; lostBrowser.players.get(1).lastSeenAt=31_000;

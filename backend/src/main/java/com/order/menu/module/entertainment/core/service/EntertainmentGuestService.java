@@ -43,6 +43,10 @@ public class EntertainmentGuestService {
     }
 
     public PlayerIdentity resolve(LoginUser loginUser, String guestToken, boolean required) {
+        return resolve(loginUser,guestToken,required,false);
+    }
+    public PlayerIdentity resolveReadonly(LoginUser loginUser,String guestToken,boolean required){return resolve(loginUser,guestToken,required,true);}
+    private PlayerIdentity resolve(LoginUser loginUser,String guestToken,boolean required,boolean readOnly){
         if (loginUser != null) {
             return new PlayerIdentity("USER", loginUser.userId(), null, "U:" + loginUser.userId(), loginUser.nickname());
         }
@@ -64,8 +68,7 @@ public class EntertainmentGuestService {
             EntertainmentGuest guest = guestMapper.selectOne(new LambdaQueryWrapper<EntertainmentGuest>()
                     .eq(EntertainmentGuest::getPublicIdHash, sha256(publicId)).last("LIMIT 1"));
             if (guest == null || !"ACTIVE".equals(guest.getStatus())) throw unauthorized();
-            guest.setLastSeenAt(LocalDateTime.now());
-            guestMapper.updateById(guest);
+            if(!readOnly){guest.setLastSeenAt(LocalDateTime.now());guestMapper.updateById(guest);}
             return new PlayerIdentity("GUEST", null, guest.getId(), "G:" + guest.getPublicIdHash(),
                     "游客-" + guest.getDisplaySuffix());
         } catch (BusinessException exception) {

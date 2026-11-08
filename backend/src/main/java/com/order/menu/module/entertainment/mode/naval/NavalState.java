@@ -7,8 +7,12 @@ import java.util.Map;
 
 /** Persisted private state; clients receive only NavalEngine.view(). */
 public class NavalState {
+    public int shotMarkersVersion;
+    @com.fasterxml.jackson.annotation.JsonIgnore public String persistedJson;
+    public long version = 1;
     public int rulesVersion;
     public String id;
+    public String matchedRoomId;
     public String inviteCode;
     public String mode;
     public String ruleSet = "CLASSIC";
@@ -29,6 +33,8 @@ public class NavalState {
     public long finishedAt;
     public int turn;
     public int mineActions;
+    public int supportActions;
+    public String supportShipId;
     public List<Action> aiTemplate = new ArrayList<>();
     public Integer winner;
     public long sequence;
@@ -57,6 +63,7 @@ public class NavalState {
         public List<Ship> ships = new ArrayList<>();
         public List<Shot> shots = new ArrayList<>();
         public List<Cell> mines = new ArrayList<>();
+        public List<Cell> scrapMines = new ArrayList<>();
         public List<Integer> aa = new ArrayList<>();
         public Map<String, Integer> inventory = NavalEngine.emptyInventory();
         public int coins = 300;
@@ -93,7 +100,12 @@ public class NavalState {
     }
 
     public record Cell(int x, int y) { }
-    public record Shot(int x, int y, String result) { }
+    public record Shot(int x, int y, String result,
+                       @com.fasterxml.jackson.annotation.JsonInclude(com.fasterxml.jackson.annotation.JsonInclude.Include.NON_NULL) String mineKind,
+                       @com.fasterxml.jackson.annotation.JsonInclude(com.fasterxml.jackson.annotation.JsonInclude.Include.NON_NULL) Boolean uncertain) {
+        public Shot(int x,int y,String result) { this(x,y,result,null,null); }
+        public Shot(int x,int y,String result,String mineKind) { this(x,y,result,mineKind,null); }
+    }
     public record Radar(int x, int y, boolean occupied) { }
     public record Message(long id, int player, String text, long at, String name, String senderId) {
         public Message(long id, int player, String text, long at) {
@@ -102,7 +114,8 @@ public class NavalState {
     }
     public record Event(long id, int player, String weapon, List<Shot> cells, String text,
                         Integer x, Integer y, Integer row, List<Cell> targets, List<Cell> route,
-                        List<List<Cell>> torpedoes, boolean destroyed, List<Shot> backfire, String shipId, int plane) {
+                        List<List<Cell>> torpedoes, boolean destroyed, List<Shot> backfire, String shipId, int plane, Map<String,Object> support) {
+        public Event(long id,int player,String weapon,List<Shot> cells,String text,Integer x,Integer y,Integer row,List<Cell> targets,List<Cell> route,List<List<Cell>> torpedoes,boolean destroyed,List<Shot> backfire,String shipId,int plane){this(id,player,weapon,cells,text,x,y,row,targets,route,torpedoes,destroyed,backfire,shipId,plane,null);}
         public Event(long id, int player, String weapon, List<Shot> cells, String text, Integer x, Integer y, Integer row, List<Cell> targets, List<Cell> route, List<List<Cell>> torpedoes, boolean destroyed, List<Shot> backfire) {
             this(id,player,weapon,cells,text,x,y,row,targets,route,torpedoes,destroyed,backfire,null,0);
         }
@@ -118,6 +131,7 @@ public class NavalState {
     }
 
     public static class Action {
+        public String requestId;
         public String type;
         public List<Ship> ships;
         public List<Cell> mines;
@@ -127,6 +141,9 @@ public class NavalState {
         public Map<String, Integer> inventory;
         public boolean ready;
         public String weapon;
+        public String supportMode;
+        public String targetShipId;
+        public Integer rotation;
         public String shipId;
         public int plane;
         public int x;

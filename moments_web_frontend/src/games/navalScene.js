@@ -1,15 +1,15 @@
 import Phaser from 'phaser'
 import { drawMilitaryShip } from './navalMilitaryArt.js'
-import { militaryComponents, militaryCoverage, militaryJamming } from './navalMilitary.js'
+import { militaryComponents, militaryCoverage, militaryJamming, militaryPlacement } from './navalMilitary.js'
 import { playNavalSound } from './navalAudio'
 import { NAVAL_AIRCRAFT_DURATION, navalTorpedoDuration } from './navalPresentation'
 
 export const BOARD_SIZE = 624
 const GAP = 24, CELL = 48, SEA = 576, ROOT = '/entertainment/naval/v2/'
-const SPRITES = ['patrol', 'destroyer', 'cruiser', 'battleship', 'fighter', 'bomber', 'torpedo', 'torpedo-projectile', 'mine', 'antiAir', 'radar', 'submarine', 'stealth']
+const SPRITES = ['patrol', 'destroyer', 'cruiser', 'battleship', 'fighter', 'bomber', 'torpedo', 'torpedo-projectile', 'mine', 'scrap-mine', 'antiAir', 'radar', 'submarine', 'stealth']
 const SHIPS = { 1: 'patrol', 2: 'destroyer', 3: 'cruiser', 4: 'battleship' }
 const AIRCRAFT = ['fighter', 'bomber', 'torpedo']
-const COMBAT = ['shot', ...AIRCRAFT, 'radar', 'submarine', 'mine-rebound', 'military-sortie', 'mine','depthCharge']
+const COMBAT = ['shot', ...AIRCRAFT, 'radar', 'submarine', 'mine-rebound', 'military-sortie', 'mine','depthCharge','repairSupport']
 const GLYPHS = {
   A: '01110/10001/10001/11111/10001/10001/10001', B: '11110/10001/10001/11110/10001/10001/11110',
   C: '01111/10000/10000/10000/10000/10000/01111', D: '11110/10001/10001/10001/10001/10001/11110',
@@ -43,6 +43,7 @@ export function createNavalScene(callbacks, initialState) {
       this.load.on('loaderror', file => this.failures.push(file.key))
       for (const key of SPRITES) this.load.image(key, `${ROOT}${key}.png`)
       if(this.snapshot.military){this.load.image('depthChargeHull','/entertainment/naval/military/depth-charge-destroyer.png');this.load.image('depthChargeBomb','/entertainment/naval/military/depth-charge.png');this.load.image('surfaceWake','/entertainment/naval/military/surface-wake.png')}
+      if(this.snapshot.military)this.load.spritesheet('repair-sparks','/entertainment/naval/military/repair-sparks.png',{frameWidth:128,frameHeight:128})
       this.load.spritesheet('explosion', `${ROOT}explosion.png`, { frameWidth: 128, frameHeight: 128 })
       this.load.spritesheet('splash', `${ROOT}splash.png`, { frameWidth: 128, frameHeight: 128 })
     }
@@ -50,6 +51,7 @@ export function createNavalScene(callbacks, initialState) {
       if (this.failures.length) { callbacks.error?.(`游戏素材加载失败：${this.failures.join('、')}`); return }
       for (const key of SPRITES) this.trimTexture(key)
       if(this.snapshot.military){this.trimTexture('depthChargeHull');this.trimTexture('depthChargeBomb');this.trimTexture('surfaceWake')}
+      if(this.snapshot.military)this.anims.create({key:'repair-work',frames:this.anims.generateFrameNumbers('repair-sparks',{start:0,end:3}),frameRate:10,repeat:2,hideOnComplete:true})
       this.anims.create({ key: 'burst', frames: this.anims.generateFrameNumbers('explosion', { start: 0, end: 15 }), frameRate: 20, hideOnComplete: true })
       this.anims.create({ key: 'water-impact', frames: this.anims.generateFrameNumbers('splash', { start: 0, end: 15 }), frameRate: 20, hideOnComplete: true })
       this.anims.create({ key: 'smoke-drift', frames: this.anims.generateFrameNumbers('explosion', { start: 11, end: 15 }), frameRate: 7, hideOnComplete: true })
@@ -138,12 +140,13 @@ export function createNavalScene(callbacks, initialState) {
       const previousHidden = this.snapshot.hidden
       const footprint = state => JSON.stringify((state.player?.ships || []).map(ship => [ship.id,ship.x,ship.y,ship.w,ship.h]))
       if (snapshot.selected !== this.snapshot.selected || footprint(snapshot) !== footprint(this.snapshot)) this.cellFocus = null
+      const knownShots=new Set((this.snapshot.player?.shots||[]).map(c=>`${c.x},${c.y}`))
       this.snapshot = snapshot
       for (const event of this.eventsFrom(snapshot)) {
         const id = String(event.id)
         if (this.seenEvents.has(id)) continue
         this.seenEvents.add(id)
-        if (COMBAT.includes(event.weapon)) { this.eventQueue.push(event); if (this.playingEvent) this.setAnimating(true); for (const cell of event.cells || []) this.unrevealed.add(`${cell.x},${cell.y}`) }
+        if (COMBAT.includes(event.weapon)) { this.eventQueue.push(event); if (this.playingEvent) this.setAnimating(true); for (const cell of event.cells || []) if(!knownShots.has(`${cell.x},${cell.y}`))this.unrevealed.add(`${cell.x},${cell.y}`) }
       }
       if (previousHidden !== snapshot.hidden) this.drawSea()
       this.renderState(false)
@@ -192,7 +195,7 @@ export function createNavalScene(callbacks, initialState) {
       const route=event.route||[],last=route.at(-1);if(!last)return 0
       const plane=this.fittedSprite(-55,center(event.y),event.weapon,88,88,Math.PI/2);this.effects.add(plane);this.game.canvas.dataset.incomingDirection=this.visualDirection();playNavalSound(event.weapon)
       const outbound=event.destroyed?route:route.slice(0,Math.ceil(route.length/2)),end=outbound.at(-1),flight=1850*(center(end.x)+55)/745
-      const impact=c=>{this.reveal(c);if(c.result==='mine')this.mineDetonation(c);else{this.effect(c.result==='hit'?'burst':'water-impact',center(c.x),center(c.y),c.result==='hit'?100:90);playNavalSound(c.result==='hit'?'explosion':'splash');if(c.result==='hit')this.cameras.main.shake(240,.0018)}}
+      const impact=c=>{this.reveal(c);if(c.result==='mine')this.mineImpact(c,event.weapon);else{this.effect(c.result==='hit'?'burst':'water-impact',center(c.x),center(c.y),c.result==='hit'?100:90);playNavalSound(c.result==='hit'?'explosion':'splash');if(c.result==='hit')this.cameras.main.shake(240,.0018)}}
       for(const c of event.cells||[]){const at=600+1850*(center(c.x)+55)/745; if(event.weapon==='torpedo'){const drop=600+1850*(center(event.x)+55)/745,travel=navalTorpedoDuration(center(event.x),center(c.x));if(c===event.cells.at(-1))this.time.delayedCall(drop,()=>this.torpedoWake(c.x,c.y,event.x,travel));this.time.delayedCall(drop+travel,()=>impact(c))}else this.time.delayedCall(at,()=>impact(c))}
       this.time.delayedCall(600,()=>this.tweens.add({targets:plane,x:center(end.x),duration:flight,ease:'Linear',onUpdate:()=>{this.game.canvas.dataset.aircraftX=String(this.snapshot.defenseSide==='left'?BOARD_SIZE-plane.x:plane.x)},onComplete:()=>{
         if(event.destroyed){playNavalSound('intercept');this.flakTracer(center(end.x)+25,center(end.y)+40,plane.x,plane.y,150);this.effect('burst',plane.x,plane.y,106);playNavalSound('explosion');plane.setTexture(`${event.weapon}-wreck`,'trimmed');this.tweens.add({targets:plane,y:plane.y+42,angle:plane.angle+65,alpha:0,duration:800,onComplete:()=>{this.effect('water-impact',plane.x,plane.y,108);playNavalSound('splash');plane.destroy()}})}
@@ -239,6 +242,10 @@ export function createNavalScene(callbacks, initialState) {
         this.decorations.add(this.fittedSprite(this.direction() < 0 ? GAP + 12 : GAP + SEA - 12, center(row), 'antiAir', 20, 20))
       }
       for (const mine of this.snapshot.player?.mines || []) this.decorations.add(this.fittedSprite(center(mine.x), center(mine.y), 'mine', 28, 28))
+      for(const mine of this.snapshot.player?.scrapMines||[]){
+        const sprite=this.fittedSprite(center(mine.x),center(mine.y),'scrap-mine',28,28);this.decorations.add(sprite)
+        g.lineStyle(2,0x82dbb3,.9).strokeRect(GAP+mine.x*CELL+5,GAP+mine.y*CELL+5,CELL-10,CELL-10)
+      }
       for (const ship of this.snapshot.player?.ships || []) if (ship.stealth && !sunk(ship)) {
         g.lineStyle(2, 0xb5f9d3, .8).strokeRoundedRect(GAP + ship.x * CELL + 5, GAP + ship.y * CELL + 5, ship.w * CELL - 10, ship.h * CELL - 10, 6)
         this.decorations.add(this.fittedSprite(GAP + (ship.x + ship.w) * CELL - 9, GAP + ship.y * CELL + 10, 'stealth', 18, 18).setDepth(7))
@@ -246,11 +253,19 @@ export function createNavalScene(callbacks, initialState) {
     }
     drawDamage() {
       const g = this.damage.clear()
+      this.game.canvas.dataset.selectedShip=this.snapshot.selected||''
       this.game.canvas.dataset.visibleShots = String((this.snapshot.player?.shots || []).filter(cell=>!this.unrevealed.has(`${cell.x},${cell.y}`)).length)
+      this.game.canvas.dataset.uncertainShots=JSON.stringify((this.snapshot.player?.shots||[]).filter(s=>s.uncertain&&!this.unrevealed.has(`${s.x},${s.y}`)).map(({x,y})=>({x,y})))
       for (const shot of this.snapshot.player?.shots || []) {
         if (this.unrevealed.has(`${shot.x},${shot.y}`)) continue
         const x = GAP + shot.x * CELL, y = GAP + shot.y * CELL
-        if (shot.result === 'hit') {
+        if(!this.snapshot.hidden&&(this.snapshot.player?.scrapMines||[]).some(m=>m.x===shot.x&&m.y===shot.y))continue
+        if (shot.uncertain) {
+          g.fillStyle(0xacc5c9,.35).fillRect(x+1,y+1,CELL-2,CELL-2)
+          const glyph='01110/10001/00010/00100/00100/00000/00100'.split('/')
+          g.fillStyle(0x365b69,.95)
+          for(let row=0;row<7;row++)for(let col=0;col<5;col++)if(glyph[row][col]==='1')g.fillRect(center(shot.x)-7.5+(this.snapshot.defenseSide==='left'?4-col:col)*3,center(shot.y)-10.5+row*3,3,3)
+        } else if (shot.result === 'hit') {
           g.fillStyle(0x767f83, .94).fillRect(x + 1, y + 1, CELL - 2, CELL - 2)
           g.lineStyle(2, 0x404e54, .9).lineBetween(x + 17, y + 17, x + 31, y + 31).lineBetween(x + 31, y + 17, x + 17, y + 31)
           g.lineStyle(1, 0xbec4c3, .85).strokeRect(x + 3, y + 3, CELL - 6, CELL - 6)
@@ -262,6 +277,13 @@ export function createNavalScene(callbacks, initialState) {
       for (const { ship } of this.ships.values()) {
         if (this.snapshot.hidden && !sunk(ship)) continue
         if (ship.id === this.snapshot.selected && !this.snapshot.hidden) g.lineStyle(3, 0xffd286).strokeRect(GAP + ship.x * CELL + 2, GAP + ship.y * CELL + 2, ship.w * CELL - 4, ship.h * CELL - 4)
+        if(!this.snapshot.hidden)for(const hit of ship.hits||[]){
+          const [hx,hy]=hit.split(',').map(Number)
+          if(!(this.snapshot.player.shots||[]).some(p=>p.x===hx&&p.y===hy)){
+            g.fillStyle(0x70787c,.65).fillRect(GAP+hx*CELL+2,GAP+hy*CELL+2,CELL-4,CELL-4)
+            g.lineStyle(2,0xd4d9d5,.8).strokeCircle(center(hx),center(hy),6)
+          }
+        }
         if (sunk(ship)) g.lineStyle(2, 0x354950, .7).strokeRect(GAP + ship.x * CELL + 4, GAP + ship.y * CELL + 4, ship.w * CELL - 8, ship.h * CELL - 8)
       }
     }
@@ -269,7 +291,9 @@ export function createNavalScene(callbacks, initialState) {
     pointAt(x, y) { const col = Math.floor((this.inputX(x) - GAP) / CELL), row = Math.floor((y - GAP) / CELL); return col >= 0 && col < 12 && row >= 0 && row < 12 ? { x: col, y: row } : null }
     placementPoint(pointer) {
       const point = this.pointAt(pointer.x, pointer.y), offset = this.dragging && this.snapshot.preview?.offset
-      return point && offset ? { x: point.x-offset.x, y: point.y-offset.y } : point
+      if(!point)return null
+      const preview=this.snapshot.preview
+      return preview?{x:Phaser.Math.Clamp(point.x-(offset?.x||0),0,12-preview.w),y:Phaser.Math.Clamp(point.y-(offset?.y||0),0,12-preview.h)}:point
     }
     focus(point) { this.cellFocus = point; callbacks.hover?.(point); this.drawTarget() }
     chooseFocus() { if (this.snapshot.interactive) callbacks.cell?.(this.cellFocus || { x: 0, y: 0 }) }
@@ -293,19 +317,22 @@ export function createNavalScene(callbacks, initialState) {
       if (!focus || this.snapshot.region?.selected) return
       const { x, y } = focus, row = this.snapshot.region?.row, ray = this.snapshot.region?.ray
       const px = row ? 0 : x, w = row ? 12 : ray ? 12-x : this.snapshot.preview?.w || this.snapshot.region?.w || 1, h = this.snapshot.preview?.h || this.snapshot.region?.h || 1
-      const width = Math.min(w, 12 - px) * CELL, height = Math.min(h, 12 - y) * CELL, invalid = x < 0 || y < 0 || !row && (x + w > 12 || y + h > 12)
+      const width = Math.min(w, 12 - px) * CELL, height = Math.min(h, 12 - y) * CELL
+      const militaryShip=this.snapshot.preview?.militaryShip
+      const invalid = x < 0 || y < 0 || !row && (x + w > 12 || y + h > 12) || militaryShip && (!militaryPlacement(this.snapshot.player.ships,{...militaryShip,x,y}) || (this.snapshot.player.mines||[]).some(m=>m.x>=x&&m.x<x+w&&m.y>=y&&m.y<y+h))
       g.fillStyle(invalid ? 0xee7759 : 0xffd18d, .27).fillRect(GAP + px * CELL, GAP + y * CELL, width, height)
       g.lineStyle(3, invalid ? 0xff957c : 0xffe3a6).strokeRect(GAP + px * CELL + 2, GAP + y * CELL + 2, width - 4, height - 4)
 
-      const asset = this.snapshot.preview?.sprite || this.snapshot.region?.sprite
-      if (!invalid && asset) {
+      const asset = militaryShip ? this.militaryTexture({...militaryShip,x,y,hits:[]}) : this.snapshot.preview?.sprite || this.snapshot.region?.sprite
+      if (asset) {
         const assetX = row ? 0 : px, assetW = row ? 1 : w
-        this.ghost = this.fittedSprite(GAP+(assetX+assetW/2)*CELL,GAP+(y+h/2)*CELL,asset,assetW*CELL-8,h*CELL-8,assetW>h?Math.PI/2:0).setAlpha(.65).setDepth(8)
+        this.ghost = this.fittedSprite(GAP+(assetX+assetW/2)*CELL,GAP+(y+h/2)*CELL,asset,assetW*CELL-8,h*CELL-8,!militaryShip&&assetW>h?Math.PI/2:0).setAlpha(.65).setDepth(8)
         if (this.dragging && this.dragPointer) {
           const offset = this.snapshot.preview?.offset || { x: 0, y: 0 }
           this.ghost.setPosition(row ? center(0) : this.dragPointer.x+(assetW/2-.5-offset.x)*CELL,this.dragPointer.y+(h/2-.5-offset.y)*CELL)
         }
-        this.game.canvas.dataset.previewSprite = asset
+        this.game.canvas.dataset.previewSprite = militaryShip?.kind || asset
+        this.game.canvas.dataset.previewInvalid = String(Boolean(invalid))
         this.game.canvas.dataset.previewCell = `${assetX},${y}`
       }
     }
@@ -347,6 +374,17 @@ export function createNavalScene(callbacks, initialState) {
       const cells = event.cells || [], weapon = event.weapon
       if(this.snapshot.military&&weapon==='military-sortie')return this.militarySortie(event)
       if(this.snapshot.military&&AIRCRAFT.includes(weapon))return this.militaryAirAttack(event)
+      if(weapon==='repairSupport'){
+        const support=event.support||{},pose=support.after||support.before
+        playNavalSound(support.mode==='tow'?'tow':'repair')
+        const points=support.cells?.length?support.cells:pose?[{x:pose.x+pose.w/2-.5,y:pose.y+pose.h/2-.5}]:[]
+        for(const point of points){
+          if(this.anims.exists('repair-work')){const sparks=this.add.sprite(center(point.x),center(point.y),'repair-sparks').setDisplaySize(50,50).setDepth(16);this.effects.add(sparks);sparks.play('repair-work');sparks.once('animationcomplete',()=>sparks.destroy())}
+          const halo=this.add.circle(center(point.x),center(point.y),10,0x8be4b2,.5).setDepth(15);this.effects.add(halo)
+          this.tweens.add({targets:halo,radius:35,alpha:0,duration:1000,onComplete:()=>halo.destroy()})
+        }
+        this.markPhase('repair-support');return 1800
+      }
       if(weapon==='mine'){playNavalSound('deploy');for(const c of event.targets?.length?event.targets:[{x:event.x,y:event.y}])this.effect('water-impact',center(c.x),center(c.y),45);return 1000}
       if (!COMBAT.includes(weapon)) return 0
       if (weapon === 'mine-rebound') {
@@ -404,7 +442,7 @@ export function createNavalScene(callbacks, initialState) {
         if (point.result === 'mine') duration = Math.max(duration, delay + 1300)
         this.time.delayedCall(delay, () => {
           this.reveal(point)
-          if (point.result === 'mine') { this.mineDetonation(point); return }
+          if (point.result === 'mine') { this.mineImpact(point,event.weapon); return }
           const damaged = point.result === 'hit'
           this.markPhase('impact')
           this.effect(damaged ? 'burst' : 'water-impact', center(point.x), center(point.y), damaged ? 100 : 90)
@@ -436,7 +474,7 @@ export function createNavalScene(callbacks, initialState) {
       const wakeScaleX=wake.scaleX,wakeScaleY=wake.scaleY,syncWake=returning=>{wake.setPosition(boat.x+(returning?-1:1)*CELL*.84,cy).setRotation(returning?Math.PI:0).setScale(wakeScaleX,wakeScaleY*(.97+.03*Math.sin(this.time.now/100)));canvas.dataset.depthChargeWake=returning?'return':'outbound';canvas.dataset.depthChargeWakeLayer=this.effects.getIndex(wake)<this.effects.getIndex(boat)?'below-hull':'above-hull';canvas.dataset.depthChargeWakeOrigin='bow'}
       canvas.dataset.depthChargePhase='sailing';canvas.dataset.depthChargeLaunches='0'
       const settleSinks=()=>{for(const[id,pending]of this.pendingSinks)if(pending.eventId===String(event.id)){this.pendingSinks.delete(id);this.sinkShip(pending.record,pending.ship)}}
-      const impact=cell=>{this.reveal(cell);if(cell.result==='mine')this.mineDetonation(cell);else{this.effect(cell.result==='hit'?'burst':'water-impact',center(cell.x),center(cell.y),cell.result==='hit'?84:52);playNavalSound(cell.result==='hit'?'explosion':'splash')}}
+      const impact=cell=>{this.reveal(cell);if(cell.result==='mine')this.mineImpact(cell,event.weapon);else{this.effect(cell.result==='hit'?'burst':'water-impact',center(cell.x),center(cell.y),cell.result==='hit'?84:52);playNavalSound(cell.result==='hit'?'explosion':'splash')}}
       this.tweens.add({targets:boat,x:cx,duration:1250,ease:'Sine.InOut',onUpdate:()=>{canvas.dataset.depthChargeX=String(this.snapshot.defenseSide==='left'?BOARD_SIZE-boat.x:boat.x);syncWake(false)},onComplete:()=>{
         wake.setVisible(false);canvas.dataset.depthChargePhase=event.destroyed?'collision':'arrived';this.markPhase(event.destroyed?'depth-charge-collision':'depth-charge-arrived')
         if(event.destroyed){wake.destroy();for(const cell of event.cells||[])impact(cell);settleSinks();this.tweens.add({targets:boat,alpha:0,y:cy+20,angle:boat.angle+8,duration:950,onComplete:()=>boat.destroy()});return}
@@ -469,7 +507,7 @@ export function createNavalScene(callbacks, initialState) {
         wake.destroy(); this.markPhase(event.destroyed ? 'submarine-mine' : 'submarine-launch')
         if (event.destroyed) {
           sub.clearTint(); this.tweens.add({ targets: sub, alpha: 1, y: cy-6, duration: 260 })
-          for (const cell of event.cells || []) { this.reveal(cell); if (cell.result === 'mine') this.mineDetonation(cell); else this.effect('burst',center(cell.x),center(cell.y),48) }
+          for (const cell of event.cells || []) { this.reveal(cell); if (cell.result === 'mine') this.mineImpact(cell,event.weapon); else this.effect('burst',center(cell.x),center(cell.y),48) }
           for (const [id,pending] of this.pendingSinks) if (pending.eventId === String(event.id)) { this.pendingSinks.delete(id); this.sinkShip(pending.record,pending.ship) }
           this.tweens.add({ targets: sub, alpha: 0, duration: 600, delay: 250, onComplete: () => sub.destroy() })
           return
@@ -488,7 +526,7 @@ export function createNavalScene(callbacks, initialState) {
           const index = path.findIndex(p=>p.x===cell.x&&p.y===cell.y)
           this.time.delayedCall(850 * Math.max(0,index)/Math.max(1,path.length-1), () => {
             this.reveal(cell)
-            if (cell.result === 'mine') this.mineDetonation(cell)
+            if (cell.result === 'mine') this.mineImpact(cell,event.weapon)
             else this.effect(cell.result === 'hit' ? 'burst' : 'water-impact',center(cell.x),center(cell.y),cell.result === 'hit' ? 92 : 48)
           })
         }
@@ -543,7 +581,17 @@ export function createNavalScene(callbacks, initialState) {
         g.fillStyle(0xffffff).fillRect(Phaser.Math.Linear(x, targetX, p) - 2, Phaser.Math.Linear(y, targetY, p) - 2, 4, 4)
       }, onComplete: () => g.destroy() })
     }
+    mineImpact(point, weapon) {
+      if(point.mineKind!=='scrap'){this.mineDetonation(point);return}
+      const x=center(point.x),y=center(point.y),torpedo=weapon==='torpedo'||weapon==='submarine'
+      this.game.canvas.dataset.mineKind='scrap'
+      this.markPhase(torpedo?'scrap-torpedo-impact':'scrap-destroyed')
+      this.effect('water-impact',x,y,52)
+      if(torpedo){this.effect('burst',x,y,64);playNavalSound('explosion')}
+      else playNavalSound('splash')
+    }
     mineDetonation(point) {
+      this.game.canvas.dataset.mineKind='live'
       const x = center(point.x), y = center(point.y)
       const mine = this.fittedSprite(x, y + 5, 'mine', 28, 28)
       this.game.canvas.dataset.mineSize = '28'

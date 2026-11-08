@@ -28,7 +28,7 @@ class NavalControllerTest {
     @BeforeEach void setup() {
         EntertainmentGuestService guests = mock(EntertainmentGuestService.class);
         PlayerIdentity player = new PlayerIdentity("GUEST",null,1L,"G:controller-test","测试指挥官");
-        when(guests.resolve(any(),eq("test-token"),eq(true))).thenReturn(player);
+        when(guests.resolveReadonly(any(),eq("test-token"),eq(true))).thenReturn(player);
         mvc = MockMvcBuilders.standaloneSetup(new NavalController(service,guests,mock(NavalPresenceService.class),mock(NavalCommunityService.class)))
                 .setControllerAdvice(new GlobalExceptionHandler()).build();
     }
@@ -62,6 +62,20 @@ class NavalControllerTest {
     @Test void ordinaryBusinessConflictsKeepTheirOriginalStatus() throws Exception {
         when(service.create(any(),any())).thenThrow(new BusinessException(409,"房间已满"));
         request().andExpect(status().isConflict()).andExpect(jsonPath("$.code").value(409)).andExpect(jsonPath("$.message").value("房间已满"));
+    }
+
+    @Test void websocketAuthenticationHonorsDisabledUsersLikeHttp() {
+        var guests=mock(com.order.menu.module.entertainment.core.service.EntertainmentGuestService.class);
+        var tokens=mock(com.order.menu.security.JwtTokenProvider.class);
+        var users=mock(com.order.menu.module.user.mapper.UserMapper.class);
+        when(tokens.parse("token")).thenReturn(new com.order.menu.security.LoginUser(1L,"captain","CUSTOMER"));
+        var user=new com.order.menu.module.user.entity.User();user.setId(1L);user.setNickname("captain");user.setRole("CUSTOMER");user.setStatus(0);
+        when(users.selectById(1L)).thenReturn(user);
+        var identities=new NavalSocketIdentity(guests,tokens,users);
+        org.junit.jupiter.api.Assertions.assertThrows(IllegalArgumentException.class,()->identities.resolve("token","guest"));
+        user.setStatus(1);var player=new PlayerIdentity("USER",1L,null,"U:1","captain");
+        when(guests.resolveReadonly(any(),eq("guest"),eq(true))).thenReturn(player);
+        org.junit.jupiter.api.Assertions.assertEquals(player,identities.resolve("token","guest"));
     }
 
     private org.springframework.test.web.servlet.ResultActions request() throws Exception {

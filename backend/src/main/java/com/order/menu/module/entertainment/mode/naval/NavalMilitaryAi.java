@@ -34,14 +34,15 @@ final class NavalMilitaryAi {
         double score(Cell c,boolean revisit){return fresh(c)&&(revisit||!negative.contains(c))?.5+Math.min(1,weights.getOrDefault(c,0.0)*.1)+(signals.contains(c)?2:0)+intel.vital.getOrDefault(c,0.0)+(intel.aaHeads.contains(c)?4.0/Math.max(1,intel.aaHeads.size()):0):0;}
         Knowledge(Player own,Player enemy){this(own,enemy,List.of());}
         Knowledge(Player own,Player enemy,List<Event> events){
-            intel=new NavalMilitaryIntel(own,enemy,events);List<Ship> sunk=new ArrayList<>(enemy.ships.stream().filter(NavalEngine::sunk).toList());sunk.addAll(intel.resolved);excluded.addAll(intel.excluded);
-            for(Shot c:enemy.shots)shots.put(new Cell(c.x(),c.y()),c.result());for(Radar c:own.radar){Cell p=new Cell(c.x(),c.y());scanned.add(p);if(c.occupied())signals.add(p);else negative.add(p);}
+            Player evidence=new Player();evidence.shots=enemy.shots.stream().filter(shot->!Boolean.TRUE.equals(shot.uncertain())).toList();Set<String> publicHits=new HashSet<>();for(Shot shot:evidence.shots)if("hit".equals(shot.result()))publicHits.add(shot.x()+","+shot.y());for(Ship hull:enemy.ships){Ship visible=NavalRepairSupport.copy(hull);visible.hits.removeIf(h->!publicHits.contains(h));evidence.ships.add(visible);}
+            intel=new NavalMilitaryIntel(own,evidence,events);List<Ship> sunk=new ArrayList<>(evidence.ships.stream().filter(NavalEngine::sunk).toList());sunk.addAll(intel.resolved);excluded.addAll(intel.excluded);
+            for(Shot c:evidence.shots)shots.put(new Cell(c.x(),c.y()),c.result());for(Radar c:own.radar){Cell p=new Cell(c.x(),c.y());scanned.add(p);if(c.occupied())signals.add(p);else negative.add(p);}
             for(Ship s:intel.located)negative.removeAll(cells(s));
             int length=sunk.stream().filter(s->Math.max(s.w,s.h)==4).count()>=2?3:4;
             if(length==3&&sunk.stream().filter(s->Math.max(s.w,s.h)==3).count()>=4)length=2;
             for(;length>=1;length--){boolean found=false;for(int y=0;y<12;y++)for(int x=0;x<12;x++)for(int[] d:new int[][]{{1,0},{0,1}}){List<Cell> run=new ArrayList<>();for(int i=0;i<length;i++)run.add(new Cell(x+d[0]*i,y+d[1]*i));if(run.stream().allMatch(this::valid)){found=true;weights.merge(run.get((length-1)/2),1.0,Double::sum);if(length%2==0)weights.merge(run.get(length/2),1.0,Double::sum);}}if(found)break;}
-            List<Cell> hits=enemy.shots.stream().filter(s->"hit".equals(s.result())).map(s->new Cell(s.x(),s.y())).filter(c->enemy.ships.stream().noneMatch(s->intel.neutralized.contains(s.id)&&s.hits.contains(NavalMilitary.key(c)))).toList();
-            for(Cell h:hits)for(int[] d:DIR){boolean aligned=hits.contains(new Cell(h.x()+d[0],h.y()+d[1])),other=hits.contains(new Cell(h.x()+d[1],h.y()+d[0]));if(other&&!aligned)continue;Cell c=new Cell(h.x()+d[0],h.y()+d[1]);if(fresh(c))weights.merge(c,aligned?32.0:16.0,Math::max);if(enemy.ships.stream().anyMatch(s->"battleship".equals(s.kind)&&s.hits.contains(NavalMilitary.key(h)))){c=new Cell(h.x()+d[0]*2,h.y()+d[1]*2);if(fresh(c))weights.merge(c,25.0,Math::max);}}
+            List<Cell> hits=evidence.shots.stream().filter(s->"hit".equals(s.result())).map(s->new Cell(s.x(),s.y())).filter(c->evidence.ships.stream().noneMatch(s->intel.neutralized.contains(s.id)&&s.hits.contains(NavalMilitary.key(c)))).toList();
+            for(Cell h:hits)for(int[] d:DIR){boolean aligned=hits.contains(new Cell(h.x()+d[0],h.y()+d[1])),other=hits.contains(new Cell(h.x()+d[1],h.y()+d[0]));if(other&&!aligned)continue;Cell c=new Cell(h.x()+d[0],h.y()+d[1]);if(fresh(c))weights.merge(c,aligned?32.0:16.0,Math::max);if(evidence.ships.stream().anyMatch(s->"battleship".equals(s.kind)&&s.hits.contains(NavalMilitary.key(h)))){c=new Cell(h.x()+d[0]*2,h.y()+d[1]*2);if(fresh(c))weights.merge(c,25.0,Math::max);}}
         }
     }
     static double mineRisk(NavalState s,Player p,Cell c){double n=0;for(Ship ship:p.ships)for(Cell h:cells(ship))if(c.x()<h.x()&&Math.abs(c.y()-h.y())<=1)n+=3.0/(1+h.x()-c.x());for(Event e:s.events)if(e.player()==0&&List.of("torpedo","submarine","depthCharge").contains(e.weapon())&&e.y()!=null&&Math.abs(e.y()-c.y())<=1)n+=2;return n;}
@@ -52,7 +53,7 @@ final class NavalMilitaryAi {
         Player own=s.players.get(1);List<Option> options=new ArrayList<>();int step=(int)s.events.stream().filter(e->e.player()==1&&List.of("shot","fighter","bomber","torpedo","radar","mine","submarine","depthCharge").contains(e.weapon())).count();
         Action planned=s.aiTemplate!=null&&step<s.aiTemplate.size()?s.aiTemplate.get(step):null;
         long remaining=own.ships.stream().flatMap(t->NavalMilitary.parts(t).stream()).filter(p->p.active()&&NavalMilitaryIntel.air(p.role())).count();
-        for(Ship ship:own.ships)for(NavalMilitary.Part part:NavalMilitary.parts(ship))if(part.active()&&(s.mineActions==0||part.role().equals("mine"))&&(!part.role().equals("mine")||s.mineActions>0||k.intel.torpedoThreat)&&!List.of("antiAir","jammer").contains(part.role()))for(int y=0;y<12;y++)for(int x=0;x<12;x++){
+        for(Ship ship:own.ships)for(NavalMilitary.Part part:NavalMilitary.parts(ship))if(part.active()&&(s.mineActions==0||part.role().equals("mine"))&&(!part.role().equals("mine")||s.mineActions>0||k.intel.torpedoThreat)&&!List.of("antiAir","jammer","repair","tow").contains(part.role()))for(int y=0;y<12;y++)for(int x=0;x<12;x++){
             Action a=new Action();a.shipId=ship.id;a.plane=part.index();a.weapon=part.role();a.x=x;a.y=y;List<Cell> area=NavalMilitary.targets(a,ship);if(area.stream().anyMatch(c->!NavalMilitary.inside(c)))continue;
             double gain=0,cost=0;
             if("mine".equals(a.weapon)){

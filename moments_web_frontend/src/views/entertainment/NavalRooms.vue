@@ -14,7 +14,7 @@
 <script setup>
 import { computed, onUnmounted, ref } from 'vue'
 import { Bot, Eye, LockKeyhole, LogIn, RefreshCw, Users } from 'lucide-vue-next'
-import { getNavalRooms } from '../../api/naval'
+import { subscribeDirectory, refreshStreams } from '../../services/roomSync'
 import NavalAvatar from './NavalAvatar.vue'
 defineProps({ currentRoom: Object, busy: Boolean })
 const emit = defineEmits(['enter'])
@@ -24,11 +24,10 @@ const phases = { WAITING: '等待加入', PLACEMENT: '舰队布局', SUPPLY: '�
 const filtered = computed(() => rooms.value.filter(r => filter.value === 'ALL' || r.mode === filter.value))
 const canEnter = room => room.phase === 'WAITING' || room.allowSpectators
 function enter(room) { emit('enter', { roomId: room.id, requiresInvite: room.requiresInvite, inviteCode: codes.value[room.id]?.trim() || '' }) }
-let disposed = false
-async function load() { if (loading.value) return; loading.value = true; try { const value = await getNavalRooms(); if (!disposed) { rooms.value = value; error.value = '' } } catch (e) { if (!disposed) error.value = e.message } finally { loading.value = false } }
-load()
-const timer = setInterval(() => { if (!document.hidden) load() }, 4000)
-onUnmounted(() => { disposed = true; clearInterval(timer) })
+function load() { refreshStreams() }
+loading.value=true
+const stopDirectory=subscribeDirectory(value=>{rooms.value=value;loading.value=false;error.value=''})
+onUnmounted(stopDirectory)
 </script>
 <style scoped>
 .room-directory{display:flex;flex-direction:column;min-height:0;flex:1;gap:12px}.room-filters{display:flex;align-items:center;gap:4px;flex-shrink:0}.room-filters button{height:30px;padding:0 10px;border-radius:4px;background:transparent;color:#748d93;font-size:12px}.room-filters button.active{background:#e1efe6;color:#36745a}.room-filters .refresh-rooms{display:grid;place-items:center;margin-left:auto;width:30px;padding:0}.room-results{overflow:auto;min-height:0;flex:1;overscroll-behavior:contain}.directory-room{padding:12px 0;border-bottom:1px solid #e5ece8}.directory-room:first-child{padding-top:0}.directory-room header,.directory-room footer{display:flex;align-items:center;gap:8px;font-size:12px}.directory-room header>span,.room-commanders>span,.invite-badge,.room-viewers{display:flex;align-items:center;gap:5px}.directory-room header small{margin-left:auto;font-size:11px;color:#82979a}.directory-room header small.live{color:#c97f36}.room-commanders{display:flex;flex-wrap:wrap;gap:8px 14px;padding:12px 0}.room-commanders strong{font-size:12px;overflow-wrap:anywhere}.invite-badge{color:#af7c3f;font-size:11px}.public-badge{color:#548b72;font-size:11px}.room-viewers{margin-left:auto;color:#91a2a3}.room-enter{display:flex;gap:8px;margin-top:10px}.room-enter input{min-width:0;flex:1;width:0;height:32px;border:1px solid #d7e4de;background:#fff;border-radius:4px;padding:0 8px;font:inherit;font-size:12px}.room-enter button{display:flex;align-items:center;justify-content:center;gap:6px;height:32px;min-width:82px;padding:0 10px;border-radius:4px;background:#e5f0ea;color:#427b63;margin-left:auto;font-size:12px}.room-enter button:disabled{opacity:.5;cursor:default}.room-empty,.room-error{font-size:12px;padding:12px 0;line-height:1.6;color:#91a2a3}.room-error{color:#bb7265}.spinning{animation:room-spin 1s linear infinite}@keyframes room-spin{to{transform:rotate(360deg)}}

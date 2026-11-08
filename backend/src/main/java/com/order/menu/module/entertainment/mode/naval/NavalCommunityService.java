@@ -12,8 +12,9 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 @Service
-@RequiredArgsConstructor
+@RequiredArgsConstructor(onConstructor_=@org.springframework.beans.factory.annotation.Autowired)
 public class NavalCommunityService {
+    public NavalCommunityService(JdbcTemplate jdbc,ObjectMapper json){this(jdbc,json,event->{});}
     private final JdbcTemplate jdbc;
     private final ObjectMapper json;
     public record TextRequest(String text,String stickerId,String roomId,String gameId,Map<String,Object> localResult) {
@@ -29,18 +30,52 @@ public class NavalCommunityService {
     @SuppressWarnings("unchecked")
     private List<Map<String,Object>> players(Map<String,Object> result) { return (List<Map<String,Object>>)result.get("players"); }
     private long number(Object value) { return value instanceof Number n ? n.longValue() : 0; }
-    public List<Map<String,Object>> messages() {
-        return messages(null);
+    private final ShortCache publicCache=new ShortCache(),medalCache=new ShortCache();
+    private final org.springframework.context.ApplicationEventPublisher events;
+    private record LobbyItem(Map<String,Object> payload,String sender){}
+    public List<Map<String,Object>> messages(){return messages(null);}
+    public List<Map<String,Object>> messages(PlayerIdentity viewer){return messages(viewer,0);}
+    public List<Map<String,Object>> messages(PlayerIdentity viewer,long afterId){
+        List<LobbyItem> shared=publicCache.get("messages:"+afterId,1500,()->publicMessages(afterId));
+        return viewerMessages(shared,viewer);
     }
-    public List<Map<String,Object>> messages(PlayerIdentity viewer) {
-        List<Map<String,Object>> rows=jdbc.queryForList("SELECT m.id,m.name,m.text,m.created_at AS at,m.sticker_id AS stickerId,m.room_id AS roomId,m.room_round AS roomRound,m.battle_json AS battleJson,m.player_key AS senderKey,r.state_json AS roomState FROM (SELECT * FROM naval_lobby_messages ORDER BY id DESC LIMIT 100) m LEFT JOIN naval_rooms r ON r.id=m.room_id ORDER BY m.id DESC");
-        for(Map<String,Object> row:rows) {
-            Object source=row.remove("roomState"),sender=row.remove("senderKey");
-            row.put("mine",viewer!=null && viewer.key().equals(sender));
-            row.put("medals",new NavalMedals(jdbc,json).wall(sender==null?null:sender.toString()));
+    private List<Map<String,Object>> viewerMessages(List<LobbyItem> shared,PlayerIdentity viewer){
+        return shared.stream().map(item->{Map<String,Object> copy=new LinkedHashMap<>(item.payload());copy.put("mine",viewer!=null&&viewer.key().equals(item.sender()));return copy;}).toList();
+    }
+    public Map<String,Object> syncMessages(PlayerIdentity viewer,long afterId,String cardVersion){
+        if(afterId<0)throw new BusinessException(400,"消息游标无效");
+        var records=messages(viewer,afterId);
+        List<Map<String,Object>> cards=publicCache.get("cards",3000,()->{
+            var rows=jdbc.queryForList("SELECT m.id,m.room_id AS roomId,m.room_round AS roomRound,m.player_key AS senderKey,r.state_json AS roomState FROM (SELECT id,room_id,room_round,player_key FROM naval_lobby_messages ORDER BY id DESC LIMIT 100) m LEFT JOIN naval_rooms r ON r.id=m.room_id WHERE m.room_id IS NOT NULL");
+            List<Map<String,Object>> result=new ArrayList<>();
+            for(var row:rows)result.add(Map.of("id",row.get("id"),"room",roomCard(row,row.get("roomState"),row.get("senderKey"))));
+            return result;
+        });
+        String revision;
+        try{revision=java.util.HexFormat.of().formatHex(java.security.MessageDigest.getInstance("SHA-256").digest(json.writeValueAsBytes(cards)));}
+        catch(Exception e){throw new IllegalStateException(e);}
+        long cursor=records.stream().mapToLong(row->number(row.get("id"))).max().orElse(afterId);
+        return Map.of("records",records,"afterId",Math.max(cursor,afterId),"hasMore",afterId>0&&records.size()==100,"cards",revision.equals(cardVersion)?List.of():cards,"cardVersion",revision);
+    }
+    private List<LobbyItem> publicMessages(long afterId){
+        String columns="SELECT m.id,m.name,m.text,m.created_at AS at,m.sticker_id AS stickerId,m.room_id AS roomId,m.room_round AS roomRound,m.battle_json AS battleJson,m.player_key AS senderKey,r.state_json AS roomState FROM ";
+        List<Map<String,Object>> rows=afterId==0
+            ?jdbc.queryForList(columns+"(SELECT * FROM naval_lobby_messages ORDER BY id DESC LIMIT 100) m LEFT JOIN naval_rooms r ON r.id=m.room_id ORDER BY m.id DESC")
+            :jdbc.queryForList(columns+"(SELECT * FROM naval_lobby_messages WHERE id>? ORDER BY id ASC LIMIT 100) m LEFT JOIN naval_rooms r ON r.id=m.room_id ORDER BY m.id ASC",afterId);
+        Set<String> senders=new LinkedHashSet<>();for(var row:rows)if(row.get("senderKey")!=null)senders.add(row.get("senderKey").toString());
+        Map<String,Map<String,Object>> walls=medalCache.getAll(senders,10000,missing->NavalMedals.readWalls(jdbc,missing));
+        List<LobbyItem> result=new ArrayList<>();
+        for(var original:rows){
+            Map<String,Object> row=new LinkedHashMap<>(original);Object source=row.remove("roomState"),sender=row.remove("senderKey");
+            row.put("medals",walls.getOrDefault(Objects.toString(sender,""),Map.of("unlocked",List.of(),"equipped","")));
             Object battle=row.remove("battleJson");
-            if (battle!=null) { Map<String,Object> shared=decode(battle.toString()); shared.put("shared",true); row.put("battle",shared); }
-            if(row.get("roomId")==null) continue;
+            if(battle!=null){var shared=decode(battle.toString());shared.put("shared",true);row.put("battle",shared);}
+            if(row.get("roomId")!=null)row.put("room",roomCard(row,source,sender));
+            result.add(new LobbyItem(row,Objects.toString(sender,null)));
+        }
+        if(afterId==0)Collections.reverse(result);return result;
+    }
+    private Map<String,Object> roomCard(Map<String,Object> row,Object source,Object sender){
             Map<String,Object> card=new LinkedHashMap<>(); card.put("status","CLOSED");
             if(source!=null) {
                 Map<String,Object> state=decode(source.toString()); String phase=String.valueOf(state.get("phase"));
@@ -58,12 +93,13 @@ public class NavalCommunityService {
                 card.put("requiresInvite",requiresInvite); card.put("allowSpectators",allowSpectators);
                 card.put("names",people.stream().filter(person -> !Boolean.TRUE.equals(person.get("left"))).map(person -> person.get("name")).toList());
             }
-            row.put("room",card);
-        }
-        Collections.reverse(rows); return rows;
+
+        return card;
     }
     @Transactional
-    public List<Map<String,Object>> send(PlayerIdentity identity,TextRequest request) {
+    public List<Map<String,Object>> send(PlayerIdentity identity,TextRequest request) {return send(identity,request,0);}
+    @Transactional
+    public List<Map<String,Object>> send(PlayerIdentity identity,TextRequest request,long afterId) {
         String text=request==null || request.text()==null ? "" : request.text().trim();
         String sticker=request==null ? null : request.stickerId(),roomId=request==null ? null : request.roomId();
         String battleJson=null;
@@ -84,7 +120,7 @@ public class NavalCommunityService {
             roomRound=(int)number(state.get("round"));
             if(number(state.get("lobbySharedRound"))==roomRound || Boolean.TRUE.equals(jdbc.queryForObject("SELECT EXISTS(SELECT 1 FROM naval_lobby_messages WHERE room_id=? AND room_round=?)",Boolean.class,roomId,roomRound))) NavalEngine.bad("本局房间已经分享到大厅");
             state.put("lobbySharedRound",roomRound);
-            try { jdbc.update("UPDATE naval_rooms SET state_json=? WHERE id=?",json.writeValueAsString(state),roomId); }
+            try { jdbc.update("UPDATE naval_rooms SET state_json=JSON_SET(?,\'$.version\',version+1),version=version+1 WHERE id=?",json.writeValueAsString(state),roomId);events.publishEvent(new RoomChanged(roomId)); }
             catch(com.fasterxml.jackson.core.JsonProcessingException e) { throw new IllegalStateException("Cannot save lobby share",e); }
         } else if(!battle && (text.isEmpty() || text.length()>300)) NavalEngine.bad("消息应为 1 至 300 字");
         if(Boolean.TRUE.equals(jdbc.queryForObject("SELECT EXISTS(SELECT 1 FROM naval_rooms WHERE (host_key=? OR peer_key=?) AND phase IN ('PLACEMENT','SUPPLY','BATTLE'))",Boolean.class,identity.key(),identity.key()))) NavalEngine.bad("对局进行中无法在大厅发送消息");
@@ -95,7 +131,10 @@ public class NavalCommunityService {
         long now=System.currentTimeMillis();
         if(latest!=null && now-latest<1500) NavalEngine.bad("消息发送过快，请稍后再试");
         jdbc.update("INSERT INTO naval_lobby_messages(player_key,name,text,created_at,sticker_id,room_id,room_round,battle_json) VALUES(?,?,?,?,?,?,?,?)",identity.key(),identity.displayName(),text,now,sticker,roomId,roomRound,battleJson);
-        return messages(identity);
+        if(org.springframework.transaction.support.TransactionSynchronizationManager.isSynchronizationActive()){
+            org.springframework.transaction.support.TransactionSynchronizationManager.registerSynchronization(new org.springframework.transaction.support.TransactionSynchronization(){@Override public void afterCommit(){publicCache.clear();events.publishEvent(new LobbyChanged());}});
+        }else{publicCache.clear();events.publishEvent(new LobbyChanged());}
+        return viewerMessages(publicMessages(afterId),identity);
     }
     private String sharedResult(PlayerIdentity identity,TextRequest request) {
         Map<String,Object> result;
@@ -114,7 +153,7 @@ public class NavalCommunityService {
             if(json.writeValueAsString(result).length()>200_000) NavalEngine.bad("战绩数据过大");
             List<Map<String,Object>> people=players(result);
             if(people==null || people.size()!=2) NavalEngine.bad("战绩玩家信息无效");
-            Set<String> personFields=Set.of("name","avatarUrl","registered","coinsSpent","itemsUsed","itemsPurchased","inventoryRemaining","ships","shotsReceived","minesRemaining","antiAirRemaining","hits","shots","attacks");
+            Set<String> personFields=Set.of("name","avatarUrl","registered","coinsSpent","itemsUsed","itemsPurchased","inventoryRemaining","ships","shotsReceived","minesRemaining","scrapMinesRemaining","antiAirRemaining","hits","shots","attacks");
             List<Map<String,Object>> safePeople=new ArrayList<>();
             for(Map<String,Object> person:people) {
                 Map<String,Object> safe=new LinkedHashMap<>(person); safe.keySet().retainAll(personFields);
@@ -134,7 +173,7 @@ public class NavalCommunityService {
                         Object value=safe.get(field);
                         if(value!=null && (!(value instanceof Map<?,?> items) || items.size()>8 || items.values().stream().anyMatch(count->!(count instanceof Number n) || n.intValue()<0 || n.intValue()>144))) NavalEngine.bad("道具数据无效");
                     }
-                    for(String field:List.of("shotsReceived","minesRemaining")) checkPublicCells(safe.get(field));
+                    for(String field:List.of("shotsReceived","minesRemaining","scrapMinesRemaining")) checkPublicCells(safe.get(field));
                     Object aa=safe.get("antiAirRemaining");
                     if(aa!=null && (!(aa instanceof List<?> rows) || rows.size()>12 || rows.stream().anyMatch(row->!(row instanceof Number n) || n.intValue()<0 || n.intValue()>11))) NavalEngine.bad("防空行数据无效");
                     safe.put("ships",ships); safe.remove("avatarUrl"); safe.put("registered",false);
@@ -151,7 +190,7 @@ public class NavalCommunityService {
                 for(Object item:events) {
                     if(!(item instanceof Map<?,?>)) NavalEngine.bad("攻击记录无效");
                     Map<String,Object> entry=new LinkedHashMap<>((Map<String,Object>)item);
-                    entry.keySet().retainAll(Set.of("id","player","weapon","cells","backfire","text","x","y","row","targets","route","torpedoes","destroyed","radar","shipId","plane","origin"));
+                    entry.keySet().retainAll(Set.of("id","player","weapon","cells","backfire","text","x","y","row","targets","route","torpedoes","destroyed","radar","shipId","plane","origin","support"));
                     if(!(entry.get("weapon") instanceof String) || !(entry.get("player") instanceof Number actor) || actor.intValue()<-1 || actor.intValue()>1) NavalEngine.bad("攻击记录无效");
                     entry.put("id",safeEvents.size()+1);
                     if(entry.get("text")!=null && (!(entry.get("text") instanceof String text) || text.length()>300)) NavalEngine.bad("攻击说明无效");
@@ -160,6 +199,21 @@ public class NavalCommunityService {
                     Object paths=entry.get("torpedoes");
                     if(paths!=null) { if(!(paths instanceof List<?>) || ((List<?>)paths).size()>2) NavalEngine.bad("鱼雷轨迹无效"); for(Object path:(List<?>)paths) checkPublicCells(path); }
                     for(String field:List.of("x","y","row")) if(entry.get(field)!=null && (!(entry.get(field) instanceof Number coordinate) || coordinate.doubleValue()!=coordinate.intValue() || coordinate.intValue()<0 || coordinate.intValue()>11)) NavalEngine.bad("攻击位置无效");
+                    if(entry.get("support") instanceof Map<?,?> raw){
+                        Map<String,Object> support=new LinkedHashMap<>();
+                        if(!List.of("tow","repair","scrapMine","skip").contains(raw.get("mode")))NavalEngine.bad("支援记录无效");
+                        support.put("mode",raw.get("mode"));
+                        if(raw.get("targetShipId") instanceof String shipId&&shipId.length()<=80)support.put("targetShipId",shipId);
+                        for(String pose:List.of("before","after"))if(raw.get(pose) instanceof Map<?,?> data){
+                            Map<String,Object> safePose=new LinkedHashMap<>();
+                            for(String field:List.of("id","kind","x","y","w","h","rotation","hits","lostPlanes","minesUsed"))if(data.containsKey(field))safePose.put(field,data.get(field));
+                            NavalState.Ship ship=json.convertValue(safePose,NavalState.Ship.class);
+                            if(ship.x<0||ship.y<0||ship.w<1||ship.h<1||ship.w>4||ship.h>4||ship.x+ship.w>12||ship.y+ship.h>12||ship.hits==null||ship.hits.size()>16)NavalEngine.bad("支援舰体记录无效");
+                            support.put(pose,safePose);
+                        }
+                        checkPublicCells(raw.get("cells"));if(raw.get("cells")!=null)support.put("cells",raw.get("cells"));
+                        entry.put("support",support);
+                    }
                     safeEvents.add(entry);
                 }
                 result.put("events",safeEvents);
@@ -183,6 +237,8 @@ public class NavalCommunityService {
             Map<?,?> point=(Map<?,?>)cell;
             for(String axis:List.of("x","y")) if(!(point.get(axis) instanceof Number n) || n.doubleValue()!=n.intValue() || n.intValue()<(axis.equals("x") ? minX : 0) || n.intValue()>(axis.equals("x") ? maxX : 11)) NavalEngine.bad("海域坐标无效");
             if(point.get("result")!=null && !List.of("hit","miss","mine","detected").contains(point.get("result"))) NavalEngine.bad("攻击结果无效");
+            if(point.get("uncertain")!=null && !(point.get("uncertain") instanceof Boolean)) NavalEngine.bad("命中标记无效");
+            if(point.get("mineKind")!=null && (!"scrap".equals(point.get("mineKind")) || !"mine".equals(point.get("result")))) NavalEngine.bad("水雷类型无效");
         }
     }
     public Map<String,Object> detail(String gameId,PlayerIdentity identity) {
@@ -194,35 +250,14 @@ public class NavalCommunityService {
         result.put("you",you); return result;
     }
     public List<Map<String,Object>> leaderboard(String mode,String metric) { return leaderboard(mode,metric,"CLASSIC"); }
-    public List<Map<String,Object>> leaderboard(String mode,String metric,String ruleSet) {
-        if(!List.of("CLASSIC","MILITARY").contains(ruleSet)) NavalEngine.bad("排行榜规则无效");
-        if(!List.of("AI","MULTIPLAYER").contains(mode) || !List.of("wins","rate","economy").contains(metric)) NavalEngine.bad("排行榜类型无效");
-        Map<String,Map<String,Object>> users=new HashMap<>(), economy=new HashMap<>();
-        jdbc.query("SELECT result_json FROM naval_round_results",(org.springframework.jdbc.core.RowCallbackHandler) row -> {
-            Map<String,Object> result=decode(row.getString(1)); if(!ruleSet.equals(result.getOrDefault("ruleSet","CLASSIC"))) return; if(!mode.equals(result.get("mode")) || "AI".equals(mode) && Boolean.FALSE.equals(result.get("battleStarted"))) return;
-            List<Map<String,Object>> people=players(result);
-            for(int i=0;i<people.size();i++) {
-                Map<String,Object> person=people.get(i),other=people.get(1-i);
-                String key=String.valueOf(person.get("key")); if(!key.startsWith("U:")) continue;
-                Map<String,Object> stats=users.computeIfAbsent(key,k -> { Map<String,Object> value=new LinkedHashMap<>(); value.put("medals",new NavalMedals(jdbc,json).wall(key));value.put("name",person.get("name")); value.put("avatarUrl",person.get("avatarUrl")); value.put("games",0L); value.put("wins",0L); return value; });
-                stats.put("games",number(stats.get("games"))+1);
-                if(number(result.get("winner"))==i) stats.put("wins",number(stats.get("wins"))+1);
-                stats.put("rate",100.0*number(stats.get("wins"))/number(stats.get("games")));
-                if(number(result.get("winner"))==i && person.containsKey("coinsSpent") && other.containsKey("coinsSpent")) {
-                    Map<String,Object> entry=new LinkedHashMap<>(stats);
-                    entry.put("difference",number(other.get("coinsSpent"))-number(person.get("coinsSpent")));
-                    entry.put("spent",person.get("coinsSpent")); entry.put("opponentSpent",other.get("coinsSpent"));
-                    entry.put("gameId",result.get("gameId")); entry.put("finishedAt",result.get("finishedAt"));
-                    Map<String,Object> best=economy.get(key);
-                    if(best==null || number(entry.get("difference"))>number(best.get("difference")) || number(entry.get("difference"))==number(best.get("difference")) && number(entry.get("finishedAt"))>number(best.get("finishedAt"))) economy.put(key,entry);
-                }
-            }
-        });
-        List<Map<String,Object>> result=new ArrayList<>(metric.equals("economy") ? economy.values() : users.values());
-        String field=metric.equals("economy") ? "difference" : metric;
-        result.sort(Comparator.<Map<String,Object>>comparingDouble(item -> -((Number)item.get(field)).doubleValue()).thenComparing(item -> String.valueOf(item.get("name"))));
-        return result.stream().limit(100).toList();
+    public List<Map<String,Object>> leaderboard(String mode,String metric,String ruleSet){return leaderboard(mode,metric,ruleSet,1,100);}
+    public List<Map<String,Object>> leaderboard(String mode,String metric,String ruleSet,int page,int size){return NavalRankings.page(jdbc,mode,metric,ruleSet,page,size);}
+    public Map<String,Object> leaderboardPage(String mode,String metric,String ruleSet,int page,int size){
+        var records=leaderboard(mode,metric,ruleSet,page,size);
+        long total=jdbc.queryForObject("SELECT COUNT(*) FROM naval_ranking_totals WHERE mode=? AND rule_set=?"+("economy".equals(metric)?" AND best_economy IS NOT NULL":""),Long.class,mode,ruleSet);
+        return Map.of("records",records,"total",total,"page",page,"pageSize",size);
     }
+    void invalidateCards(){publicCache.remove("cards");}
     private boolean canReview(PlayerIdentity identity) {
         if(!identity.loggedIn()) return false;
         return Boolean.TRUE.equals(jdbc.queryForObject("SELECT EXISTS(SELECT 1 FROM naval_round_results WHERE (player0_key=? OR player1_key=?) AND (JSON_EXTRACT(result_json,'$.battleStarted')=TRUE OR JSON_EXTRACT(result_json,'$.players[0].attacks')>0 OR JSON_EXTRACT(result_json,'$.players[1].attacks')>0)) OR EXISTS(SELECT 1 FROM naval_rooms WHERE (host_key=? OR peer_key=?) AND phase='BATTLE')",Boolean.class,identity.key(),identity.key(),identity.key(),identity.key()));

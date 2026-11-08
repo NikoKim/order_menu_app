@@ -21,7 +21,7 @@ final class NavalMilitaryIntel {
     static Set<Cell> halo(List<Cell> shape){Set<Cell> out=new HashSet<>();for(Cell c:shape)for(int dy=-1;dy<=1;dy++)for(int dx=-1;dx<=1;dx++)out.add(new Cell(c.x()+dx,c.y()+dy));return out;}
     static List<List<Cell>> hypotheses(String kind,List<String> hits,Map<Cell,String> shots,Set<Cell> excluded,Set<Cell> other){
         int length=NavalMilitary.MODELS.get(kind)[1];List<List<Cell>> out=new ArrayList<>();
-        for(int y=0;y<12;y++)for(int x=0;x<12;x++)for(int[] d:DIR){List<Cell> shape=new ArrayList<>();for(int i=0;i<length;i++)shape.add(new Cell(x+d[0]*i,y+d[1]*i));if(shape.stream().allMatch(c->NavalMilitary.inside(c)&&!excluded.contains(c)&&(!shots.containsKey(c)||"hit".equals(shots.get(c)))&&!other.contains(c))&&hits.stream().allMatch(h->shape.stream().anyMatch(c->NavalMilitary.key(c).equals(h))))out.add(shape);}
+        for(int y=0;y<12;y++)for(int x=0;x<12;x++)for(int[] d:DIR){List<Cell> shape=new ArrayList<>();if("repairTug".equals(kind)){shape.addAll(List.of(new Cell(x,y),new Cell(x+1,y),new Cell(x,y+1),new Cell(x+1,y+1)));}else for(int i=0;i<length;i++)shape.add(new Cell(x+d[0]*i,y+d[1]*i));if(shape.stream().allMatch(c->NavalMilitary.inside(c)&&!excluded.contains(c)&&(!shots.containsKey(c)||"hit".equals(shots.get(c)))&&!other.contains(c))&&hits.stream().allMatch(h->shape.stream().anyMatch(c->NavalMilitary.key(c).equals(h))))out.add(shape);}
         return out;
     }
     static boolean disabled(String kind,List<Cell> shape,List<String> hits,Set<Integer> lost){
@@ -39,7 +39,7 @@ final class NavalMilitaryIntel {
     }
     NavalMilitaryIntel(Player own,Player enemy,List<Event> events){
         Map<Cell,String> shots=new HashMap<>();Set<Cell> allHits=new HashSet<>();Set<String> revealed=new HashSet<>();
-        for(Shot s:enemy.shots){Cell c=new Cell(s.x(),s.y());shots.put(c,s.result());if("hit".equals(s.result()))allHits.add(c);}
+        for(Shot s:enemy.shots){if(Boolean.TRUE.equals(s.uncertain()))continue;Cell c=new Cell(s.x(),s.y());shots.put(c,s.result());if("hit".equals(s.result()))allHits.add(c);}
         List<Event> observed=events.stream().filter(e->e.player()==0&&e.shipId()!=null).toList();
         for(Ship s:enemy.ships){if(!s.hits.isEmpty()||observed.stream().anyMatch(e->s.id.equals(e.shipId())))revealed.add(s.id);if(NavalEngine.sunk(s)){neutralized.add(s.id);excluded.addAll(halo(NavalMilitaryAi.cells(s)));}Set<Integer> lost=new HashSet<>();for(Event e:observed)if(s.id.equals(e.shipId())&&e.destroyed()&&air(e.weapon()))lost.add(e.plane());if((List.of("torpedoCarrier","bomberCarrier","torpedo").contains(s.kind)&&lost.contains(0))||("carrier".equals(s.kind)&&lost.containsAll(List.of(0,1))))neutralized.add(s.id);}
         for(Ship s:enemy.ships)if(!s.hits.isEmpty()&&!NavalEngine.sunk(s)){

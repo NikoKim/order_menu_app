@@ -51,37 +51,39 @@
     <template v-else>
       <div v-if="spectating && !mobile" class="spectator-toolbar"><span><Eye :size="16" />观众席</span><CustomSelect :model-value="room.viewMode || 'BOTH'" :options="spectatorOptions" :disabled="busy" :teleport-to="root || 'body'" aria-label="观战视角" @update:model-value="changeSpectatorView" /></div>
       <Transition name="stage-scene" mode="out-in">
-      <div :key="sceneKey" class="battle-layout" :class="{ preparation: preparing && !spectating, placement: placing, supply: shopping, 'room-waiting': room.phase === 'WAITING' }">
+      <div :key="sceneKey" class="battle-layout" :style="{ visibility: launching || matchPresentation || entryTransition ? 'hidden' : undefined }" :inert="launching || Boolean(matchPresentation) || entryTransition" :class="{ preparation: preparing && !spectating, placement: placing, supply: shopping, 'room-waiting': room.phase === 'WAITING' }">
         <section class="battlefield">
           <div v-if="room.phase === 'WAITING'" class="waiting-dock"><img :src="harborAsset" alt="等待出航的舰队" @error="useFleetBackdrop" /><div class="matching-radar"><Radar :size="40" /><span>{{ room.autoMatch ? '正在搜索海域信号' : '等待舰队集结' }}</span><strong>{{ room.inviteCode }}</strong><small>{{ onlineCount == null ? '在线人数暂不可用' : `${onlineCount} 位指挥官在线` }}</small></div></div>
           <div v-if="room.phase !== 'WAITING'" class="boards" :class="{ 'single-board': preparing && !spectating }">
             <section class="board-panel own-panel"><div v-if="room.phase === 'BATTLE'" class="board-turn" :class="{ active: activeTurn === selfIndex }"><Crosshair :size="20" /><strong>{{ spectating ? `${me?.name || '左方'}进攻` : '己方进攻' }}</strong><span v-if="activeTurn === selfIndex"><Timer :size="13" />{{ clockText }}</span></div><header :class="{ 'mobile-turn-active': room.phase === 'BATTLE' && activeTurn === selfIndex }"><h2><NavalAvatar :person="me" :size="16" /><span class="player-name" :title="me?.name">{{ me?.name || '己方舰队' }}</span><Transition name="chat-pop"><span v-if="chatPops[selfIndex]" :key="chatPops[selfIndex].id" class="player-chat-bubble" :class="{ 'sticker-pop': messageSticker(chatPops[selfIndex]?.text) }" :title="messageSticker(chatPops[selfIndex]?.text)?.name || chatPops[selfIndex]?.text"><NavalMessage :text="chatPops[selfIndex].text" /></span></Transition></h2><span>{{ placing ? `已布置 ${isMilitary ? draft.ships.filter(s=>s.x>=0).length : draft.ships.length}/${isMilitary ? draft.ships.length : 10}` : waitingReady ? '战备完成' : `舰船 ${remainingShips(ownBoard)}/${fleetTotal(ownBoard)}` }}</span></header>
-              <NavalMobilePlayerStatus v-if="mobile && !mobilePrep" side="left" :coins="me?.coins" :person="me" :active="room.phase === 'BATTLE' && activeTurn === selfIndex" :clock="clockText" :seconds="seconds" :total="fleetTotal(ownBoard)" :remaining="remainingShips(ownBoard)" :preparing="preparing" :stage="playerStage" :tutorial="tutorialActive" :message="chatPops[selfIndex]">
+              <NavalMobilePlayerStatus v-if="mobile && !mobilePrep" side="left" :coins="me?.coins" :person="me" :active="room.phase === 'BATTLE' && activeTurn === selfIndex" :clock="clockText" :seconds="seconds" :total="fleetTotal(ownBoard)" :remaining="remainingShips(ownBoard)" :preparing="preparing" :stage="playerStage" :tutorial="tutorialActive" :message="chatPops[selfIndex]" :can-end-turn="canEndSupportTurn" :end-turn-disabled="!canAttack" @end-turn="skipSupport">
                           <template #actions><span v-if="connectionError" class="rail-connection-warning" role="status" :title="connectionError"><AlertCircle :size="16" /></span><button v-if="!tutorialActive && room.mode === 'MULTIPLAYER'" class="mobile-rail-button chat-toggle" title="战局聊天" aria-label="战局聊天" :aria-pressed="chatOpen" @click="toggleChat"><MessageSquare :size="19" /><i v-if="unreadChat">{{ unreadChat > 9 ? '9+' : unreadChat }}</i></button><button class="mobile-rail-button" title="对局菜单" aria-label="对局菜单" :aria-expanded="mobilePanel === 'more'" @click="toggleMobilePanel('more')"><Ellipsis :size="21" /></button></template>
                         </NavalMobilePlayerStatus>
-              <NavalBoard :military="isMilitary" :military-selected="selectedModel" :military-preparing="placing" :military-event="militaryLast" :military-attacking="militaryLast?.player===selfIndex" data-tutorial="naval-own-board" :player="ownBoard" defense-side="left" :label="spectating ? `${me?.name || '左方'}海域` : '己方海域'" :interactive="canArrange || canDeployDefense || isMilitary && canAttack && militarySelectedAction?.weapon==='mine'" :preview="placementPreview" :region="isMilitary && militarySelectedAction?.weapon==='mine' && !preparing ? weaponRegion : pendingTarget?.kind === 'placement' ? { selected: [] } : shopping && placementTool === 'antiAir' ? { row: true } : null" :selected="placing ? selectedShip : ''" :event="ownEvent" :events="ownEvents" :radar="opponent?.radar || []" @animation="ownAnimating = $event" @cell="ownCell" @loading="onBoardLoading" @ready="finishLaunch" @error="fail">
+              <NavalBoard :military="isMilitary" :military-selected="selectedModel" :military-preparing="placing" :military-event="militaryLast" :military-attacking="militaryLast?.player===selfIndex" data-tutorial="naval-own-board" :player="ownBoard" defense-side="left" :label="spectating ? `${me?.name || '左方'}海域` : '己方海域'" :interactive="canArrange || canDeployDefense || isMilitary && canAttack && ['mine','repairSupport'].includes(militarySelectedAction?.weapon)" :preview="placementPreview" :region="isMilitary && militarySelectedAction?.weapon==='mine' && !preparing ? weaponRegion : pendingTarget?.kind === 'placement' && !dragAnchor ? { selected: [] } : shopping && placementTool === 'antiAir' ? { row: true } : null" :selected="placing ? selectedShip : isMilitary && !spectating && room.phase==='BATTLE' ? militarySource?.id || '' : ''" :event="ownEvent" :events="ownEvents" :radar="opponent?.radar || []" @animation="ownAnimating = $event" @cell="ownCell" @loading="onBoardLoading" @ready="finishLaunch" @error="fail">
+                <div v-if="supportRange" class="support-range-overlay" :style="boardRect(supportRange)" />
+                <div v-if="pendingTarget?.shape && ['placement','support'].includes(pendingTarget.kind)" class="placement-target-overlay" :class="{ invalid: pendingTarget.invalid }" :style="boardRect(pendingTarget.shape)" />
+                <NavalTargetConfirmation v-if="pendingTarget?.kind==='support' && pendingTarget.action" :point="pendingTarget.point" :shape="pendingTarget.shape" :rotatable="pendingTarget.action.supportMode==='tow'" :invalid="pendingTarget.invalid" :busy="busy" @rotate="rotateSupport" @confirm="confirmTarget" @cancel="cancelTarget" />
                 <NavalTargetConfirmation v-if="isMilitary && pendingTarget?.kind==='attack' && pendingTarget.weapon==='mine'" :point="pendingTarget.point" :shape="{w:1,h:1}" :busy="busy" @confirm="confirmTarget" @cancel="cancelTarget" /><span v-if="isMilitary && room.phase==='BATTLE' && militarySelectedAction?.weapon==='mine'" class="submarine-count">本回合布雷 {{ room.mineActions || 0 }}/2</span>
-                <NavalTargetConfirmation v-else-if="pendingTarget?.kind === 'placement'" :point="pendingTarget.point" :shape="pendingTarget.shape" :rotatable="mobile && placing && pendingTarget.shape.w !== pendingTarget.shape.h" :busy="busy" @rotate="rotatePendingShip" @confirm="confirmTarget" @cancel="cancelTarget" />
-                <NavalTargetConfirmation v-else-if="mobile && placing && selectedModel && selectedModel.w !== selectedModel.h" rotate-only :point="selectedModel" :shape="selectedModel" @rotate="rotateShip()" />
+                <NavalTargetConfirmation v-else-if="mobile && pendingTarget?.kind === 'placement'" :point="pendingTarget.point" :shape="pendingTarget.shape" :rotatable="placing && (isMilitary || pendingTarget.shape.w !== pendingTarget.shape.h)" :invalid="pendingTarget.invalid" :busy="busy" @rotate="rotatePendingShip" @confirm="confirmTarget" @cancel="cancelTarget" />
               </NavalBoard>
               <NavalSpectatorData v-if="spectating && !mobile" :player="me" />
             </section>
             <section v-if="!preparing || spectating" class="board-panel enemy-panel"><div v-if="room.phase === 'BATTLE'" class="board-turn" :class="{ active: activeTurn === otherIndex }"><span v-if="activeTurn === otherIndex"><Timer :size="13" />{{ clockText }}</span><strong>{{ spectating ? `${opponent?.name || '右方'}进攻` : '对方进攻' }}</strong><Crosshair :size="20" /></div><header :class="{ 'mobile-turn-active': room.phase === 'BATTLE' && activeTurn === otherIndex }"><span>{{ isMilitary ? `已击沉 ${remainingShips(opponent) === 0 ? 0 : (opponent?.ships || []).filter(s=>s.hits?.length===s.w*s.h).length} 艘` : `舰船 ${remainingShips(opponent)}/10` }}</span><h2><Transition name="chat-pop"><span v-if="chatPops[otherIndex]" :key="chatPops[otherIndex].id" class="player-chat-bubble" :class="{ 'sticker-pop': messageSticker(chatPops[otherIndex]?.text) }" :title="messageSticker(chatPops[otherIndex]?.text)?.name || chatPops[otherIndex]?.text"><NavalMessage :text="chatPops[otherIndex].text" /></span></Transition><span class="player-name" :title="opponent?.name">{{ opponent?.name || '等待对手' }}</span><NavalAvatar :person="opponent" :size="16" /></h2></header>
               <NavalMobilePlayerStatus v-if="mobile && !mobilePrep" side="right" :person="opponent" :active="room.phase === 'BATTLE' && activeTurn === otherIndex" :clock="clockText" :seconds="seconds" :total="fleetTotal(opponent)" :remaining="opponent?.occupied === false ? 0 : remainingShips(opponent)" :preparing="preparing" :stage="opponent?.stage" :tutorial="tutorialActive" :message="chatPops[otherIndex]">
                           <template #actions><nav class="mobile-battle-dock" aria-label="海战操作">
-                            <button v-if="room.phase === 'BATTLE' && !spectating" data-tutorial="naval-mobile-weapons-toggle" class="mobile-dock-button weapon-dock" :class="{ active: mobilePanel === 'weapons' }" title="攻击方式" aria-label="展开攻击方式" :aria-expanded="mobilePanel === 'weapons'" @click="toggleMobilePanel('weapons')"><Crosshair v-if="weapon === 'shot'" :size="23" /><img v-else :src="weapon==='depthCharge'?'/entertainment/naval/military/depth-charge.png':`/entertainment/naval/v2/${weapon}.png`" alt="" /><small>{{ isMilitary ? '舰载功能' : weapon === 'shot' ? '舰炮' : ITEMS[weapon].name }}</small></button>
+                            <button v-if="room.phase === 'BATTLE' && !spectating" data-tutorial="naval-mobile-weapons-toggle" class="mobile-dock-button weapon-dock" :class="{ active: mobilePanel === 'weapons' }" title="攻击方式" aria-label="展开攻击方式" :aria-expanded="mobilePanel === 'weapons'" @click="toggleMobilePanel('weapons')"><Crosshair v-if="weapon === 'shot'" :size="23" /><img v-else :src="militaryWeaponAsset(weapon)" alt="" /><small>{{ isMilitary ? '舰载功能' : weapon === 'shot' ? '舰炮' : ITEMS[weapon].name }}</small></button>
                             <button v-if="spectating" class="mobile-dock-button" title="观战视角与战备" aria-label="观战视角与战备" :aria-expanded="mobilePanel === 'detail'" @click="toggleMobilePanel('detail')"><ScanEye :size="21" /></button>
                             <button v-if="!tutorialActive" class="mobile-dock-button audience-dock" title="观众席" aria-label="展开观众席" :aria-expanded="mobilePanel === 'audience'" @click="toggleMobilePanel('audience')"><Users :size="20" /><small>{{ room.spectators?.length || 0 }}</small></button>
                             <button v-if="room.phase === 'FINISHED'" class="mobile-dock-button mobile-dock-primary" title="战局结算" aria-label="战局结算" @click="showSettlement = true"><Trophy :size="22" /></button>
                           </nav></template>
                         </NavalMobilePlayerStatus>
-              <NavalBoard :military="isMilitary" :military-action="militarySelectedAction" :military-source="militarySource" :military-event="militaryLast?.player===selfIndex ? militaryLast : null" data-tutorial="naval-enemy-board" :player="opponent" defense-side="right" :hidden="hiddenOpponent" :label="spectating ? `${opponent?.name || '右方'}海域` : '对方海域'" :interactive="canAttack && (!isMilitary || militarySelectedAction?.weapon!=='mine')" :region="isMilitary && militarySelectedAction?.weapon==='mine' ? null : weaponRegion" :event="enemyEvent" :events="enemyEvents" :radar="me?.radar || room.radar || []" @animation="enemyAnimating = $event" @cell="attack" @error="fail"><NavalTargetConfirmation v-if="pendingTarget?.kind === 'attack' && pendingTarget.weapon !== 'mine'" :point="pendingTarget.point" :shape="weaponRegion" :busy="busy" @confirm="confirmTarget" @cancel="cancelTarget" /><span v-if="weapon === 'submarine'" class="submarine-count" role="status">潜艇 {{ submarineTargets.length }}/3</span></NavalBoard>
+              <NavalBoard :military="isMilitary" :military-action="militarySelectedAction" :military-source="militarySource" :military-event="militaryLast?.player===selfIndex ? militaryLast : null" data-tutorial="naval-enemy-board" :player="opponent" defense-side="right" :hidden="hiddenOpponent" :label="spectating ? `${opponent?.name || '右方'}海域` : '对方海域'" :interactive="canAttack && (!isMilitary || !['mine','repairSupport'].includes(militarySelectedAction?.weapon))" :region="isMilitary && militarySelectedAction?.weapon==='mine' ? null : weaponRegion" :event="enemyEvent" :events="enemyEvents" :radar="me?.radar || room.radar || []" @animation="enemyAnimating = $event" @cell="attack" @error="fail"><NavalTargetConfirmation v-if="pendingTarget?.kind === 'attack' && pendingTarget.weapon !== 'mine'" :point="pendingTarget.point" :shape="weaponRegion" :busy="busy" @confirm="confirmTarget" @cancel="cancelTarget" /><span v-if="weapon === 'submarine'" class="submarine-count" role="status">潜艇 {{ submarineTargets.length }}/3</span></NavalBoard>
               <NavalSpectatorData v-if="spectating && !mobile && !hiddenOpponent" :player="opponent" />
             </section>
           </div>
           <div v-if="room.phase === 'WAITING'" class="waiting-line"><Radar :size="19" class="radar-spin" /><span>{{ room.autoMatch ? '寻找正在匹配的指挥官…' : '等待另一位指挥官加入' }}</span><button class="naval-secondary" @click="copyInvite"><Copy :size="15" />复制邀请码</button></div>
           <div v-if="placing && !mobile" class="placement-controls">
-            <Transition name="mobile-sheet"><div v-show="!mobile || mobilePanel === 'tools'" class="formation-tools" data-mobile-panel="tools"><div v-if="mobile" class="mobile-panel-heading"><h3>阵型工具</h3><button class="icon-control" aria-label="收起阵型工具" title="收起阵型工具" @click="closeMobilePanel"><X :size="18" /></button></div><button data-tutorial="naval-clear-layout" class="icon-control" title="清空舰队布局" aria-label="清空舰队布局" :disabled="!canArrange || !draft.ships.length" @click="clearLayout"><Eraser :size="18" /></button><button data-tutorial="naval-random-layout" class="icon-control" title="随机阵型" :disabled="!canArrange" @click="randomize"><Shuffle :size="18" /></button><button class="icon-control" title="旋转选中舰船" :disabled="!canArrange || !selectedShip" @click="rotateShip()"><RotateCw :size="18" /></button><button class="icon-control" title="保存当前阵型" :disabled="!canArrange || !fullFleet || isMilitary" @click="showFormation = true"><Save :size="18" /></button>
+            <Transition name="mobile-sheet"><div v-show="!mobile || mobilePanel === 'tools'" class="formation-tools" data-mobile-panel="tools"><div v-if="mobile" class="mobile-panel-heading"><h3>阵型工具</h3><button class="icon-control" aria-label="收起阵型工具" title="收起阵型工具" @click="closeMobilePanel"><X :size="18" /></button></div><button data-tutorial="naval-clear-layout" class="icon-control" title="清空舰队布局" aria-label="清空舰队布局" :disabled="!canArrange || !draft.ships.length" @click="clearLayout"><Eraser :size="18" /></button><button data-tutorial="naval-rotate-ship" class="icon-control" title="旋转选中舰船" aria-label="旋转选中舰船" :disabled="!canArrange || !selectedShip" @click="rotateShip()"><RotateCw :size="18" /></button><button data-tutorial="naval-random-layout" class="icon-control" title="随机阵型" :disabled="!canArrange" @click="randomize"><Shuffle :size="18" /></button><button class="icon-control" title="保存当前阵型" :disabled="!canArrange || !fullFleet || isMilitary" @click="showFormation = true"><Save :size="18" /></button>
               <CustomSelect v-model="formationId" class="formation-select" :options="formationOptions" placeholder="已有阵型" :disabled="!canArrange" :teleport-to="root || 'body'" aria-label="已有阵型" @change="loadFormation" /><button v-if="formationId" class="icon-control" title="删除选中阵型" :disabled="!canArrange" @click="deleteFormation"><Trash2 :size="16" /></button>
             </div></Transition>
             <button v-if="!mobile" data-tutorial="naval-layout-next" class="naval-primary ready-button" :disabled="busy || !canArrange || !fullFleet" @click="advanceLayout"><Check :size="18" />{{ isMilitary ? '完成战备' : '下一步：战备补给' }}</button>
@@ -90,10 +92,11 @@
           <div v-if="waitingReady" class="ready-wait"><ShieldCheck :size="23" /><span>战备就绪，等待对方舰队</span><LoaderCircle :size="17" class="radar-spin" /></div>
           <Transition name="mobile-sheet"><div v-show="!mobile || mobilePanel === 'weapons'" data-mobile-panel="weapons" v-if="room.phase === 'BATTLE' && !spectating" class="weapons" aria-label="攻击方式">
             <div v-if="mobile" class="mobile-panel-heading"><h3>攻击方式</h3><button class="icon-control" title="收起攻击方式" aria-label="收起攻击方式" @click="closeMobilePanel"><X :size="18" /></button></div>
-            <template v-if="isMilitary"><button v-for="a in militaryAvailable" :key="militaryKey(a)" :data-tutorial="`naval-weapon-${a.weapon}-${a.kind}`" :class="{ selected: militaryKey(militarySelectedAction||{})===militaryKey(a), 'salvo-weapon': a.kind==='battleship', 'military-weapon': true }" :disabled="!canAttack || room.mineActions > 0 && a.weapon !== 'mine'" :style="{ '--weapon-text-length': [...a.name].reduce((n,c)=>n+(c.charCodeAt(0)>255?1:.6),0) }" :title="a.name" :aria-label="a.name" @click="selectMilitaryAction(a)"><Crosshair v-if="a.weapon==='shot'" :size="21" /><img v-else :src="a.weapon==='depthCharge'?'/entertainment/naval/military/depth-charge.png':`/entertainment/naval/v2/${a.weapon}.png`" alt="" /><span>{{ a.name }}</span></button></template><template v-else>
+            <template v-if="isMilitary"><button v-for="a in militaryAvailable" :key="militaryKey(a)" :data-tutorial="`naval-weapon-${a.weapon}-${a.kind}`" :class="{ selected: militaryKey(militarySelectedAction||{})===militaryKey(a), 'salvo-weapon': a.kind==='battleship', 'military-weapon': true }" :disabled="!canAttack || room.mineActions > 0 && a.weapon !== 'mine' || room.supportActions > 0 && (a.weapon !== 'repairSupport' || a.shipId !== room.supportShipId)" :style="{ '--weapon-text-length': [...a.name].reduce((n,c)=>n+(c.charCodeAt(0)>255?1:.6),0) }" :title="a.name" :aria-label="a.name" @click="selectMilitaryAction(a)"><Crosshair v-if="a.weapon==='shot'" :size="21" /><img v-else :src="militaryWeaponAsset(a.weapon)" alt="" /><span>{{ a.name }}</span></button></template><template v-else>
             <button data-tutorial="naval-weapon-shot" :class="{ selected: weapon === 'shot' }" :disabled="!canAttack" title="舰炮：单格攻击" aria-label="舰炮" @click="selectWeapon('shot')"><Crosshair :size="21" /><span>舰炮</span><small>∞</small></button>
             <button v-for="key in attackItems" :key="key" :data-tutorial="`naval-weapon-${key}`" :class="{ selected: weapon === key }" :disabled="!canAttack || !me?.inventory?.[key]" :aria-label="ITEMS[key].name" :title="`${ITEMS[key].name}：${itemDetails[key]}`" @click="selectWeapon(key)"><img :src="`/entertainment/naval/v2/${key}.png`" alt="" /><span>{{ ITEMS[key].name }}</span><small>{{ me?.inventory?.[key] || 0 }}</small></button>
           </template></div></Transition>
+          <div v-if="!mobile && canEndSupportTurn" class="round-actions"><span>废雷修复 {{ room.supportActions }}/2</span><button class="turn-end-action naval-secondary" :disabled="!canAttack" @click="skipSupport"><SkipForward :size="16" />结束本次回合</button></div>
           <div v-if="room.phase === 'FINISHED'" class="result-line"><Trophy :size="22" /><span>本局行动结束</span><button class="naval-secondary" @click="showSettlement = true">查看结算</button></div>
 
           <div v-if="!tutorialActive && room.phase === 'BATTLE'" class="battle-feed" aria-live="polite"><span v-for="event in (room.events || []).slice(-1)" :key="event.id">{{ event.text }}</span></div>
@@ -102,9 +105,9 @@
         <Transition name="chat-slide"><aside v-if="preparing && !spectating && !mobile || chatOpen" v-show="!mobile || mobilePanel === 'chat'" :data-mobile-panel="mobile ? mobilePanel : null" class="battle-sidebar" :class="{ 'chat-drawer': !preparing || spectating || mobile }">
           <template v-if="placing && (!mobile || mobilePanel === 'fleet')">
             <div v-if="mobile" class="mobile-panel-heading"><h3>舰队编成</h3><button class="icon-control" title="收起舰队编成" aria-label="收起舰队编成" @click="closeMobilePanel"><X :size="18" /></button></div>
-            <template v-if="isMilitary"><div class="sidebar-heading"><h3>舰船采购</h3><strong><Coins :size="17" />{{ coins }}</strong></div><div class="supply-list"><div v-for="(item,key) in militaryCatalog" :key="key" class="supply-row military-card"><img class="supply-sprite" :src="militaryAsset(key)" alt="" /><button class="supply-name" :title="item.detail"><strong>{{ item.name }}</strong><small>{{ item.price }} 金币 · 上限 {{ item.max }}</small></button><button class="quantity-control" :aria-label="`减少${item.name}`" :disabled="!canArrange || !militaryCounts[key]" @click="purchaseMilitary(key,-1)"><Minus :size="14" /></button><span class="quantity">{{ militaryCounts[key] }}</span><button :data-tutorial="`naval-buy-${key}`" class="quantity-control" :aria-label="`购买${item.name}`" :disabled="!canArrange || !canBuyMilitary(key)" @click="purchaseMilitary(key,1)"><Plus :size="14" /></button><button v-if="militaryFamilies[item.group]" :data-tutorial="`naval-type-${item.group}`" class="military-type-switch" :title="`切换${item.group==='carrier'?'航母':'驱逐舰'}类型`" :aria-label="`切换${item.group==='carrier'?'航母':'驱逐舰'}类型`" :disabled="!canArrange" @click="cycleMilitaryType(key)"><RotateCw :size="13" /></button></div></div></template>
+            <template v-if="isMilitary"><div class="sidebar-heading"><h3>舰船采购</h3><strong><Coins :size="17" />{{ coins }}</strong></div><div class="supply-list"><div v-for="(item,key) in militaryCatalog" :key="key" class="supply-row military-card"><img class="supply-sprite" :src="militaryAsset(key)" alt="" /><button class="supply-name" :title="item.detail"><strong>{{ item.name }}</strong><small>{{ item.price }} 金币 · 上限 {{ item.max }}</small></button><button class="quantity-control" :aria-label="`减少${item.name}`" :disabled="!canArrange || !militaryCounts[key]" @click="purchaseMilitary(key,-1)"><Minus :size="14" /></button><span class="quantity">{{ militaryCounts[key] }}</span><button :data-tutorial="`naval-buy-${key}`" class="quantity-control" :aria-label="`购买${item.name}`" :disabled="!canArrange || !canBuyMilitary(key)" @click="purchaseMilitary(key,1)"><Plus :size="14" /></button><button v-if="militaryFamilies[item.group] && item.group!=='medium' || ['battleship','cruiser'].includes(key)" :data-tutorial="`naval-type-${item.group}`" class="military-type-switch" :title="`切换${item.group==='carrier'?'航母':item.group==='medium'?'战列舰':'驱逐舰'}类型`" :aria-label="`切换${item.group==='carrier'?'航母':item.group==='medium'?'战列舰':'驱逐舰'}类型`" :disabled="!canArrange" @click="cycleMilitaryType(key)"><RotateCw :size="13" /></button></div></div></template>
             <div class="sidebar-heading"><h3>{{ mobile ? '当前阵型' : '舰队编成' }}</h3><span class="fleet-total">{{ isMilitary ? `${draft.ships.length} 艘 · ${coins} 金币` : '10 艘 / 20 格' }}</span></div>
-            <div class="fleet-roster" data-tutorial="naval-fleet-roster"><div v-for="ship in fleetRoster" :key="ship.id" class="fleet-command"><button :class="{ selected: selectedShip === ship.id, unplaced: !ship.placed }" :disabled="!canArrange" :title="`${ship.w} × ${ship.h} ${ship.placed ? '已布置' : '待布置'}`" @click="selectShip(ship)"><img :src="shipAsset(ship)" :style="{ transform: ship.w > ship.h ? 'rotate(90deg)' : 'none' }" alt="" /><span><strong>{{ shipName(ship) }}</strong><small>{{ ship.placed ? `${ship.w} × ${ship.h}` : '待布置' }}</small></span><Check v-if="ship.placed" :size="15" /></button><button :data-tutorial="ship.w !== ship.h ? 'naval-rotate-ship' : undefined" class="fleet-rotate" :disabled="!canArrange || ship.w === ship.h" :title="`旋转${shipName(ship)}`" :aria-label="`旋转${shipName(ship)}`" @click="rotateShip(ship)"><RotateCw :size="15" /></button></div></div>
+            <div class="fleet-roster" data-tutorial="naval-fleet-roster"><div v-for="ship in fleetRoster" :key="ship.id" class="fleet-command"><button :class="{ selected: selectedShip === ship.id, unplaced: !ship.placed }" :disabled="!canArrange" :title="`${ship.w} × ${ship.h} ${ship.placed ? '已布置' : '待布置'}`" @click="selectShip(ship)"><img :src="shipAsset(ship)" :style="{ transform: ship.w > ship.h ? 'rotate(90deg)' : 'none' }" alt="" /><span><strong>{{ shipName(ship) }}</strong><small>{{ ship.placed ? `${ship.w} × ${ship.h}` : '待布置' }}</small></span><Check v-if="ship.placed" :size="15" /></button></div></div>
           </template>
           <template v-if="shopping && (!mobile || mobilePanel === 'supply')">
             <div v-if="mobile" class="mobile-panel-heading"><h3>战备商店</h3><button class="icon-control" title="收起战备商店" aria-label="收起战备商店" @click="closeMobilePanel"><X :size="18" /></button></div>
@@ -128,10 +131,10 @@
     </template>
 
     <div v-if="error" :key="noticeSerial" class="naval-notice" role="alert"><AlertCircle :size="17" /><span>{{ error }}</span><button class="icon-control" title="关闭提示" @click="error = ''"><X :size="16" /></button><i class="notice-countdown" /></div>
-    <Transition name="launch"><div v-if="launching" class="launch-overlay" role="status" aria-label="舰队加载中"><div class="launch-water"><img src="/entertainment/naval/v2/battleship.png" alt="" /><div class="launch-wake" /></div><span class="launch-kicker">FLEET COMMAND</span><h2>{{ launchLabel }}</h2><div class="load-track"><span :style="{ width: `${launchProgress}%` }" /></div><span class="load-percent">{{ Math.round(launchProgress) }}%</span></div></Transition>
-    <Transition name="match-presentation"><div v-if="matchPresentation" class="match-presentation" role="status" aria-label="匹配过程" :data-stage="matchPresentation"><div class="signal-rings"><span /><span /><Radar :size="42" /></div><span class="launch-kicker">{{ matchKind === 'AUTO' ? 'SEARCHING THE SEAS' : 'CONNECTING FLEETS' }}</span><span class="match-rule">{{ isMilitary ? '军事模式' : '经典模式' }}</span><h2>{{ matchPresentation === 'FOUND' ? '对手已就位' : matchKind === 'AUTO' ? '正在匹配指挥官' : '正在连接舰队' }}</h2><div v-if="matchPresentation === 'FOUND'" class="matched-fleets"><span><NavalAvatar :person="matchPeople[0]" :size="25" />{{ matchNames[0] }}</span><Crosshair :size="22" /><span><NavalAvatar :person="matchPeople[1]" :size="25" />{{ matchNames[1] }}</span></div><p v-else>{{ onlineCount == null ? '正在建立海域信号' : `${onlineCount} 位指挥官在线` }}</p><button v-if="lobbyChatAvailable" class="naval-secondary" @click="openCommunity('chat')"><MessageSquare :size="18" />聊天大厅</button></div></Transition>
+    <Transition name="launch" mode="out-in" @before-leave="entryTransition = true" @after-leave="entryTransition = Boolean(launching || matchPresentation)" @after-enter="entryTransition = false"><div v-if="launching && !matchPresentation" key="loading" class="launch-overlay" role="status" aria-label="舰队加载中"><div class="launch-water"><img src="/entertainment/naval/v2/battleship.png" alt="" /><div class="launch-wake" /></div><span class="launch-kicker">FLEET COMMAND</span><h2>{{ launchLabel }}</h2><div class="load-track"><span :style="{ width: `${launchProgress}%` }" /></div><span class="load-percent">{{ Math.round(launchProgress) }}%</span></div>
+    <div v-else-if="matchPresentation" key="matching" class="match-presentation" role="status" aria-label="匹配过程" :data-stage="matchPresentation"><div class="signal-rings"><span /><span /><Radar :size="42" /></div><span class="launch-kicker">{{ matchKind === 'AUTO' ? 'SEARCHING THE SEAS' : 'CONNECTING FLEETS' }}</span><span class="match-rule">{{ isMilitary ? '军事模式' : '经典模式' }}</span><h2>{{ matchPresentation === 'FOUND' ? '对手已就位' : matchKind === 'AUTO' ? '正在匹配指挥官' : '正在连接舰队' }}</h2><div v-if="matchPresentation === 'FOUND'" class="matched-fleets"><span><NavalAvatar :person="matchPeople[0]" :size="25" />{{ matchNames[0] }}</span><Crosshair :size="22" /><span><NavalAvatar :person="matchPeople[1]" :size="25" />{{ matchNames[1] }}</span></div><p v-else>{{ onlineCount == null ? '正在建立海域信号' : `${onlineCount} 位指挥官在线` }}</p><button v-if="lobbyChatAvailable" class="naval-secondary" @click="openCommunity('chat')"><MessageSquare :size="18" />聊天大厅</button></div></Transition>
     <Transition name="announcement" @before-enter="announcementTransition = true" @after-leave="announcementTransition = false"><div v-if="announcement && !tutorialActive" class="phase-announcement" :key="announcement"><span>FLEET COMMAND</span><strong>{{ announcement }}</strong></div></Transition>
-    <NavalTutorialGuide v-if="tutorialActive && !launching && !blocked && !confirmation" :step="tutorialStep" :completed="tutorialSession.completed" :busy="busy || visualBusy" @continue="tutorialEvent({ type: 'CONTINUE' })" @restart="restartTutorial" @exit="exitTutorial" />
+    <NavalTutorialGuide v-if="tutorialActive && !launching && !entryTransition && !blocked && !confirmation" :step="tutorialStep" :completed="tutorialSession.completed" :busy="busy || visualBusy" @continue="tutorialEvent({ type: 'CONTINUE' })" @restart="restartTutorial" @exit="exitTutorial" />
     <Transition name="modal"><NavalShareDialog v-if="showShare && room" :room="room" @close="showShare = false" /></Transition>
     <Transition name="modal"><div v-if="confirmation" class="naval-modal-mask" role="dialog" aria-modal="true" :aria-label="confirmation.title" @click.self="confirmation = null"><section class="naval-dialog"><h2>{{ confirmation.title }}</h2><p>{{ confirmation.message }}</p><footer><button class="naval-secondary" @click="confirmation = null">取消</button><button class="naval-primary" @click="confirmOperation"><Check :size="16" />确认</button></footer></section></div></Transition>
     <Transition name="modal"><div v-if="resumeDecision" class="naval-modal-mask resume-mask" role="dialog" aria-modal="true" aria-label="已有未结束的对局" @click.self="resumeDecision = null"><section class="naval-dialog resume-dialog"><header><h2>已有未结束的对局</h2><button class="icon-control" aria-label="取消" :disabled="busy" @click="resumeDecision = null"><X :size="18" /></button></header><p>可以继续之前的对局，或先退出再开始新局。在线对局离开页面后保留 30 秒，超过时间未重连将判负。人机局在布阵、补给阶段退出不计战绩。</p><footer><button class="naval-secondary" :disabled="busy" @click="continueSavedGame"><RotateCcw :size="16" />继续旧对局</button><button class="naval-primary" :disabled="busy" @click="exitSavedGame"><LogOut :size="16" />{{ resumeDecision.run ? '退出并开始新局' : '退出对局' }}</button></footer></section></div></Transition>
@@ -148,6 +151,7 @@
 </template>
 
 <style scoped>
+.support-range-overlay,.placement-target-overlay{position:absolute;pointer-events:none;z-index:12;box-sizing:border-box}.support-range-overlay{border:2px dashed #518e88;background:#6fbbb318}.placement-target-overlay{border:2px solid #438e72;background:#64ad8326}.placement-target-overlay.invalid{border-color:#ce645b;background:#cf60524d}.round-actions{display:flex;align-items:center;justify-content:flex-end;gap:12px;min-height:40px;padding:6px 0;border-top:1px solid #d7e5df}.round-actions>span{font-size:12px;color:#748d83}.round-actions .turn-end-action{display:inline-flex;align-items:center;gap:6px;min-height:32px;color:#467d69;border:1px solid #9ebeb0;background:#f4faf7;white-space:nowrap}
 .naval-page:has(.match-presentation)>.naval-community:not(.mobile){position:fixed;z-index:610;right:16px;top:60px;width:380px;height:calc(100dvh - 76px)}.military-card{position:relative}.military-type-switch{position:static;flex:0 0 24px;width:24px;height:24px;margin-left:5px;display:grid;place-items:center;background:#e5eef1;color:#608590;border-radius:3px}.military-rules .weapons{flex-wrap:wrap}.military-rules .weapons>button{min-width:0}.military-rules .weapons>button span{white-space:normal;overflow-wrap:anywhere;font-size:11px}.military-rules .battle-sidebar .supply-name{min-width:0}
 .naval-rule-switch{display:flex;gap:0;margin-bottom:14px;border-bottom:1px solid #bdd0d5}.naval-rule-switch button{padding:10px 20px;border:0;border-bottom:3px solid transparent;background:transparent;color:#63838d;font:inherit;cursor:pointer}.naval-rule-switch button[aria-pressed=true]{color:#365f69;border-bottom-color:#bd9252;font-weight:600}
 .naval-page:has(>.naval-replay){height:calc(100dvh - 52px);min-height:0;box-sizing:border-box;overflow:hidden}
@@ -167,7 +171,9 @@
 import { computed, nextTick, onMounted, onUnmounted, reactive, ref, watch } from 'vue'
 import { AlertCircle, Anchor, ArrowLeft, ArrowRight, Bot, Check, ChevronLeft, CircleHelp, Coins, Copy, Crosshair, Ellipsis, Eraser, Eye, GraduationCap, LoaderCircle, LogIn, LogOut, Maximize, MessageSquare, MessagesSquare, Minus, Plus, Radar, RotateCcw, RotateCw, Save, ScanEye, Send, Share2, Shield, ShieldCheck, Ship, ShoppingBag, Shuffle, SlidersHorizontal, Smartphone, Ticket, Timer, Trash2, TrendingUp, Trophy, Users, Volume2, VolumeX, X } from 'lucide-vue-next'
 import { useRoute } from 'vue-router'
-import { Play } from 'lucide-vue-next'
+import { connectRoom, subscribePresence, subscribeMirror, refreshStreams } from '../../services/roomSync'
+import { invalidateLocalNavalPublication } from '../../api/naval'
+import { Play, SkipForward } from 'lucide-vue-next'
 import { navalViewportState } from '../../games/navalViewport'
 import NavalBoard from './NavalBoard.vue'
 import NavalCommunity from './NavalCommunity.vue'
@@ -189,14 +195,14 @@ import NavalSettlement from './NavalSettlement.vue'
 import NavalShareDialog from './NavalShareDialog.vue'
 import CustomSelect from '../../components/CustomSelect.vue'
 import NavalTutorialGuide from './NavalTutorialGuide.vue'
-import { MILITARY_SHIPS, militaryActions, militaryGroupCount, militaryComponents, militaryPlacement, validateMilitaryFleet, arrangeMilitaryFleet, createMilitaryGame, militaryLocalAction, tickMilitaryGame } from '../../games/navalMilitary'
+import { MILITARY_SHIPS, militaryActions, militaryGroupCount, militaryCell, militaryComponents, militaryPlacement, validateMilitaryFleet, arrangeMilitaryFleet, createMilitaryGame, militaryLocalAction, tickMilitaryGame } from '../../games/navalMilitary'
 import { loadMilitaryArt, militaryShipThumbnail } from '../../games/navalMilitaryArt'
 import { createMilitaryTutorial, militaryTutorialStep, advanceMilitaryTutorial, tickMilitaryTutorial } from '../../games/navalMilitaryTutorial'
 import { FLEET, ITEMS, generateFleet, validateFleet, legalPlacement, createLocalGame, localAction, tickLocalGame, migrateLocalGame, normalizeSavedFleet, submarineFootprint, localBattleResult } from '../../games/navalEngine'
 import { navalTutorialStorageKey, createNavalTutorial, loadNavalTutorial, saveNavalTutorial, getNavalTutorialStep, advanceNavalTutorial, prepareTutorialAction } from '../../games/navalTutorial'
 import { preloadNavalAudio, playNavalSound, setNavalMuted, getNavalMuted, unlockNavalAudio, stopNavalSounds } from '../../games/navalAudio'
 import {militaryRecordTemplate,installMilitaryTemplate} from '../../games/navalMilitaryTemplate'
-import { createNavalRoom, getMilitaryTemplate, joinNavalRoom, spectateNavalRoom, getNavalRoom, navalAction, getNavalProfile, saveNavalProfile, heartbeatNavalPresence, leaveNavalPresence, notifyNavalConnection, sendNavalLobbyMessage, enterNavalRoom, publishLocalNavalRoom } from '../../api/naval'
+import { createNavalRoom, getMilitaryTemplate, joinNavalRoom, spectateNavalRoom, getNavalRoom, navalAction, getNavalProfile, saveNavalProfile, notifyNavalConnection, sendNavalLobbyMessage, enterNavalRoom, publishLocalNavalRoom } from '../../api/naval'
 import { useNavalLobbyNotifications } from '../../composables/useNavalLobbyNotifications'
 import { navalBoardEvents } from '../../games/navalPresentation'
 
@@ -208,17 +214,53 @@ const militaryAvailable = computed(() => militaryActions(me.value))
 const militarySelectedAction = computed(() => militaryAvailable.value.find(a => militaryKey(a) === militaryActionId.value && a.weapon === weapon.value) || militaryAvailable.value.find(a=>a.weapon===weapon.value) || militaryAvailable.value[0])
 const militarySource = computed(() => me.value?.ships?.find(s => s.id === militarySelectedAction.value?.shipId))
 const militaryLast = computed(() => room.value?.events?.at(-1))
-const militaryTypes=reactive({carrier:'carrier',destroyer:'antiAir'})
-const militaryFamilies={carrier:['carrier','bomberCarrier','torpedoCarrier'],destroyer:['antiAir','radar','mineLayer','jammer','depthCharge']}
-const militaryCatalog=computed(()=>Object.fromEntries([militaryTypes.carrier,'battleship','cruiser',militaryTypes.destroyer,'decoy','submarine'].map(k=>[k,MILITARY_SHIPS[k]])))
-function cycleMilitaryType(kind){const group=MILITARY_SHIPS[kind].group,types=militaryFamilies[group];if(types){militaryTypes[group]=types[(types.indexOf(kind)+1)%types.length];tutorialEvent({type:'TYPE',kind:militaryTypes[group]})}}
+const militaryTypes=reactive({carrier:'carrier',medium:'battleship',destroyer:'antiAir'})
+const militaryFamilies={medium:['battleship','cruiser'],carrier:['carrier','bomberCarrier','torpedoCarrier'],destroyer:['antiAir','radar','mineLayer','jammer','depthCharge']}
+const militaryCatalog=computed(()=>Object.fromEntries([militaryTypes.carrier,militaryTypes.medium,militaryTypes.destroyer,'decoy','submarine','repairTug'].map(k=>[k,MILITARY_SHIPS[k]])))
+function cycleMilitaryType(kind){const group=['battleship','cruiser'].includes(kind)?'medium':MILITARY_SHIPS[kind].group,types=militaryFamilies[group];if(types){militaryTypes[group]=types[(types.indexOf(kind)+1)%types.length];tutorialEvent({type:'TYPE',kind:militaryTypes[group]})}}
 const canBuyMilitary=kind=>coins.value>=MILITARY_SHIPS[kind].price&&militaryGroupCount(draft.ships,kind)<MILITARY_SHIPS[kind].max
-function ownCell(point){if(isMilitary.value&&room.value?.phase==='BATTLE'&&militarySelectedAction.value?.weapon==='mine')attack(point);else placeCell(point)}
+const supportRange=computed(()=>isMilitary.value&&canAttack.value&&militarySelectedAction.value?.weapon==='repairSupport'&&militarySource.value?{x:militarySource.value.x-5,y:militarySource.value.y-5,w:12,h:12}:null)
+function supportInside(ship){const r=supportRange.value;return r&&ship.x>=r.x&&ship.y>=r.y&&ship.x+ship.w<=r.x+r.w&&ship.y+ship.h<=r.y+r.h}
+function supportTowValid(ship){return supportInside(ship)&&militaryPlacement(me.value.ships,ship)&&![...(me.value.shots||[]).filter(c=>!c.uncertain),...(me.value.mines||[]),...(me.value.scrapMines||[])].some(c=>c.x>=ship.x&&c.x<ship.x+ship.w&&c.y>=ship.y&&c.y<ship.y+ship.h)}
+function supportCell(point){
+  if(!canAttack.value||point.dragStart)return
+  const a=militarySelectedAction.value,source=militarySource.value,r=supportRange.value
+  if(!a||!source||!r||point.x<r.x||point.y<r.y||point.x>=r.x+r.w||point.y>=r.y+r.h)return
+  const ship=me.value.ships.find(s=>point.x>=s.x&&point.x<s.x+s.w&&point.y>=s.y&&point.y<s.y+s.h)
+  const active=role=>militaryComponents(source).some(c=>c.role===role&&c.active)
+  const pending=pendingTarget.value
+  if(pending?.kind==='support'&&pending.action?.supportMode==='tow'&&(!ship||ship.id===pending.action.targetShipId)){
+    const original=me.value.ships.find(s=>s.id===pending.action.targetShipId),shape={...original,...pending.shape,x:Math.max(0,Math.min(12-pending.shape.w,point.x)),y:Math.max(0,Math.min(12-pending.shape.h,point.y))}
+    pending.shape=shape;pending.point={x:shape.x,y:shape.y};pending.invalid=!supportTowValid(shape);pending.action={...pending.action,x:shape.x,y:shape.y,rotation:shape.rotation||0};return
+  }
+  if(ship&&ship.kind!=='submarine'&&supportInside(ship)&&ship.hits.length<ship.w*ship.h){
+    const damaged=ship.hits.includes(point.x+','+point.y)
+    const part=militaryComponents(ship).find(c=>c.x===point.x&&c.y===point.y)
+    if(damaged){
+      if(!active('repair')||!part||['fighter','bomber','torpedo'].includes(part.role))return
+      pendingTarget.value={kind:'support',point,shape:{...point,w:1,h:1},action:{type:'ATTACK',...a,weapon:'repairSupport',supportMode:'repair',targetShipId:ship.id,...point}}
+    }else if(active('tow')){pendingTarget.value={kind:'support',point,shape:{...ship},invalid:true,action:{type:'ATTACK',...a,weapon:'repairSupport',supportMode:'tow',targetShipId:ship.id,x:ship.x,y:ship.y,rotation:ship.rotation||0}};tutorialEvent({type:'SUPPORT_SELECT',targetShipId:ship.id})}
+    return
+  }
+  if(!ship&&active('repair')&&me.value.shots?.some(c=>c.x===point.x&&c.y===point.y&&c.result==='mine')&&!me.value.scrapMines?.some(c=>c.x===point.x&&c.y===point.y)){
+    pendingTarget.value={kind:'support',point,shape:{...point,w:1,h:1},action:{type:'ATTACK',...a,weapon:'repairSupport',supportMode:'scrapMine',...point}}
+  }
+}
+function rotateSupport(){
+  const p=pendingTarget.value;if(p?.action?.supportMode!=='tow')return
+  const shape={...p.shape,w:p.shape.h,h:p.shape.w,rotation:((p.shape.rotation||0)+90)%360}
+  shape.x=Math.max(0,Math.min(12-shape.w,shape.x));shape.y=Math.max(0,Math.min(12-shape.h,shape.y))
+  p.shape=shape;p.point={x:shape.x,y:shape.y};p.action={...p.action,x:shape.x,y:shape.y,rotation:shape.rotation};p.invalid=!supportTowValid(shape)
+}
+const canEndSupportTurn=computed(()=>!spectating.value&&room.value?.phase==='BATTLE'&&room.value.supportActions>0&&room.value.turn===selfIndex.value)
+async function skipSupport(){if(!canAttack.value)return;const a=militaryAvailable.value.find(a=>a.weapon==='repairSupport'&&a.shipId===room.value?.supportShipId);if(a&&canEndSupportTurn.value)await dispatch({type:'ATTACK',...a,weapon:'repairSupport',supportMode:'skip'})}
+function ownCell(point){if(isMilitary.value&&room.value?.phase==='BATTLE'&&militarySelectedAction.value?.weapon==='repairSupport')supportCell(point);else if(isMilitary.value&&room.value?.phase==='BATTLE'&&militarySelectedAction.value?.weapon==='mine')attack(point);else placeCell(point)}
 const militaryCounts = computed(() => Object.fromEntries(Object.keys(MILITARY_SHIPS).map(k => [k, draft.ships.filter(s => s.kind === k).length])))
 const militaryKey = a => `${a.shipId}:${a.weapon}:${a.plane}`
-function selectMilitaryAction(a) { if(room.value?.mineActions&&a.weapon!=='mine')return; militaryActionId.value = militaryKey(a); weapon.value = a.weapon; cancelTarget(); closeMobilePanel(); tutorialEvent({type:'WEAPON',weapon:a.weapon,kind:a.kind}) }
+function selectMilitaryAction(a) { if(room.value?.mineActions&&a.weapon!=='mine'||room.value?.supportActions&&(a.weapon!=='repairSupport'||a.shipId!==room.value.supportShipId))return; militaryActionId.value = militaryKey(a); weapon.value = a.weapon; cancelTarget(); closeMobilePanel(); tutorialEvent({type:'WEAPON',weapon:a.weapon,kind:a.kind}) }
 const militaryThumbnails = ref({})
 loadMilitaryArt().then(() => { militaryThumbnails.value = Object.fromEntries(Object.keys(MILITARY_SHIPS).map(kind => [kind, militaryShipThumbnail(kind)])) }).catch(fail)
+function militaryWeaponAsset(weapon){return weapon==='repairSupport'?'/entertainment/naval/military/repair-tug.png':weapon==='depthCharge'?'/entertainment/naval/military/depth-charge.png':`/entertainment/naval/v2/${weapon}.png`}
 function militaryAsset(kind) { return militaryThumbnails.value[kind] || '/entertainment/naval/military/utility-hull.png' }
 const communityPanel = ref(''),medalPerson=ref(null),matchPeople=ref([])
 function openMedals(person={self:true,name:'我的'}){if(person.ai||!person.self&&!person.medals?.medalId)return;medalPerson.value=person;communityPanel.value=mobile.value&&room.value?'':'medals';mobilePanel.value=mobile.value&&room.value?'medals':null;chatOpen.value=false;nextTick(positionCommunity)}
@@ -261,6 +303,9 @@ const reserveRotations = reactive({})
 const localMode = ref(false), fullscreen = ref(false), landscape = ref(innerWidth > innerHeight), fullscreenError = ref(''), pendingStart = ref(null)
 const mobile = ref(/Android|iPhone|iPad|iPod/i.test(navigator.userAgent) || (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1) || (matchMedia('(pointer:coarse)').matches && navigator.maxTouchPoints > 0))
 const loggedIn = Boolean(localStorage.getItem('token'))
+let stopRoomSync=null,socketReady=false
+watch(()=>localMode.value?null:room.value?.id,id=>{stopRoomSync?.();socketReady=false;if(id)stopRoomSync=connectRoom(id,value=>{if(room.value?.id===id&&value.version>=(room.value.version||0))accept(value)},(ready,error)=>{socketReady=ready;if(!ready)matchHandoff='';if(error)poll()})})
+onUnmounted(()=>stopRoomSync?.())
 const account = readJson('user', {}) || {}
 const accountPerson = { self:true,name: account.nickname || account.username || '指挥官', avatarUrl: account.avatarUrl || account.avatar_url, registered: true }
 const authTarget = page => ({ path: `/customer/${page}`, query: { redirect: route.fullPath } })
@@ -274,21 +319,26 @@ const localResume = ref(!loggedIn ? readJson('naval-guest-session', null) : null
 const resumeId = ref(localStorage.getItem(`${storagePrefix}-room`) || '')
 const now = ref(Date.now())
 const serverOffset = ref(0)
+const launchReady = ref(false), entryTransition = ref(false)
 const launching = ref(false), launchProgress = ref(0), launchLabel = ref('舰队正在入场'), announcement = ref('')
 const announcementTransition = ref(false)
 const bannerBusy = computed(() => Boolean(announcement.value) || announcementTransition.value)
 const ownAnimating = ref(false), enemyAnimating = ref(false), chatOpen = ref(false), unreadChat = ref(0)
 const onlineCount = ref(null), matchPresentation = ref(''), matchKind = ref('AUTO'), matchNames = ref([])
 const tutorialOptions = { device: mobile.value ? 'mobile' : 'desktop' }
-const classicTutorialSaved = ref(readJson(navalTutorialStorageKey(tutorialOptions.device), null) ? loadNavalTutorial(undefined, tutorialOptions) : null), militaryTutorialSaved = ref(readJson(`naval-military-tutorial-v6-${tutorialOptions.device}`,null)), tutorialSession = ref(null)
+const classicTutorialSaved = ref(readJson(navalTutorialStorageKey(tutorialOptions.device), null) ? loadNavalTutorial(undefined, tutorialOptions) : null), militaryTutorialSaved = ref(readJson(`naval-military-tutorial-v7-${tutorialOptions.device}`,null)), tutorialSession = ref(null)
 const tutorialSaved = computed({get:()=>isMilitary.value?militaryTutorialSaved.value:classicTutorialSaved.value,set:value=>{if(isMilitary.value)militaryTutorialSaved.value=value;else classicTutorialSaved.value=value}})
-function persistTutorial(session) { if(session.ruleSet==='MILITARY')writeJson(`naval-military-tutorial-v6-${session.device}`,session);else saveNavalTutorial(session) }
+function persistTutorial(session) { if(session.ruleSet==='MILITARY')writeJson(`naval-military-tutorial-v7-${session.device}`,session);else saveNavalTutorial(session) }
 const tutorialActive = computed(() => Boolean(tutorialSession.value))
 const tutorialStep = computed(() => {
   const step = tutorialSession.value ? (isMilitary.value ? militaryTutorialStep(tutorialSession.value) : getNavalTutorialStep(tutorialSession.value)) : null
   if (!step) return null
-  const guideSide = room.value?.phase === 'BATTLE' && step.target === 'naval-enemy-board' ? 'left' : undefined
-  return pendingTarget.value ? { ...step, guideSide, target: 'naval-confirm-target', cell: undefined, description: '目标已预览，还没有生效。点绿色勾确认，红色叉取消；只有确认后才部署或消耗道具。' } : { ...step, guideSide }
+  if(isMilitary.value&&visualBusy.value&&room.value?.phase==='BATTLE'){
+    const own=militaryLast.value?.weapon==='repairSupport'||militaryLast.value?.player===otherIndex.value
+    return {...step,target:own?'naval-own-board':'naval-enemy-board',cell:undefined,overview:false,guideSide:own?'right':'left',title:'战斗演示',description:militaryLast.value?.text||step.description}
+  }
+  const guideSide = step.guideSide || (room.value?.phase === 'BATTLE' && step.target === 'naval-enemy-board' ? 'left' : undefined)
+  return pendingTarget.value && step.id!=='rotate' ? { ...step, guideSide, target: pendingTarget.value.invalid?'naval-own-board':'naval-confirm-target', cell: undefined, description: pendingTarget.value.invalid?'红色区域无法摆放，请在海域重新选择空位。':'目标已预览，还没有生效。点绿色勾确认，红色叉取消；只有确认后才部署或消耗道具。' } : { ...step, guideSide }
 })
 const visualBusy = computed(() => ownAnimating.value || enemyAnimating.value)
 const harborFailed = ref(false)
@@ -316,8 +366,8 @@ const waitingReady = computed(() => !spectating.value && preparing.value && play
 const visualStage = computed(() => preparing.value ? playerStage.value : room.value?.phase)
 const sceneKey = computed(() => `${room.value?.gameId || room.value?.id}:${room.value?.round || 1}:${selfIndex.value}:${room.value?.viewMode || 'PLAYER'}:${['BATTLE', 'FINISHED'].includes(visualStage.value) ? 'COMBAT' : visualStage.value}`)
 const blocked = computed(() => mobile.value && ((!fullscreen.value && !(iosFallback.value && immersive.value)) || !landscape.value))
-const canArrange = computed(() => placing.value && !blocked.value && !busy.value && !launching.value && !matchPresentation.value)
-const canShop = computed(() => shopping.value && !blocked.value && !busy.value && !launching.value && !matchPresentation.value)
+const canArrange = computed(() => placing.value && !blocked.value && !busy.value && !launching.value && !entryTransition.value && !matchPresentation.value)
+const canShop = computed(() => shopping.value && !blocked.value && !busy.value && !launching.value && !entryTransition.value && !matchPresentation.value)
 const canDeployDefense = computed(() => canShop.value)
 const chainAttack = computed(() => {
   if (isMilitary.value) return false
@@ -325,9 +375,19 @@ const chainAttack = computed(() => {
   const last = state?.events?.findLast(event => ['shot', ...attackItems].includes(event.weapon))
   return state?.turn === state?.you && !state?.presentationUntil && last?.player === state?.you && last?.cells?.some(cell => cell.result === 'hit')
 })
-const activeTurn = computed(() => room.value?.phase === 'BATTLE' && !room.value.presentationUntil && (!visualBusy.value || chainAttack.value) && !bannerBusy.value && !launching.value ? room.value.turn : -1)
+const activeTurn = computed(() => room.value?.phase === 'BATTLE' && !room.value.presentationUntil && (!visualBusy.value || chainAttack.value) && !bannerBusy.value && !launching.value && !entryTransition.value ? room.value.turn : -1)
 const canAttack = computed(() => !communityPanel.value && mobilePanel.value !== 'medals' && !spectating.value && !me.value?.left && activeTurn.value === room.value?.you && !blocked.value && !busy.value && !matchPresentation.value && !showRules.value && !showLeave.value && !showShare.value && !confirmation.value)
-const ownBoard = computed(() => preparing.value && !spectating.value ? pendingTarget.value?.kind === 'placement' ? { ...me.value, ...pendingTarget.value.preview } : { ...me.value, ...draft } : me.value)
+const ownBoard = computed(() => {
+  if(preparing.value&&!spectating.value)return pendingTarget.value?.kind==='placement'?{...me.value,...pendingTarget.value.preview}:{...me.value,...draft}
+  const p=pendingTarget.value
+  if(p?.kind==='support'&&p.action?.supportMode==='tow'){
+    const original=me.value.ships.find(s=>s.id===p.action.targetShipId),shape=p.shape
+    const hits=[],model=MILITARY_SHIPS[original.kind]
+    for(let y=0;y<model.h;y++)for(let x=0;x<model.w;x++){const before=militaryCell(original,x,y);if(original.hits.includes(before.x+','+before.y)){const after=militaryCell(shape,x,y);hits.push(after.x+','+after.y)}}
+    return {...me.value,ships:me.value.ships.map(s=>s.id===original.id?{...shape,hits}:s)}
+  }
+  return me.value
+})
 const selectedModel = computed(() => draft.ships.find(ship => ship.id === selectedShip.value))
 const formationOptions = computed(() => [{ value: '', label: '已有阵型' }, ...formations.value.map(f => ({ value: f.id, label: f.name }))])
 const fullFleet = computed(() => !(isMilitary.value ? validateMilitaryFleet(draft.ships) : validateFleet(draft.ships)))
@@ -344,12 +404,12 @@ const fleetRoster = computed(() => {
   })
 })
 const coins = computed(() => isMilitary.value ? 300 - draft.ships.reduce((n,s)=>n+MILITARY_SHIPS[s.kind].price,0) : 300 - Object.entries(ITEMS).reduce((sum, [key, item]) => sum + item.price * (draft.inventory[key] || 0), 0))
-const selectedShape = computed(() => { const ship = fleetRoster.value.find(s => s.id === selectedShip.value); return ship ? { w: rotated.value ? ship.h : ship.w, h: rotated.value ? ship.w : ship.h } : null })
+const selectedShape = computed(() => { const ship=pendingTarget.value?.kind==='placement'?pendingTarget.value.shape:fleetRoster.value.find(s=>s.id===selectedShip.value);return ship?{...ship,w:rotated.value?ship.h:ship.w,h:rotated.value?ship.w:ship.h}:null })
 const placementPreview = computed(() => {
-  if (pendingTarget.value) return null
+  if (pendingTarget.value && !(pendingTarget.value.kind==='placement'&&dragAnchor.value)) return null
   if (placing.value && placementTool.value === 'ship' && selectedShape.value) {
     const ship = selectedShape.value
-    return { ...ship, sprite: ({ 1: 'patrol', 2: 'destroyer', 3: 'cruiser', 4: 'battleship' })[Math.max(ship.w, ship.h)], sourceShipId: selectedShip.value, offset: dragAnchor.value }
+    return { ...ship, ...(isMilitary.value ? { militaryShip: ship } : { sprite: ({ 1: 'patrol', 2: 'destroyer', 3: 'cruiser', 4: 'battleship' })[Math.max(ship.w, ship.h)] }), sourceShipId: selectedShip.value, offset: dragAnchor.value }
   }
   if (shopping.value && ['mine', 'antiAir', 'stealth'].includes(placementTool.value)) {
     const selection = selectedDefense.value
@@ -367,12 +427,12 @@ const seconds = computed(() => Math.min(room.value?.phase === 'BATTLE' ? 30 : In
 const clockText = computed(() => room.value?.phase === 'BATTLE' && activeTurn.value < 0 ? '' : `${Math.floor(seconds.value / 60)}:${String(seconds.value % 60).padStart(2, '0')}`)
 const phaseName = computed(() => ({ WAITING: '等待对手', PLACEMENT: '舰队布局', SUPPLY: '战备补给', READY: '战备就绪', BATTLE: '交战海域', FINISHED: '行动结束' })[visualStage.value])
 const statusText = computed(() => spectating.value ? '观战中' : room.value?.phase === 'BATTLE' ? room.value.turn === room.value.you ? '轮到你进攻' : '对手正在进攻' : waitingReady.value ? '等待对方完成战备' : shopping.value ? '战备补给' : placing.value ? '布置你的舰队' : phaseName.value)
-const combatWeapons = ['shot', ...attackItems, 'depthCharge']
+const combatWeapons = ['shot', ...attackItems, 'depthCharge', 'repairSupport']
 const ownEvents = computed(() => navalBoardEvents((room.value?.events || []).filter(e=>combatWeapons.includes(e.weapon)),selfIndex.value))
 const enemyEvents = computed(() => navalBoardEvents((room.value?.events || []).filter(e=>combatWeapons.includes(e.weapon)),otherIndex.value))
 const ownEvent = computed(() => ownEvents.value.at(-1))
 const enemyEvent = computed(() => enemyEvents.value.at(-1))
-let timer, pollTimer, draftTimer, launchTimer, announcementTimer, resultAudioTimer, presenceTimer, matchTimer, matchFoundTimer, disposed = false, polling = false, presencePolling = false, finishedId = '', epoch = 0, actionSequence = 0, inFlight = 0, launchAt = 0, matchAt = 0, queuedAnnouncement = ''
+let timer, draftTimer, launchTimer, announcementTimer, resultAudioTimer, presenceTimer, matchTimer, matchFoundTimer, disposed = false, polling = false, finishedId = '', epoch = 0, actionSequence = 0, inFlight = 0, launchAt = 0, matchAt = 0, queuedAnnouncement = ''
 let pageToken = makePageToken()
 let actionQueue = Promise.resolve()
 let assetsPromise
@@ -387,7 +447,11 @@ function makePageToken() {
   return `${hex.slice(0, 8)}-${hex.slice(8, 12)}-${hex.slice(12, 16)}-${hex.slice(16, 20)}-${hex.slice(20)}`
 }
 function readJson(key, fallback) { try { return JSON.parse(localStorage.getItem(key)) ?? fallback } catch { return fallback } }
-function writeJson(key, value) { try { localStorage.setItem(key, JSON.stringify(value)) } catch { error.value = '本机存储不可用，请检查浏览器存储空间' } }
+function writeJson(key, value) {
+  let serialized
+  try { serialized=JSON.stringify(value) } catch { error.value='本机数据无法序列化，请重新进入当前对局';return false }
+  try { localStorage.setItem(key,serialized);return true } catch { error.value='本机存储不可用，请检查浏览器存储空间';return false }
+}
 function clone(value) { return JSON.parse(JSON.stringify(value)) }
 function normalizeFormations(values) { return (Array.isArray(values) ? values : []).flatMap(f => { try { return [{ ...f, ships: normalizeSavedFleet(f.ships) }] } catch { return [] } }) }
 function formatDate(value) { if (!value) return ''; const date = new Date(value); return Number.isNaN(date.getTime()) ? '' : date.toLocaleString('zh-CN', { month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit' }) }
@@ -399,9 +463,9 @@ function shipAsset(ship) { return ship.kind ? militaryAsset(ship.kind) : `/enter
 function shipName(ship) { if(ship.kind) return MILITARY_SHIPS[ship.kind].name; return ({ patrol: '巡逻艇', destroyer: '驱逐舰', cruiser: '巡洋舰', battleship: '战列舰' })[shipType(ship)] }
 function useFleetBackdrop() { harborFailed.value = true }
 function fail(exception) { error.value = typeof exception === 'string' ? exception : exception?.message || '操作失败，请重试'; launching.value = false; clearTimeout(matchTimer); clearTimeout(matchFoundTimer); matchPresentation.value = '' }
-function beginLaunch(label = '舰队正在入场') { clearTimeout(launchTimer); launchAt = Date.now(); launchLabel.value = label; launchProgress.value = 4; launching.value = true; unlockNavalAudio().catch(() => {}) }
+function beginLaunch(label = '舰队正在入场') { clearTimeout(launchTimer); launchAt = Date.now(); launchLabel.value = label; launchProgress.value = 4; launchReady.value = false; launching.value = true; unlockNavalAudio().catch(() => {}) }
 function onBoardLoading(value) { if (launching.value) launchProgress.value = Math.max(launchProgress.value, 70 + Number(value) * 29) }
-function finishLaunch() { if (!launching.value) return; launchProgress.value = 100; clearTimeout(launchTimer); launchTimer = setTimeout(() => { launching.value = false; revealAnnouncement() }, Math.max(180, 950 - (Date.now() - launchAt))) }
+function finishLaunch() { launchReady.value=true;if (!launching.value || matchPresentation.value) return; launchProgress.value = 100; clearTimeout(launchTimer); launchTimer = setTimeout(() => { launching.value = false; revealAnnouncement() }, Math.max(180, 950 - (Date.now() - launchAt))) }
 function showAnnouncement(label) {
   if (launching.value || matchPresentation.value) { queuedAnnouncement = label; return }
   clearTimeout(announcementTimer); announcement.value = label; playNavalSound('transition')
@@ -415,33 +479,21 @@ function beginMatching(kind) {
 function showMatched(value) {
   if (!matchPresentation.value) beginMatching(value.autoMatch ? 'AUTO' : 'INVITE')
   clearTimeout(matchTimer); clearTimeout(matchFoundTimer)
+  clearTimeout(launchTimer);launching.value=true;launchReady.value=false;launchLabel.value='舰队正在入场'
   const revision = epoch
   matchNames.value = value.players.map(player => player.name);matchPeople.value=value.players
   matchTimer = setTimeout(() => {
     if (disposed || revision !== epoch) return
     matchPresentation.value = 'FOUND'; playNavalSound('ready')
-    matchFoundTimer = setTimeout(() => { if (!disposed && revision === epoch) { matchPresentation.value = ''; revealAnnouncement() } }, 1500)
+    matchFoundTimer = setTimeout(() => { if (!disposed && revision === epoch) { launchAt=Date.now();matchPresentation.value = '';if(launchReady.value)finishLaunch() } }, 1500)
   }, Math.max(150, 1400 - (performance.now() - matchAt)))
 }
 function finishInitialSearch() {
   clearTimeout(matchTimer)
   const revision = epoch
-  matchTimer = setTimeout(() => { if (!disposed && revision === epoch && room.value?.phase === 'WAITING') { matchPresentation.value = ''; revealAnnouncement() } }, Math.max(100, 1400 - (performance.now() - matchAt)))
+  matchTimer = setTimeout(() => { if (!disposed && revision === epoch && room.value?.phase === 'WAITING') { launching.value=false;matchPresentation.value = ''; revealAnnouncement() } }, Math.max(100, 1400 - (performance.now() - matchAt)))
 }
-async function refreshPresence() {
-  if (disposed || presencePolling || document.hidden) return
-  presencePolling = true
-  notifyConnection(true)
-  try {
-    let value
-    try { value = await heartbeatNavalPresence(pageToken) } catch (error) {
-      if (Number(error.code) !== 403 || error.message !== '页面标识不属于当前玩家') throw error
-      pageToken = makePageToken()
-      value = await heartbeatNavalPresence(pageToken)
-    }
-    if (!disposed) onlineCount.value = Number.isInteger(value.onlineCount) ? value.onlineCount : null
-  } catch { if (!disposed) onlineCount.value = null } finally { presencePolling = false }
-}
+function refreshPresence() { if(!disposed)refreshStreams() }
 function notifyConnection(connected) {
   if (!room.value || localMode.value || spectating.value || room.value.phase === 'FINISHED') return
   const id = String(room.value.id)
@@ -453,7 +505,7 @@ function notifyConnection(connected) {
 }
 function onPageHide() {
   if (localMode.value && room.value && preparing.value && !tutorialActive.value) { room.value._pausedAt ||= Date.now(); persist() }
-  notifyConnection(false); leaveNavalPresence(pageToken)
+  notifyConnection(false)
 }
 function restoreLocalPreparation(value) {
   if (!value?._pausedAt || !['PLACEMENT', 'SUPPLY'].includes(value.phase)) return value
@@ -484,7 +536,10 @@ function toggleChat() { if (room.value?.mode === 'AI') return; if (mobile.value 
 function requestLeave() { if (tutorialActive.value) exitTutorial(); else showLeave.value = true }
 function tutorialEvent(event) {
   if (!tutorialSession.value) return
-  tutorialSession.value = (isMilitary.value ? advanceMilitaryTutorial : advanceNavalTutorial)({ ...tutorialSession.value, room: clone(room.value) }, event)
+  const current={...tutorialSession.value,room:clone(room.value)}
+  const next=(isMilitary.value ? advanceMilitaryTutorial : advanceNavalTutorial)(current,event)
+  if(JSON.stringify(next)===JSON.stringify(current))return
+  tutorialSession.value=next
   room.value = clone(tutorialSession.value.room)
   weapon.value = tutorialSession.value.selectedWeapon
   persistTutorial(tutorialSession.value); tutorialSaved.value = tutorialSession.value
@@ -589,10 +644,10 @@ async function start(mode, prepared = false) {
   if (mode === 'MULTIPLAYER' && autoMatch.value) beginMatching('AUTO')
   const requestEpoch = epoch
   try {
-    await preloadAssets()
-    if (disposed || requestEpoch !== epoch) return
     localMode.value = mode === 'AI' && !loggedIn
-    const value = localMode.value ? (isMilitary.value ? await localMilitaryGame() : createLocalGame()) : await createNavalRoom({ mode, autoMatch: mode === 'MULTIPLAYER' && autoMatch.value, ruleSet: ruleSet.value })
+    const request=localMode.value?Promise.resolve().then(()=>isMilitary.value?localMilitaryGame():createLocalGame()):createNavalRoom({mode,autoMatch:mode==='MULTIPLAYER'&&autoMatch.value,ruleSet:ruleSet.value})
+    const [value]=await Promise.all([request,preloadAssets()])
+    if (disposed || requestEpoch !== epoch) return
     if (localMode.value) {value.presentationSync = true;value.players[value.you||0].medals=ownNavalMedals.value;value.players[value.you||0].self=true}
     if (disposed || requestEpoch !== epoch) return
     accept(value, true)
@@ -609,9 +664,8 @@ async function join(prepared = false) {
   busy.value = true; error.value = ''; epoch++; beginLaunch('正在加入舰队'); beginMatching('INVITE')
   const requestEpoch = epoch
   try {
-    await preloadAssets(); if (disposed || requestEpoch !== epoch) return
     localMode.value = false
-    const value = await joinNavalRoom(inviteCode.value)
+    const [value]=await Promise.all([joinNavalRoom(inviteCode.value),preloadAssets()])
     if (disposed || requestEpoch !== epoch) return
     accept(value, true)
     if (value.phase === 'WAITING') { finishLaunch(); finishInitialSearch() }
@@ -678,6 +732,7 @@ function joinFromLink() {
 }
 function accept(value, initialize = false) {
   if (!value || disposed) return
+  if(value.matchedRoomId){followMatchedRoom(value);return}
   ruleSet.value = value.ruleSet || 'CLASSIC'
   if (initialize) communityPanel.value = ''
   const previousPhase = room.value?.phase
@@ -694,7 +749,8 @@ function accept(value, initialize = false) {
   const previousPlayers = (room.value?.players || []).map(player => player.id)
   const previousRole = room.value?.role
   if (newRound) { clearTimeout(settlementTimer); showSettlement.value = false; showShare.value = false; chatPops[0] = null; chatPops[1] = null; weapon.value = 'shot' }
-  serverOffset.value = !localMode.value && value.serverTime ? value.serverTime - Date.now() : 0
+  if(localMode.value)serverOffset.value=0
+  else if(value.serverTime&&value.serverTime!==room.value?.serverTime)serverOffset.value=value.serverTime-Date.now()
   if (value.mode === 'AI' && value.players?.[1]) value.players[1].ai = true
   if (localMode.value && value.players?.[value.you || 0]) { value.players[value.you || 0].self = true; value.players[value.you || 0].medals = ownNavalMedals.value }
   room.value = value
@@ -706,7 +762,7 @@ function accept(value, initialize = false) {
     draft.mines = clone(me.value?.mines || []); draft.aa = [...(me.value?.aa || [])]
     selectedShip.value = fleetRoster.value[0]?.id || ''; placementTool.value = shopping.value ? 'inspect' : 'ship'; rotated.value = false
   }
-  if (!spectating.value && !tutorialActive.value && value.phase === 'PLACEMENT' && (previousPhase === 'WAITING' || initialize || newRound)) showMatched(value)
+  if (!localMode.value && !spectating.value && !tutorialActive.value && value.phase === 'PLACEMENT' && (previousPhase === 'WAITING' || initialize || newRound)) showMatched(value)
   if (mobile.value && (initialize || newRound || visualStage.value !== previousVisual)) {
     if (newRound) prepTab.value = isMilitary.value ? 'supply' : 'fleet'
     mobilePanel.value = defaultMobilePanel(); chatOpen.value = false
@@ -740,21 +796,39 @@ function accept(value, initialize = false) {
     else if (!spectating.value) refreshProfile()
   }
 }
-let mirrorTimer, mirrorHeartbeat, mirrorPending = null, mirrorSending = false
+let matchHandoff=''
+async function followMatchedRoom(value){
+  const key=value.id+':'+value.matchedRoomId,revision=epoch
+  if(matchHandoff===key||room.value?.id!==value.id)return
+  matchHandoff=key
+  try{
+    const next=await getNavalRoom(value.matchedRoomId)
+    if(!disposed&&revision===epoch&&room.value?.id===value.id)accept(next)
+  }catch{if(!disposed&&revision===epoch)connectionError.value='匹配成功，连接对局失败，请重试'}
+}
+let mirrorTimer, mirrorRetry, stopMirror, mirroredId='', mirrorPending = null, mirrorSending = false
 function queueLocalMirror() {
   if (!localMode.value || !room.value || tutorialActive.value || disposed) return
-  mirrorPending = clone(room.value)
+  mirrorPending = room.value.allowSpectators===false?{id:room.value.id,allowSpectators:false}:clone(room.value)
   clearTimeout(mirrorTimer); mirrorTimer = setTimeout(flushLocalMirror, 180)
 }
 async function flushLocalMirror() {
   if (mirrorSending || !mirrorPending) return
   const snapshot = mirrorPending; mirrorPending = null; mirrorSending = true
-  try { const result = await publishLocalNavalRoom(snapshot); if (localMode.value && room.value?.id === snapshot.id && room.value.allowSpectators !== false) room.value.spectators = result.spectators || [] }
-  catch { /* Offline local play remains available; the next heartbeat retries publication. */ }
+  try {
+    const result = await publishLocalNavalRoom(snapshot)
+    if(!disposed&&localMode.value&&room.value?.id===snapshot.id){
+      if(room.value.allowSpectators!==false){
+        room.value.spectators=result.spectators||[]
+        if(mirroredId!==snapshot.id){stopMirror?.();mirroredId=snapshot.id;stopMirror=subscribeMirror(snapshot.id,value=>{if(disposed||!localMode.value||room.value?.id!==value.id)return;if(value.missing){invalidateLocalNavalPublication(value.id);stopMirror?.();stopMirror=null;mirroredId='';queueLocalMirror()}else if(room.value.allowSpectators!==false)room.value.spectators=value.spectators})}
+      }else{stopMirror?.();stopMirror=null;mirroredId=''}
+    }
+  }
+  catch { if(!disposed&&localMode.value&&room.value?.id===snapshot.id){clearTimeout(mirrorRetry);mirrorRetry=setTimeout(queueLocalMirror,5000)} }
   finally { mirrorSending = false; if (mirrorPending) flushLocalMirror() }
 }
-onMounted(() => { mirrorHeartbeat = setInterval(() => { if (!document.hidden) queueLocalMirror() }, 4000) })
-onUnmounted(() => { clearTimeout(mirrorTimer); clearInterval(mirrorHeartbeat); mirrorPending = null })
+watch(()=>localMode.value?room.value?.id:null,id=>{if(id!==mirroredId){stopMirror?.();stopMirror=null;mirroredId=''} })
+onUnmounted(() => { clearTimeout(mirrorTimer); clearTimeout(mirrorRetry); stopMirror?.(); mirrorPending = null })
 function persist() {
   if (!room.value) return
   if (tutorialSession.value) { tutorialSession.value = { ...tutorialSession.value, room: clone(room.value) }; persistTutorial(tutorialSession.value); tutorialSaved.value = tutorialSession.value; return }
@@ -785,19 +859,38 @@ function queueDeployment() {
   if (localMode.value) { try { accept(runLocalAction(deployment())) } catch (e) { fail(e) }; return }
   draftTimer = setTimeout(() => { if (preparing.value && playerStage.value !== 'READY') dispatch(deployment(), true) }, 350)
 }
-function selectShip(ship) { cancelTarget(); selectedShip.value = ship.id; placementTool.value = 'ship'; rotated.value = false; tutorialEvent({ type: 'SELECT_SHIP', shipId: ship.id }) }
+function selectShip(ship) {
+  cancelTarget();selectedShip.value=ship.id;placementTool.value='ship';rotated.value=false
+  if(canArrange.value&&mobile.value){
+    const shape={...ship,x:ship.x>=0?ship.x:Math.floor((12-ship.w)/2),y:ship.y>=0?ship.y:Math.floor((12-ship.h)/2)},preview=clone(draft)
+    preview.ships=preview.ships.some(s=>s.id===ship.id)?preview.ships.map(s=>s.id===ship.id?shape:s):[...preview.ships,shape]
+    pendingTarget.value={kind:'placement',point:{x:shape.x,y:shape.y},shape,preview,tool:'ship',invalid:!placementValid(preview.ships,shape)}
+  }
+  tutorialEvent({type:'SELECT_SHIP',shipId:ship.id})
+}
+function boardRect(rect){
+  const x=Math.max(0,rect.x),y=Math.max(0,rect.y),w=Math.min(12,rect.x+rect.w)-x,h=Math.min(12,rect.y+rect.h)-y
+  return {left:((24+(12-x-w)*48)/624*100)+'%',top:((24+y*48)/624*100)+'%',width:(w*48/624*100)+'%',height:(h*48/624*100)+'%'}
+}
+function placementValid(ships,ship){return (isMilitary.value?militaryPlacement(ships,ship):legalPlacement(ships.filter(s=>s.id!==ship.id),ship))&&!draft.mines.some(m=>m.x>=ship.x&&m.x<ship.x+ship.w&&m.y>=ship.y&&m.y<ship.y+ship.h)}
 function rotatePendingShip(){
   const pending=pendingTarget.value;if(!pending||pending.kind!=='placement'||!canArrange.value)return
   const ship=pending.preview.ships.find(s=>s.id===selectedShip.value);if(!ship)return
   const next={...ship,w:ship.h,h:ship.w,x:Math.min(ship.x,12-ship.h),y:Math.min(ship.y,12-ship.w),...(isMilitary.value?{rotation:((ship.rotation||0)+90)%360}:{})}
-  if(!(isMilitary.value?militaryPlacement(pending.preview.ships,next):legalPlacement(pending.preview.ships.filter(s=>s.id!==ship.id),next))){error.value='旋转后不能越界或与其他舰船相邻';return}
-  pending.preview.ships=pending.preview.ships.map(s=>s.id===ship.id?next:s);pending.shape=next;pending.point={x:next.x,y:next.y};playNavalSound('ui')
+  pending.invalid=!placementValid(pending.preview.ships,next)
+  pending.preview.ships=pending.preview.ships.map(s=>s.id===ship.id?next:s);pending.shape=next;pending.point={x:next.x,y:next.y};playNavalSound('ui');tutorialEvent({type:'ROTATE_SHIP'})
 }
 function rotateShip(ship = fleetRoster.value.find(ship => ship.id === selectedShip.value)) {
+  if(pendingTarget.value?.kind==='placement'){
+    rotatePendingShip()
+    if(!mobile.value&&!pendingTarget.value.invalid)confirmTarget()
+    return
+  }
   if (isMilitary.value) {
     if (!canArrange.value || !ship) return
     const next={...ship, rotation:((ship.rotation||0)+90)%360,w:ship.h,h:ship.w}
-    if (ship.x>=0 && !militaryPlacement(draft.ships,next)) { error.value='旋转后不能越界或与其他舰船相邻'; return }
+    if(ship.x>=0){next.x=Math.max(0,Math.min(12-next.w,next.x));next.y=Math.max(0,Math.min(12-next.h,next.y))}
+    if(ship.x>=0&&!militaryPlacement(draft.ships,next)){pendingTarget.value={kind:'placement',point:{x:next.x,y:next.y},shape:next,preview:{...clone(draft),ships:draft.ships.map(s=>s.id===ship.id?next:s)},tool:'ship',invalid:true};return}
     draft.ships=draft.ships.map(s=>s.id===ship.id?next:s);selectedShip.value=ship.id;rotated.value=false;queueDeployment();tutorialEvent({type:'ROTATE_SHIP'});return
   }
   if (!canArrange.value || !ship || ship.w === ship.h) return
@@ -805,7 +898,7 @@ function rotateShip(ship = fleetRoster.value.find(ship => ship.id === selectedSh
   selectedShip.value = ship.id; placementTool.value = 'ship'; pendingTarget.value = null
   if (!ship.placed) { reserveRotations[ship.id] = !reserveRotations[ship.id]; rotated.value = false; playNavalSound('ui'); tutorialEvent({ type: 'ROTATE_SHIP' }); return }
   const next = { ...ship, w: ship.h, h: ship.w, x: Math.min(ship.x, 12 - ship.h), y: Math.min(ship.y, 12 - ship.w) }
-  if (!legalPlacement(draft.ships, next) || draft.mines.some(m => m.x >= next.x && m.x < next.x + next.w && m.y >= next.y && m.y < next.y + next.h)) { rotated.value = !rotated.value; error.value = '旋转位置不足，请点选新的空位'; tutorialEvent({ type: 'ROTATE_SHIP' }); return }
+  if(!placementValid(draft.ships,next)){pendingTarget.value={kind:'placement',point:{x:next.x,y:next.y},shape:next,preview:{...clone(draft),ships:draft.ships.map(s=>s.id===ship.id?next:s)},tool:'ship',invalid:true};return}
   draft.ships = draft.ships.map(value => value.id === ship.id ? { ...next, hits: [] } : value); rotated.value = false
   playNavalSound('ui'); queueDeployment(); tutorialEvent({ type: 'ROTATE_SHIP' })
 }
@@ -857,9 +950,10 @@ function selectPlacedDefense(x, y) {
 function placeCell({ x, y, dragStart, dragging }, confirmed = false) {
   if (!canArrange.value && !canDeployDefense.value) return
   if (dragStart) {
+    const ships=pendingTarget.value?.kind==='placement'?pendingTarget.value.preview.ships:draft.ships
     cancelTarget()
     if (canArrange.value) {
-      const ship = draft.ships.find(s => x >= s.x && x < s.x+s.w && y >= s.y && y < s.y+s.h)
+      const ship = ships.find(s => x >= s.x && x < s.x+s.w && y >= s.y && y < s.y+s.h)
       if (ship) { selectShip(ship); dragAnchor.value = { x: x-ship.x, y: y-ship.y } }
     } else selectPlacedDefense(x, y)
     return
@@ -899,13 +993,13 @@ function placeCell({ x, y, dragStart, dragging }, confirmed = false) {
     if (clicked && clicked.id !== selectedShip.value) { selectShip(clicked); return }
     const ship = fleetRoster.value.find(s => s.id === selectedShip.value)
     if (!ship) return
-    const next = { ...(isMilitary.value ? ship : {}), id: ship.id, ...selectedShape.value, x, y, hits: [] }
+    const next = { ...(isMilitary.value ? ship : {}), id: ship.id, ...selectedShape.value, x:Math.max(0,Math.min(12-selectedShape.value.w,x)), y:Math.max(0,Math.min(12-selectedShape.value.h,y)), hits: [] }
     shape = next
-    if (!(isMilitary.value ? militaryPlacement(draft.ships, next) : legalPlacement(draft.ships.filter(s => s.id !== ship.id), next))) { error.value = '此位置不可用：舰船间须空一格，且不能超出海域'; return }
-    if (draft.mines.some(m => m.x >= x && m.x < x + next.w && m.y >= y && m.y < y + next.h)) { error.value = '此位置已部署水雷'; return }
+    const valid=placementValid(draft.ships,next)
+    if(!valid&&!confirmed){const preview=clone(draft);preview.ships=ship.placed||isMilitary.value?preview.ships.map(s=>s.id===ship.id?next:s):[...preview.ships,next];pendingTarget.value={kind:'placement',point:{x,y},shape:next,preview,tool:placementTool.value,invalid:true};return}
     draft.ships = ship.placed || isMilitary.value ? draft.ships.map(s => s.id === ship.id ? next : s) : [...draft.ships, next]; rotated.value = false
   }
-  if (!error.value && mobile.value && !confirmed) {
+  if (!error.value && !confirmed && mobile.value) {
     pendingTarget.value = { kind: 'placement', point: { x, y }, shape, preview: clone(draft), tool: placementTool.value }
     Object.assign(draft, previous); return
   }
@@ -913,7 +1007,8 @@ function placeCell({ x, y, dragStart, dragging }, confirmed = false) {
 }
 async function confirmTarget() {
   const pending = pendingTarget.value
-  if (!pending) return
+  if (!pending || pending.invalid) return
+  if(pending.kind==='support'){pendingTarget.value=null;await dispatch(pending.action);return}
   if (pending.kind === 'placement') {
     if (!canArrange.value && !canDeployDefense.value) { cancelTarget(); return }
     pendingTarget.value = null; selectedDefense.value = null; dragAnchor.value = null; placementTool.value = pending.tool; Object.assign(draft, clone(pending.preview))
@@ -954,7 +1049,7 @@ async function attack(point, confirmed = false) {
     tutorialEvent({ type: 'SUBMARINE_TARGET', targets: clone(submarineTargets.value) })
     try { submarineFootprint(submarineTargets.value) } catch (e) { error.value = e.message; return }
   }
-  if (mobile.value && (isMilitary.value ? militarySource.value?.kind !== 'cruiser' || militarySelectedAction.value?.weapon !== 'shot' : weapon.value !== 'shot') && !confirmed) { pendingTarget.value = { kind: 'attack', point, weapon: weapon.value }; return }
+  if ((!mobile.value || (isMilitary.value ? militarySource.value?.kind !== 'cruiser' || militarySelectedAction.value?.weapon !== 'shot' : weapon.value !== 'shot')) && !confirmed) { pendingTarget.value = { kind: 'attack', point, weapon: weapon.value }; return }
   error.value = ''; unlockNavalAudio().catch(() => {})
   const usedWeapon = isMilitary.value ? militarySelectedAction.value?.weapon : weapon.value
   if(!usedWeapon) {error.value='舰队已无可用进攻功能';return}
@@ -985,7 +1080,7 @@ function requestResumeDecision(run = null) {
 }
 function continueSavedGame() { resumeDecision.value = null; resume() }
 function recordGuestResult(value, local) {
-  if (loggedIn || value.winner == null || value.mode === 'AI' && !(value.battleStarted || value.settlement?.battleStarted || value.events?.some(event => event.weapon === 'start'))) return
+  if (loggedIn || value.winner == null || !(value.battleStarted || value.settlement?.battleStarted || value.events?.some(event => event.weapon === 'start'))) return
   const gameId = value.gameId || `${value.id}:${value.round || 1}`
   history.value = [{ id: gameId, gameId, local, detail: local ? {...localBattleResult(value),ruleSet:value.ruleSet||'CLASSIC',battleStarted:value.battleStarted||value.events?.length>0} : null, mode: value.mode, ruleSet:value.ruleSet||'CLASSIC', won: value.winner === (value.resultYou ?? value.you ?? 0), at: Date.now() }, ...history.value.filter(item => item.id !== gameId)].slice(0, 100)
   writeJson('naval-guest-history', history.value)
@@ -1038,13 +1133,14 @@ async function removeFormation(id) {
 }
 async function refreshProfile() { if (!loggedIn) return; try { const value = await getNavalProfile(); formations.value = normalizeFormations(value.formations || []); history.value = value.history || [] } catch (e) { fail(e) } }
 async function poll() {
+  if(socketReady)return
   if (!room.value || localMode.value || busy.value || inFlight || polling || document.hidden) return
   polling = true; const requestEpoch = epoch, sequence = actionSequence
   try {
     let value
-    try { value = await getNavalRoom(room.value.id) }
+    try { value = await getNavalRoom(room.value.id,room.value.version) }
     catch (e) { if (e.code !== 403 || !spectating.value || epoch !== requestEpoch) throw e; value = await spectateNavalRoom(room.value.inviteCode, room.value.viewMode) }
-    if (epoch === requestEpoch && sequence === actionSequence) { accept(value); connectionError.value = '' }
+    if (epoch === requestEpoch && sequence === actionSequence) { if(!value.unchanged)accept(value); connectionError.value = '' }
   } catch (e) { if (epoch === requestEpoch) { if (spectating.value && (e.code === 404 || String(e.message).includes('关闭观战'))) { resumeId.value = ''; localStorage.removeItem(`${storagePrefix}-room`); backToLobby(); error.value = e.message } else connectionError.value = '连接中断，正在重试' } } finally { polling = false }
 }
 watch(() => room.value?.messages?.at(-1)?.id, async () => { await nextTick(); if (chatLog.value) chatLog.value.scrollTop = chatLog.value.scrollHeight })
@@ -1055,7 +1151,18 @@ let noticeTimer
 const noticeSerial = ref(0)
 watch(error, value => { clearTimeout(noticeTimer); if (value) { noticeSerial.value++; noticeTimer = setTimeout(() => { error.value = '' }, 3000) } })
 watch(placementTool, () => cancelTarget(), { flush: 'sync' })
+watch([()=>tutorialStep.value?.overview,visualBusy,launching],([overview,animating,loading])=>{
+  if(!mobile.value||!tutorialActive.value||!isMilitary.value||loading)return
+  const panel=animating?null:overview?'weapons':undefined
+  if(panel===undefined||mobilePanel.value===panel)return
+  mobilePanel.value=panel;chatOpen.value=false;tutorialEvent({type:'PANEL',panel})
+},{flush:'post'})
 let presentationTimer, presentedKey = ''
+watch([()=>tutorialStep.value?.id,canArrange],([id,available])=>{
+  if(id!=='rotate'||!tutorialActive.value||!available||pendingTarget.value?.kind==='placement')return
+  const ship=fleetRoster.value.find(s=>s.w!==s.h)||fleetRoster.value[0]
+  if(ship)selectShip(ship)
+},{flush:'post'})
 watch(() => [room.value?.presentationId, room.value?.presentationUntil, visualBusy.value, launching.value, bannerBusy.value, blocked.value], () => {
   clearTimeout(presentationTimer)
   if (!room.value?.presentationUntil || spectating.value || visualBusy.value || launching.value || bannerBusy.value || blocked.value) return
@@ -1082,12 +1189,11 @@ onMounted(() => {
   window.visualViewport?.addEventListener('scroll', syncViewport)
   refreshProfile(); refreshPresence(); joinFromLink(); window.addEventListener('keydown', onAttackKey)
   window.addEventListener('pagehide', onPageHide); document.addEventListener('visibilitychange', onVisibilityChange)
-  presenceTimer = setInterval(refreshPresence, 8000)
+  presenceTimer = subscribePresence(value => { onlineCount.value = value })
   timer = setInterval(() => { now.value = Date.now(); if(room.value && tutorialActive.value && isMilitary.value && !visualBusy.value && !busy.value) { const next=tickMilitaryTutorial(clone(room.value),now.value);if(JSON.stringify(next)!==JSON.stringify(room.value))accept(next) }; if (room.value && localMode.value && !tutorialActive.value && !busy.value && !document.hidden) { try { const value = isMilitary.value ? tickMilitaryGame(clone(room.value),now.value) : tickLocalGame(clone(room.value), now.value); if (JSON.stringify(value) !== JSON.stringify(room.value)) accept(value) } catch (e) { fail(e) } } }, 250)
-  pollTimer = setInterval(poll, 1200)
 })
 onUnmounted(() => { window.visualViewport?.removeEventListener('resize', syncViewport); window.visualViewport?.removeEventListener('scroll', syncViewport) })
-onUnmounted(() => { disposed = true; lockMobileScroll(false); epoch++; clearInterval(timer); clearInterval(pollTimer); clearInterval(presenceTimer); clearTimeout(draftTimer); clearTimeout(launchTimer); clearTimeout(announcementTimer); clearTimeout(resultAudioTimer); clearTimeout(matchTimer); clearTimeout(matchFoundTimer); clearTimeout(settlementTimer); cancelSpectating(); Object.values(chatPopTimers).forEach(clearTimeout); onPageHide(); stopNavalSounds(); document.removeEventListener('fullscreenchange', syncViewport); document.removeEventListener('webkitfullscreenchange', syncViewport); window.removeEventListener('resize', syncViewport); window.removeEventListener('pagehide', onPageHide); window.removeEventListener('keydown', onAttackKey); document.removeEventListener('visibilitychange', onVisibilityChange); if (document.fullscreenElement === root.value) document.exitFullscreen?.().catch(() => {}) })
+onUnmounted(() => { disposed = true; lockMobileScroll(false); epoch++; clearInterval(timer); presenceTimer?.(); stopRoomSync?.(); clearTimeout(draftTimer); clearTimeout(launchTimer); clearTimeout(announcementTimer); clearTimeout(resultAudioTimer); clearTimeout(matchTimer); clearTimeout(matchFoundTimer); clearTimeout(settlementTimer); cancelSpectating(); Object.values(chatPopTimers).forEach(clearTimeout); onPageHide(); stopNavalSounds(); document.removeEventListener('fullscreenchange', syncViewport); document.removeEventListener('webkitfullscreenchange', syncViewport); window.removeEventListener('resize', syncViewport); window.removeEventListener('pagehide', onPageHide); window.removeEventListener('keydown', onAttackKey); document.removeEventListener('visibilitychange', onVisibilityChange); if (document.fullscreenElement === root.value) document.exitFullscreen?.().catch(() => {}) })
 </script>
 
 <style scoped>

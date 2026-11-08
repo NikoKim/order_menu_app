@@ -1,7 +1,7 @@
 const ROOT = '/entertainment/naval/v2/audio/'
-const NAMES = ['cannon', 'explosion', 'splash', 'fighter', 'bomber', 'torpedo', 'submarine', 'sonar', 'intercept', 'sink', 'deploy', 'ready', 'transition', 'win', 'lose', 'mine', 'tick', 'notification']
-const ALIASES = { depthCharge:'submarine', shot: 'cannon', hit: 'explosion', miss: 'splash', water: 'splash', radar: 'sonar', antiAir: 'intercept', join: 'transition', purchase: 'deploy', ui: 'deploy', countdown: 'tick' }
-const VOLUMES = { cannon: .52, explosion: .62, splash: .42, fighter: .36, bomber: .4, torpedo: .36, sonar: .55, intercept: .42, sink: .62, deploy: .3, ready: .4, transition: .4, win: .55, lose: .5, mine: .4, tick: .65, notification: .38 }
+const NAMES = ['cannon', 'explosion', 'splash', 'fighter', 'bomber', 'torpedo', 'submarine', 'sonar', 'intercept', 'sink', 'deploy', 'ready', 'transition', 'win', 'lose', 'mine', 'tick', 'notification', 'repair', 'tow']
+const ALIASES = { repairSupport:'repair', depthCharge:'submarine', shot: 'cannon', hit: 'explosion', miss: 'splash', water: 'splash', radar: 'sonar', antiAir: 'intercept', join: 'transition', purchase: 'deploy', ui: 'deploy', countdown: 'tick' }
+const VOLUMES = { cannon: .52, explosion: .62, splash: .42, fighter: .36, bomber: .4, torpedo: .36, sonar: .55, intercept: .42, sink: .62, deploy: .3, ready: .4, transition: .4, win: .55, lose: .5, mine: .4, tick: .65, notification: .38, repair: .65, tow: .6 }
 let context, master, loading, muted = false, playbackGeneration = 0
 const buffers = new Map(), encoded = new Map(), active = new Set()
 try { muted = localStorage.getItem('naval_sound_muted') === '1' } catch { }

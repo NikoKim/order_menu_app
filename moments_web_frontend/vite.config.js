@@ -14,6 +14,8 @@ export default defineConfig({
     proxy: {
       '/api': {
         target: proxyTarget,
+        ws: true,
+        xfwd: true,
         changeOrigin: true
       },
       '/images': {

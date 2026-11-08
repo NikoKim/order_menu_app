@@ -34,6 +34,25 @@ final class NavalMedals {
         for(String source:jdbc.queryForList("SELECT result_json FROM naval_round_results WHERE player0_key=? OR player1_key=? ORDER BY finished_at,game_id",String.class,key,key))credit(decode(source),key);
     }
     Map<String,Object> wall(String key){if(key==null||key.equals("AI"))return Map.of("unlocked",List.of(),"equipped","");return transaction(()->wallData(key),true);}
+    Map<String,Object> readWall(String key){
+        if(key==null||key.equals("AI"))return Map.of("unlocked",List.of(),"equipped","");
+        var rows=jdbc.queryForList("SELECT * FROM naval_medal_profiles WHERE player_key=?",key);
+        if(rows.isEmpty())return Map.of("unlocked",List.of(),"equipped","");
+        var row=rows.get(0);int classic=((Number)row.get("classic_best")).intValue(),military=((Number)row.get("military_best")).intValue();
+        Map<String,Object> out=new LinkedHashMap<>();out.put("medalId",row.get("public_id"));out.put("unlocked",unlocked(classic,military));out.put("equipped",row.get("equipped")==null?"":row.get("equipped"));return out;
+    }
+    static Map<String,Map<String,Object>> readWalls(JdbcTemplate jdbc,Collection<String> keys){
+        Map<String,Map<String,Object>> result=new LinkedHashMap<>();
+        for(String key:keys)result.put(key,Map.of("unlocked",List.of(),"equipped",""));
+        List<String> actual=keys.stream().filter(Objects::nonNull).filter(key->!key.equals("AI")).distinct().toList();
+        if(actual.isEmpty())return result;
+        String placeholders=String.join(",",Collections.nCopies(actual.size(),"?"));
+        for(var row:jdbc.queryForList("SELECT player_key,public_id,classic_best,military_best,equipped FROM naval_medal_profiles WHERE player_key IN ("+placeholders+")",actual.toArray())){
+            int classic=row.get("classic_best") instanceof Number n?n.intValue():0,military=row.get("military_best") instanceof Number n?n.intValue():0;
+            result.put(row.get("player_key").toString(),Map.of("medalId",row.get("public_id"),"unlocked",unlocked(classic,military),"equipped",Objects.toString(row.get("equipped"),"")));
+        }
+        return result;
+    }
     private Map<String,Object> wallData(String key){
         if(key==null||key.equals("AI"))return Map.of("unlocked",List.of(),"equipped","");
         backfill(key);Map<String,Object> row=jdbc.queryForMap("SELECT * FROM naval_medal_profiles WHERE player_key=?",key);

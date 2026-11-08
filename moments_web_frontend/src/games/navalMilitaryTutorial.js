@@ -8,23 +8,23 @@ const lessons = [
   { id: 'shop', title: '打开舰船采购', mode: 'action', target: 'naval-mobile-shop-toggle', description: '进入采购标签，右上方显示剩余金币。' },
   buy('carrier', '50 金币，1 × 4。中间两格各停一架战斗机，每架独立起飞；舰体上的飞机不是额外购买的道具。'),
   read('variants', '同舰体切换类型', '加号后的旋转箭头切换舰船型号。航母可选双战斗机、单轰炸机或单鱼雷机，驱逐舰可选防空、雷达、布雷、干扰或深水炸弹；雷达与干扰均 20 金币。型号切换不改变已购舰船。'),
-  buy('cruiser', '30 金币，1 × 3。舰首一门主炮，单格炮击；这是手机上唯一不需要勾叉确认的军事攻击。'),
+  buy('cruiser', '25 金币，1 × 3。舰首一门主炮，单格炮击；这是手机上唯一不需要勾叉确认的军事攻击。'),
   buy('battleship', '35 金币，1 × 3。首尾各一门主炮。沿舰体朝向选择连续三格，在其中随机攻击 1 或 2 格，取决于剩余主炮数。'),
   buy('submarine', '50 金币，1 × 3。沿行潜航进入敌海，抵达后向上、下各发一颗鱼雷。遭遇水雷或中部被炮击会失去整艘潜艇；两侧受击不会直接击沉。'),
   buy('radar', '20 金币。切换到雷达型号后购买，舰首雷达提供 2 × 2 扫描。'),
   buy('antiAir', '30 金币。切换到防空型号后购买，覆盖舰体及周围一格；部署时覆盖可见。'),
   buy('mineLayer', '30 金币。切换到布雷型号后购买，每艘最多放置 10 颗水雷；每回合可逐颗放置两颗，第一颗后继续，第二颗后换手。'),
   buy('depthCharge','25 金币，1 × 2。两格各一门深弹发射器，前格负责上侧、后格负责下侧；受损一格仅失去对应侧发射，撞舰双方全沉并波及碰撞两格。'),
-  buy('decoy', '15 金币，1 × 2。无攻击能力，只能在雷达扫描中伪装成舰艇。'),
-  read('caps', '共享购买额度', '当前舰队花费 285，剩余 15。三种航母共享 2 艘额度；战列舰、巡洋舰和潜艇共享 4 艘；五种驱逐舰共享 6 艘；佯攻舰另限 3 艘。'),
+  buy('repairTug', '35 金币，2 × 2，最多两艘。无攻击能力，左前修理工具、右后拖曳工具；各自损毁后不能执行对应操作。'),
+  read('caps', '共享购买额度', '当前舰队花费 300，剩余 0。修理拖船另限 2 艘，每艘 35 金币、2 × 2。三种航母共享 2 艘额度；战列舰、巡洋舰和潜艇共享 4 艘；五种驱逐舰共享 6 艘；佯攻舰另限 3 艘。'),
   { id: 'fleet', title: '查看已购舰队', mode: 'action', target: 'naval-mobile-fleet-toggle', description: '回到舰队标签，选择舰船模型进行部署。虚线表示尚未部署。' },
-  { id: 'rotate', title: '旋转舰船', mode: 'action', target: 'naval-fleet-roster', subTarget: '.fleet-rotate, .prep-rotate', description: '预览时同时显示旋转、勾和叉，可先旋转再确认；每次顺时针 90°。主炮、甲板和干扰方向随舰体转动，飞机进攻方向不会随舰体改变。' },
+  { id: 'rotate', title: '旋转舰船', mode: 'action', target: 'naval-rotate-ship', description: '电脑部署点击或拖放直接生效，工具栏旋转图标可转向；手机部署先预览再用勾叉确认，每次顺时针 90°。主炮、甲板和干扰方向随舰体转动，飞机进攻方向不会随舰体改变。' },
   { id: 'manual', title: '手动部署一艘', mode: 'action', target: 'naval-own-board', cell: { x: 1, y: 1, w: 4, h: 4 }, description: '在亮起的海域放置选中舰船。手机先预览，再用勾确认或叉取消；舰船间隔至少一格，斜角也不能接触。' },
   { id: 'tools', title: '阵型工具', mode: 'action', target: 'naval-mobile-tools-toggle', description: '打开阵型工具。舰船可以拖动重排、旋转，也能清空或随机部署。' },
   { id: 'clear', title: '清空部署位置', mode: 'action', target: 'naval-clear-layout', description: '清空只把已购舰船收回待部署列表，不退购、不扣金币。' },
   { id: 'layout', title: '随机部署舰队', mode: 'action', target: 'naval-random-layout', description: '自动安排所有已购舰船。观察防空覆盖，之后仍可以手动调整舰首朝向和阵型。' },
   { id: 'ready', title: '完成战备', mode: 'action', target: 'naval-layout-next', description: '所有舰船部署后出击，不再进入经典模式的道具补给阶段。接下来进入固定靶场，逐项实操。' },
-  read('turns', '每回合一次行动', '军事模式即使命中也换手，扫描和布雷同样占一回合。每回合 30 秒，最后 5 秒有声音提示。攻击栏按数字 1–9 切换，手机除巡洋舰单格炮击外都需勾叉确认。', { practice: 'standard' }),
+  read('turns', '每回合一次行动', '军事模式即使命中也换手，扫描和布雷同样占一回合。每回合 30 秒，最后 5 秒有声音提示。攻击栏按数字 1–9 切换。电脑对战攻击需勾叉确认；手机除巡洋舰单格炮击外也需确认。', { practice: 'standard' }),
   exercise('scan', '雷达侦察', 'radar', 'radar', '扫描亮起的 2 × 2。信号只表示存在舰体，不显示具体型号，佯攻舰也有信号。', { x: 0, y: 0, w: 2, h: 2 }),
   exercise('gun', '巡洋舰单格炮击', 'cruiser', 'shot', '攻击一个格子。巡洋舰舰首主炮被命中后就无法炮击，其他艇身仍可存活。', { x: 0, y: 1 }),
   exercise('broadside', '战列舰齐射', 'battleship', 'shot', '这艘战列舰横向部署，攻击栏标注 1×3（一行三列）；竖向时标注 3×1（三行一列）。因此选择横向连续三格，两门主炮各打不同的一格。三格已有一格命中时，另外两格首发概率各为 35%；已有两格命中时，剩余格为 45%。不显示逐格概率，手机需二次确认。', { x: 3, y: 5, w: 3, h: 1 }),
@@ -39,7 +39,7 @@ const lessons = [
   exercise('depth-mine','触雷实操','depthCharge','depthCharge','航路前方有水雷。突击舰会在触雷处停止，而不是在原定终点爆炸。',{x:4,y:6,w:2,h:1}),
   read('depth-damage-brief','单侧发射器损毁','前格发射器已经损毁，因此本次只能向下方投弹；尾格损毁则只能向上方投弹。两格都被毁才不能再出击。',{practice:'depth-damage'}),
   exercise('depth-damage','单侧深弹实操','depthCharge','depthCharge','再次选择横向两格，观察只剩一侧发射，未受损的那门仍然有效。',{x:4,y:6,w:2,h:1}),
-  exercise('lay-mine', '在己方海域布雷', 'mineLayer', 'mine', '选择己方空格，勾叉只在己方出现。每艘可布 10 颗，每次选择一格确认，第一颗布置后继续放置第二颗；不得与舰体、水雷或已受击格重叠；整舰被击毁才失去布雷能力。', { x: 10, y: 10 }, { own: true }),
+  exercise('lay-mine', '在己方海域布雷', 'mineLayer', 'mine', '选择己方空格，勾叉只在己方出现。每艘可布 10 颗，每次选择一格确认，第一颗布置后继续放置第二颗；不得与舰体、水雷或已受击格重叠；舰首水雷功能格受损后不能布雷，修复后恢复。', { x: 10, y: 10 }, { own: true }),
   exercise('submarine', '潜航与上下双鱼雷', 'submarine', 'submarine', '选择三格潜航目标。潜艇水下进入敌海后，随机选艇身位置向上、下各发一颗鱼雷，遇舰体或水雷停止。', { x: 4, y: 8, w: 3, h: 1 }),
   read('bomber-brief', '轰炸航母专项', '靶场换装为轰炸航母。中间两格共用一架轰炸机，任意一格甲板被击中都无法起飞。', { practice: 'bomber' }),
   exercise('bomber', '区域轰炸', 'bomberCarrier', 'bomber', '选择 3 × 3，随机攻击 5–6 个不同格子。飞行和返航仍沿所选行，不受航母方向影响。', { x: 3, y: 8, w: 3, h: 3 }),
@@ -58,12 +58,18 @@ const lessons = [
   exercise('backfire', '引爆水雷并观察反击', 'cruiser', 'shot', '攻击亮起的水雷格。己方同坐标也会爆炸，布雷和攻击时都要考虑自己的阵型。', { x: 0, y: 6 }),
   read('victory-brief', '最后的进攻力量', '对方只剩一门可用主炮及辅助舰。击毁最后主炮即可获胜，不需要清掉辅助舰或残骸。', { practice: 'victory' }),
   exercise('victory', '击毁最后主炮', 'cruiser', 'shot', '击中巡洋舰舰首。无可用主炮、战斗机、轰炸机、鱼雷机或潜艇就算战败，即使还有水雷和辅助舰。', { x: 0, y: 0 }),
+  read('support-repair-brief','修理拖船','修理拖船为 2 × 2、35 金币，最多两艘，无攻击能力。舰首左格是修理工具，舰尾右格是拖曳工具，损毁后对应功能失效。以拖船中心覆盖 12 × 12，超出海域的部分裁切，不能作用于潜艇。',{practice:'support-repair'}),
+  exercise('support-repair','修复功能格','repairTug','repairSupport','选择拖船支援，再点击巡洋舰已命中的主炮格，勾确认修理。每次修复一格；完全沉没舰与已损失的飞机不能恢复。',{x:2,y:2},{own:true}),
+  read('support-tow-brief','拖曳与战损','选择舰船未命中的艇身格，再选择目的地；勾确认、叉重选，旋转后保留预览。新舰体须完整位于拖船中心 12 × 12 内，可移到未受击格或问号格，仍需满足舰船间隔。旧弹坑保留，拖走的损坏部位在己方新位置显示灰伤，不会变成新弹坑。',{practice:'support-tow'}),
+  exercise('support-tow','拖曳实操','repairTug','repairSupport','先点巡洋舰未受损的 (2,3)，再把左上角放到 (2,5)，勾确认。移动或修理舰船均消耗一次行动。',{x:2,y:3},{own:true}),
+  read('support-mine-brief','修复为废水雷','点击地图上引爆过的水雷格，确认后修复为废雷。每回合可修两颗，同一颗不可重复计入；只剩一颗可修时修复后自动换手；仍有其他可修时可手动结束回合。废雷本身不会爆炸或反击。炮击会将其击毁；鱼雷撞上后自身爆炸并停止，废雷也被摧毁，之后需再次修复。',{practice:'support-mine'}),
+  exercise('support-mine','废雷修复实操','repairTug','repairSupport','依次修复 (2,7) 和 (3,7)，每颗都需确认；第一颗后仍是自己的回合。',{x:2,y:7},{own:true}),
   read('ai-tactics', 'AI 与观战', '正式对战中，AI 随机借鉴一份军事胜局：人人对局取胜者，人机仅取玩家获胜局。以其舰队布局和出手顺序为模板，作局部或大范围变动，并按当前情报调整，不机械复盘；无可用记录时才采用攻防策略搭配，允许保留金币；防空舰通常优先覆盖更多行并前置，少数采用其他部署。攻击结合已发现阵型及对手行为调整；确定敌方已无鱼雷机、潜艇后停止布雷，未识别舰艇仍视为潜在威胁。潜艇优先走已探明航路。顶部观众席按钮在电脑与手机均可查看观众、设置允许观战。'),
   read('complete', '训练完成', '你已完成采购部署、全部主动舰载功能、雷达隐蔽与诱饵、防空拦截、部件损毁、水雷和胜负训练。回港后可选人机或联机；房间、战绩、分享和回放标注规则模式，排行榜按当前模式区分。', { continueLabel: '完成教程' })
 ]
 const copy = value => JSON.parse(JSON.stringify(value))
 const sequence = s => s.device === 'mobile' ? lessons : lessons.filter(l => !['shop', 'fleet', 'tools'].includes(l.id))
-const hull = (kind, x, y, rotation = 0) => ({ ...MILITARY_SHIPS[kind], kind, id: `training-${kind}`, x, y, rotation, w: rotation % 180 ? MILITARY_SHIPS[kind].h : 1, h: rotation % 180 ? 1 : MILITARY_SHIPS[kind].h, hits: [], lostPlanes: [], minesUsed: 0 })
+const hull = (kind, x, y, rotation = 0) => ({ ...MILITARY_SHIPS[kind], kind, id: `training-${kind}`, x, y, rotation, w: rotation % 180 ? MILITARY_SHIPS[kind].h : MILITARY_SHIPS[kind].w, h: rotation % 180 ? MILITARY_SHIPS[kind].w : MILITARY_SHIPS[kind].h, hits: [], lostPlanes: [], minesUsed: 0 })
 
 // Fixed firing ranges keep every lesson available, independent of earlier aircraft losses.
 function prepareRange(s, type) {
@@ -72,6 +78,12 @@ function prepareRange(s, type) {
   room.players[0].ships = [hull(type === 'bomber' ? 'bomberCarrier' : type==='torpedo'?'torpedoCarrier':'carrier', 0, 0), hull('cruiser', 0, 6), hull('battleship', 3, 0, 90), hull('submarine', 3, 3), hull('radar', 6, 0), hull('antiAir', 6, 4), hull('jammer', 8, 0), hull('mineLayer', 10, 0), hull('decoy', 8, 4)]
   room.players[1].ships = [hull('cruiser', 0, 0), hull('cruiser', 8, 3), hull('decoy', 0, 7)]
   for (const p of room.players) { p.shots = []; p.mines = []; p.radar = []; p.inventory = {}; p.ready = true; p.stage = 'READY' }
+  room.supportActions=0;room.supportShipId=null
+  if(type.startsWith('support-')){
+    room.players[0].ships=[hull('repairTug',4,4),hull('cruiser',2,2),hull('radar',7,2),hull('cruiser',9,9)]
+    room.players[0].ships[1].hits=['2,2'];room.players[0].shots=[{x:2,y:2,result:'hit'}];room.players[0].scrapMines=[]
+    if(type==='support-mine')room.players[0].shots.push({x:2,y:7,result:'mine'},{x:3,y:7,result:'mine'})
+  }
   if(type.startsWith('depth-')){room.players[0].ships.push(hull('depthCharge',10,4));if(type==='depth-collision')room.players[1].ships.push(hull('cruiser',4,5));else if(type==='depth-mine')room.players[1].mines=[{x:2,y:6}];else if(type==='depth-damage'){room.players[0].ships.at(-1).hits=['10,4'];room.players[0].shots=[{x:10,y:4,result:'hit'}]}}
   if (type === 'jammer') room.players[1].ships.push(hull('jammer', 8, 6, 270), hull('mineLayer', 5, 6))
   if (type === 'intercept') room.players[1].ships.push(hull('antiAir', 2, 4))
@@ -84,11 +96,16 @@ function prepareRange(s, type) {
   }
 }
 export function createMilitaryTutorial(now = Date.now(), options = {}) {
-  return { ruleSet: 'MILITARY', room: createMilitaryGame(now), step: 0, device: options.device || 'desktop', flags: {}, version: 6, selectedWeapon: 'shot', completed: false }
+  return { ruleSet: 'MILITARY', room: createMilitaryGame(now), step: 0, device: options.device || 'desktop', flags: {}, version: 7, selectedWeapon: 'shot', completed: false }
 }
 export function militaryTutorialStep(s) {
   const list = sequence(s), l = list[s.step] || list.at(-1)
   const result = { ...l, ...(l.id==='lay-mine'&&s.room.mineActions?{cell:{x:11,y:10},description:'第一颗已布置，仍是你的回合。再选择一格确认第二颗后换手。'}:{}), index: s.step, total: list.length, device: s.device, chapter: s.room.phase !== 'PLACEMENT' ? '舰载功能实操' : '采购与部署', canContinue: true }
+  const next=list[s.step+1]
+  if(l.mode==='read'&&s.room.phase==='BATTLE'&&next?.weapon)return {...result,target:`naval-weapon-${next.weapon}-${next.kind}`,cell:undefined,overview:true,guideSide:'left'}
+  if(l.buy&&['cruiser','battleship'].includes(l.buy)&&s.flags.mediumType!==l.buy)return {...result,target:'naval-type-medium',description:`切换至${MILITARY_SHIPS[l.buy].name}后购买。`}
+  if(l.id==='support-tow'&&s.flags.supportSelected)return {...result,cell:{x:2,y:5},target:'naval-own-board'}
+  if(l.id==='support-mine'&&s.room.supportActions)return {...result,cell:{x:3,y:7},target:'naval-own-board'}
   if (l.buy && MILITARY_SHIPS[l.buy].group === 'destroyer' && s.flags.destroyerType !== l.buy) return { ...result, target: 'naval-type-destroyer', description: `点击加号后的切型按钮，切换至${MILITARY_SHIPS[l.buy].name}，然后购买。` }
   if (l.weapon && s.device === 'mobile' && (s.selectedWeapon !== l.weapon || s.flags.selectedKind !== l.kind) && s.flags.openPanel !== 'weapons') return { ...result, target: 'naval-mobile-weapons-toggle', cell: undefined, description: '展开攻击方式，选择本次演习的舰载功能。' }
   if (l.weapon && s.selectedWeapon === l.weapon && s.flags.selectedKind === l.kind) return { ...result, target: l.own ? 'naval-own-board' : 'naval-enemy-board', description: `${result.description} 点击亮起的海域执行。` }
@@ -97,7 +114,8 @@ export function militaryTutorialStep(s) {
 }
 export function advanceMilitaryTutorial(session, event) {
   const s = copy(session), list = sequence(s), l = list[s.step]
-  if (event.type === 'TYPE') s.flags.destroyerType = event.kind
+  if (event.type === 'TYPE') {s.flags.destroyerType = event.kind;s.flags.mediumType=event.kind}
+  if(event.type==='SUPPORT_SELECT')s.flags.supportSelected=true
   if (event.type === 'PANEL') s.flags.openPanel = event.panel
   if (event.type === 'WEAPON') { s.selectedWeapon = event.weapon; s.flags.selectedKind = event.kind }
   const done = event.type === 'CONTINUE' && l.mode === 'read'
@@ -107,11 +125,11 @@ export function advanceMilitaryTutorial(session, event) {
     || l.id === 'clear' && event.type === 'CLEAR_FLEET'
     || l.id === 'layout' && event.type === 'RANDOMIZE'
     || l.id === 'ready' && event.type === 'ACTION' && s.room.phase === 'BATTLE'
-    || l.weapon && event.type === 'ACTION' && event.action.type === 'ATTACK' && event.action.weapon === l.weapon && event.action.kind === l.kind && (l.weapon!=='mine'||!s.room.mineActions)
+    || l.weapon && event.type === 'ACTION' && event.action.type === 'ATTACK' && event.action.weapon === l.weapon && event.action.kind === l.kind && (l.weapon!=='mine'||!s.room.mineActions)&&(l.id!=='support-mine'||!s.room.supportActions)
     || ['shop', 'fleet', 'tools'].includes(l.id) && event.type === 'PANEL' && event.panel === (l.id === 'shop' ? 'supply' : l.id)
   if (done) {
     if (s.step < list.length - 1) {
-      s.step++; s.selectedWeapon = ''; s.flags.selectedKind = null
+      s.step++; s.flags.supportSelected=false;s.selectedWeapon = ''; s.flags.selectedKind = null
       const next = list[s.step]
       if (next.practice) prepareRange(s, next.practice)
     } else s.completed = true

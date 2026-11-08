@@ -1,0 +1,44 @@
+server:
+  forward-headers-strategy: native
+  compression:
+    enabled: true
+    min-response-size: 1024
+    mime-types: application/json,text/html,text/css,application/javascript
+  port: ${NAVY_PORT:8082}
+spring:
+  config:
+    import: optional:file:./.env.smtp[.properties]
+  mail:
+    host: smtp.163.com
+    port: 465
+    username: ${NAVY_MAIL_USER:nju_zsj030702@163.com}
+    password: ${NAVY_MAIL_PASSWORD:}
+    properties:
+      mail.smtp.auth: true
+      mail.smtp.ssl.enable: true
+      mail.smtp.connectiontimeout: 5000
+      mail.smtp.timeout: 10000
+      mail.smtp.writetimeout: 10000
+  application:
+    name: navy
+  servlet:
+    multipart:
+      max-file-size: 2MB
+      max-request-size: 3MB
+  profiles:
+    default: dev
+  datasource:
+    url: jdbc:mysql://${NAVY_DB_HOST:127.0.0.1}:${NAVY_DB_PORT:3307}/${NAVY_DB_NAME:navy}?useUnicode=true&characterEncoding=utf8&serverTimezone=Asia/Shanghai&allowPublicKeyRetrieval=true
+    username: ${NAVY_DB_USER:navy_admin}
+    password: ${NAVY_DB_PASSWORD:1714672038qwe}
+  flyway:
+    enabled: true
+app:
+  mail:
+    sender-name: ${NAVY_MAIL_SENDER_NAME:海战棋}
+  avatar-directory: ${NAVY_AVATAR_DIRECTORY:./uploads/avatars}
+  frontend-origin: ${NAVY_FRONTEND_ORIGIN:http://localhost:5175}
+  cors:
+    allowed-origins:
+      - ${NAVY_FRONTEND_ORIGIN:http://localhost:5175}
+      - http://127.0.0.1:5175

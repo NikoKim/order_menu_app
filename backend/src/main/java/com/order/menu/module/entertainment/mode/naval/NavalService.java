@@ -14,6 +14,8 @@ import java.sql.ResultSet;
 import java.sql.SQLException;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Set;
+import java.util.LinkedHashSet;
 import java.util.Map;
 import java.util.LinkedHashMap;
 import java.util.Comparator;
@@ -30,18 +32,70 @@ import org.springframework.transaction.annotation.Transactional;
 import org.springframework.transaction.support.TransactionTemplate;
 
 @Service
-@RequiredArgsConstructor
+@RequiredArgsConstructor(onConstructor_=@org.springframework.beans.factory.annotation.Autowired)
 public class NavalService {
+    public NavalService(JdbcTemplate jdbc,ObjectMapper json,PlatformTransactionManager transactions){this(jdbc,json,transactions,event->{});}
     private static final Logger LOG = LoggerFactory.getLogger(NavalService.class);
     private static final SecureRandom RANDOM = new SecureRandom();
     private static final String CODE_CHARS = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
     private final JdbcTemplate jdbc;
     private final ObjectMapper json;
     private final PlatformTransactionManager transactions;
+    private final org.springframework.context.ApplicationEventPublisher events;
+    private final ShortCache cache=new ShortCache();
+    private final ShortCache medalCache=new ShortCache();
+    private final ShortCache roomCache=new ShortCache(64);
+    private record Committed(long version,String source){}
+    private final java.util.concurrent.ConcurrentHashMap<String,Long> heartbeats = new java.util.concurrent.ConcurrentHashMap<>();
+    public Map<String,Object> heartbeat(String id,PlayerIdentity identity) {
+        NavalState state=readRoom(id);var result=heartbeatSnapshot(state,identity);
+        requestMatch(state);
+        return result;
+    }
+    // Only the socket's already-authorized mirror subscription may use this path.
+    void mirrorHeartbeat(String id,PlayerIdentity identity){heartbeats.put(id+":"+identity.key(),System.currentTimeMillis());}
+    Map<String,Object> heartbeatSnapshot(NavalState state,PlayerIdentity identity){
+        String id=state.id;requireViewer(state,identity);
+        long now=System.currentTimeMillis();String key=id+":"+identity.key();
+        int seat=activeIndex(state,identity.key());
+        if(seat>=0&&!state.localSimulation&&!"FINISHED".equals(state.phase)){
+            Player player=state.players.get(seat);long previous=heartbeats.getOrDefault(key,player.lastSeenAt),since=Math.max(previous,player.disconnectedAt);
+            boolean expired="MULTIPLAYER".equals(state.mode)&&since>0&&now-since>=30000;
+            boolean resumed=player.disconnectedAt>previous;
+            boolean paused="AI".equals(state.mode)&&seat==0&&List.of("PLACEMENT","SUPPLY").contains(state.phase)&&previous>0&&now-previous>15000;
+            if(expired||resumed||paused){
+                state=new TransactionTemplate(transactions).execute(status->{NavalState current=loadForUpdate(id);if(expired)NavalEngine.advance(current,now);if(!"FINISHED".equals(current.phase)){current.players.get(seat).lastSeenAt=Math.max(current.players.get(seat).lastSeenAt,previous);touch(current,identity,now);}save(current);return current;});
+            }
+        }
+        if("FINISHED".equals(state.phase)&&!state.localSimulation)return Map.of("connected",false);
+        heartbeats.put(key,now);
+        return state.localSimulation?Map.of("spectators",NavalEngine.view(state,0,System.currentTimeMillis()).get("spectators")):Map.of("connected",true);
+    }
+    private NavalState readRoom(String id){
+        try{
+            boolean writing=org.springframework.transaction.support.TransactionSynchronizationManager.isActualTransactionActive()&&!org.springframework.transaction.support.TransactionSynchronizationManager.isCurrentTransactionReadOnly();
+            if(writing)return loadCommitted(id);
+            long version=jdbc.queryForObject("SELECT version FROM naval_rooms WHERE id=?",Long.class,id);String key=id+":"+version;
+            Committed cached=roomCache.get(key,30000,()->{var row=jdbc.queryForMap("SELECT version,state_json FROM naval_rooms WHERE id=?",id);return new Committed(((Number)row.get("version")).longValue(),row.get("state_json").toString());});
+            if(cached.source().length()>1048576)roomCache.remove(key);
+            NavalState state=parseState(cached.source());state.version=cached.version();return state;
+        }catch(org.springframework.dao.EmptyResultDataAccessException missing){throw new BusinessException(404,"海战房间不存在");}
+    }
+    private NavalState loadCommitted(String id){var row=jdbc.queryForMap("SELECT version,state_json FROM naval_rooms WHERE id=?",id);var state=parseState(row.get("state_json").toString());state.version=((Number)row.get("version")).longValue();return state;}
+    NavalState committedRoom(String id){NavalState state=readRoom(id);applyHeartbeats(state);decorate(state);return state;}
+    private void decorate(NavalState state){
+        java.util.Set<String> keys=new java.util.LinkedHashSet<>();state.players.forEach(p->{if(p.key!=null)keys.add(p.key);});state.spectators.forEach(p->{if(p.key!=null)keys.add(p.key);});
+        Map<String,Map<String,Object>> walls=medalCache.getAll(keys,5000,missing->NavalMedals.readWalls(jdbc,missing));
+        state.players.forEach(p->p.medals=walls.getOrDefault(p.key,Map.of()));state.spectators.forEach(p->p.medals=walls.getOrDefault(p.key,Map.of()));
+    }
+    private void applyHeartbeats(NavalState state){
+        if(state.localSimulation&&!state.players.isEmpty())state.lastSeenAt=Math.max(state.lastSeenAt,heartbeats.getOrDefault(state.id+":"+state.players.get(0).key,0L));
+        for(Player p:state.players){Long seen=heartbeats.get(state.id+":"+p.key);if(seen!=null&&seen>p.lastSeenAt){p.lastSeenAt=seen;p.disconnectedAt=0;}}
+        for(Spectator p:state.spectators){Long seen=heartbeats.get(state.id+":"+p.key);if(seen!=null)p.lastSeenAt=Math.max(p.lastSeenAt,seen);}
+    }
 
     public Map<String,Object> militaryTemplate() {
-        NavalMilitaryTemplate.Template template=pickMilitaryTemplate();
-        return template==null?Map.of():Map.of("ships",template.ships(),"actions",template.actions());
+        return cache.get("military-template",60000,()->{NavalMilitaryTemplate.Template template=pickMilitaryTemplate();return template==null?Map.of():Map.of("ships",template.ships(),"actions",template.actions());});
     }
     private NavalMilitaryTemplate.Template pickMilitaryTemplate() {
         List<NavalMilitaryTemplate.Template> candidates=new ArrayList<>();
@@ -52,8 +106,8 @@ public class NavalService {
     }
     private void seedMilitaryAi(NavalState state){if("AI".equals(state.mode)&&"MILITARY".equals(state.ruleSet))NavalMilitaryTemplate.install(state,pickMilitaryTemplate());}
 
-    @Transactional public Map<String,Object> medalWall(PlayerIdentity identity,String id){NavalMedals medals=new NavalMedals(jdbc,json);Map<String,Object> out=new LinkedHashMap<>(id==null||id.isBlank()?medals.wall(identity.key()):medals.publicWall(id));out.put("mine",Objects.equals(out.get("medalId"),medals.wall(identity.key()).get("medalId")));return out;}
-    @Transactional public Map<String,Object> equipMedal(PlayerIdentity identity,String id){return new NavalMedals(jdbc,json).equip(identity.key(),id);}
+    @Transactional public Map<String,Object> medalWall(PlayerIdentity identity,String id){return cache.get("wall:"+identity.key()+":"+id,5000,()->{NavalMedals medals=new NavalMedals(jdbc,json);Map<String,Object> out=new LinkedHashMap<>(id==null||id.isBlank()?medals.wall(identity.key()):medals.publicWall(id));out.put("mine",Objects.equals(out.get("medalId"),medals.wall(identity.key()).get("medalId")));return out;});}
+    @Transactional public Map<String,Object> equipMedal(PlayerIdentity identity,String id){var result=new NavalMedals(jdbc,json).equip(identity.key(),id);cache.clear();return result;}
     public record CreateRequest(String mode, boolean autoMatch, String ruleSet) {
         public CreateRequest(String mode, boolean autoMatch) { this(mode,autoMatch,"CLASSIC"); }
     }
@@ -71,17 +125,13 @@ public class NavalService {
     @Transactional(readOnly=true)
     public List<Map<String,Object>> rooms() {
         long now=System.currentTimeMillis();
-        return jdbc.query("SELECT state_json FROM naval_rooms WHERE phase IN ('WAITING','PLACEMENT','SUPPLY','BATTLE','LOCAL') AND updated_at > CURRENT_TIMESTAMP - INTERVAL 35 SECOND ORDER BY updated_at DESC LIMIT 200",this::readState).stream()
+        var states=jdbc.query("SELECT state_json FROM naval_rooms WHERE phase IN ('WAITING','PLACEMENT','SUPPLY','BATTLE','LOCAL') ORDER BY updated_at DESC LIMIT 200",this::readState).stream().peek(this::applyHeartbeats)
             .filter(state -> !"FINISHED".equals(state.phase))
-            .filter(state -> state.players.stream().anyMatch(p -> !p.left && !"AI".equals(p.key) && now-(p.disconnectedAt>0?p.disconnectedAt:p.lastSeenAt)<30_000))
-            .map(state -> {
-                Map<String,Object> row=new LinkedHashMap<>();
-                row.put("id",state.id); row.put("mode",state.mode); row.put("phase",state.phase); row.put("ruleSet",state.ruleSet);
-                row.put("requiresInvite","MULTIPLAYER".equals(state.mode) && !state.autoMatch);
-                row.put("allowSpectators",state.allowSpectators); row.put("spectators",state.spectators.stream().filter(p -> now-p.lastSeenAt<45_000).count());
-                row.put("players",state.players.stream().filter(p -> !p.left).map(p -> { Map<String,Object> person=new LinkedHashMap<>(); person.put("medals",new NavalMedals(jdbc,json).wall(p.key));person.put("name",p.name); person.put("registered",p.registered); person.put("avatarUrl",p.registered?p.avatarUrl:null); return person; }).toList());
-                return row;
-            }).toList();
+            .filter(state -> state.players.stream().anyMatch(p -> !p.left && !"AI".equals(p.key) && now-(p.disconnectedAt>0?p.disconnectedAt:p.lastSeenAt)<30_000)).toList();
+        Set<String> keys=new LinkedHashSet<>();states.forEach(state->state.players.forEach(p->{if(p.key!=null)keys.add(p.key);}));
+        var walls=medalCache.getAll(keys,5000,missing->NavalMedals.readWalls(jdbc,missing));
+        states.forEach(state->state.players.forEach(p->p.medals=walls.getOrDefault(p.key,Map.of())));
+        return states.stream().map(this::directoryCard).filter(Objects::nonNull).toList();
     }
 
     @Transactional
@@ -113,7 +163,8 @@ public class NavalService {
         NavalState state;
         if(rows.isEmpty()) {
             // At most one disposable AI mirror per guest.
-            jdbc.update("UPDATE naval_rooms SET phase='FINISHED' WHERE host_key=? AND mode='AI' AND id<>?",identity.key(),request.id());
+            var previousMirrors=jdbc.queryForList("SELECT id FROM naval_rooms WHERE host_key=? AND mode='AI' AND id<>? AND phase<>'FINISHED' FOR UPDATE",String.class,identity.key(),request.id());
+            for(String previous:previousMirrors){jdbc.update("UPDATE naval_rooms SET phase='FINISHED',state_json=JSON_SET(state_json,'$.phase','FINISHED','$.allowSpectators',FALSE,'$.spectators',JSON_ARRAY(),'$.version',version+1),version=version+1 WHERE id=?",previous);events.publishEvent(new RoomChanged(previous));}
             state=new NavalState(); state.id=request.id(); state.inviteCode=newCode(); state.mode="AI"; state.rulesVersion=2; state.localSimulation=true; state.connectionTracking=true; state.presentationSync=true;
         } else {
             state=rows.get(0);
@@ -126,10 +177,11 @@ public class NavalService {
         }
         state.ruleSet=mirrorRules;
         state.phase=request.phase(); state.round=request.round(); state.deadline=request.deadline(); state.turn=request.turn(); state.winner=request.winner(); state.events=request.events(); state.lastSeenAt=now;
+        heartbeats.put(state.id+":"+identity.key(),now);
         state.finishReason=null;
         state.allowSpectators=request.allowSpectators(); state.presentationUntil=request.presentationUntil(); state.battleStarted=List.of("BATTLE","FINISHED").contains(state.phase);
         if(!state.allowSpectators) state.spectators.clear(); pruneSpectators(state,now);
-        if(rows.isEmpty()) jdbc.update("INSERT INTO naval_rooms(id,invite_code,mode,auto_match,phase,host_key,peer_key,deadline,state_json) VALUES(?,?,?,FALSE,?,?,?,?,?)",state.id,state.inviteCode,"AI","FINISHED".equals(state.phase)?"FINISHED":"LOCAL",identity.key(),"AI",state.deadline,write(state));
+        if(rows.isEmpty()) { jdbc.update("INSERT INTO naval_rooms(id,invite_code,mode,auto_match,phase,host_key,peer_key,deadline,state_json) VALUES(?,?,?,FALSE,?,?,?,?,?)",state.id,state.inviteCode,"AI","FINISHED".equals(state.phase)?"FINISHED":"LOCAL",identity.key(),"AI",state.deadline,write(state));events.publishEvent(new RoomChanged(state.id)); }
         else save(state);
         return Map.of("spectators",NavalEngine.view(state,0,now).get("spectators"));
     }
@@ -147,18 +199,20 @@ public class NavalService {
             touch(existing,identity,now);
             if ("WAITING".equals(existing.phase)) existing.lastSeenAt = now;
             save(existing);
+            requestMatch(existing);
             return view(existing,identity,now);
         }
         if (request.autoMatch() && "MULTIPLAYER".equals(request.mode())) {
-            List<NavalState> candidates = jdbc.query("SELECT state_json FROM naval_rooms WHERE phase='WAITING' AND mode='MULTIPLAYER' AND auto_match=TRUE AND host_key<>? AND deadline>? AND updated_at > CURRENT_TIMESTAMP - INTERVAL 20 SECOND ORDER BY created_at LIMIT 50 FOR UPDATE",
-                    this::readState,identity.key(),now);
+            List<NavalState> candidates = jdbc.query("SELECT state_json FROM naval_rooms FORCE INDEX (idx_naval_waiting_match) WHERE phase='WAITING' AND mode='MULTIPLAYER' AND auto_match=TRUE AND match_rule_set=? AND host_key<>? ORDER BY created_at,id LIMIT 1 FOR UPDATE",
+                    this::readState,request.ruleSet()==null?"CLASSIC":request.ruleSet(),identity.key());
             for (NavalState room : candidates) {
+                applyHeartbeats(room);
                 if (!java.util.Objects.equals(room.ruleSet,request.ruleSet()==null?"CLASSIC":request.ruleSet())) continue;
                 NavalEngine.advance(room,now);
                 if (!"WAITING".equals(room.phase)) { save(room); continue; }
                 if (occupied(room) != 1 || activeIndex(room,identity.key()) >= 0) continue;
-                putPlayer(room,vacant(room),player(identity));
-                NavalEngine.beginPlacement(room,now); save(room); return view(room,identity,now);
+                claimSeat(room,identity,vacant(room),now);
+                save(room); return view(room,identity,now);
             }
         }
         NavalState state = new NavalState(); state.rulesVersion = 2; state.id = UUID.randomUUID().toString(); state.inviteCode = newCode();
@@ -172,6 +226,8 @@ public class NavalService {
         }
         jdbc.update("INSERT INTO naval_rooms (id,invite_code,mode,auto_match,phase,host_key,peer_key,deadline,state_json) VALUES (?,?,?,?,?,?,?,?,?)",
                 state.id,state.inviteCode,state.mode,state.autoMatch,state.phase,identity.key(),state.players.size()==2 ? state.players.get(1).key : null,state.deadline,write(state));
+        events.publishEvent(new RoomChanged(state.id));
+        requestMatch(state);
         return view(state,identity,now);
     }
 
@@ -209,24 +265,44 @@ public class NavalService {
         save(state); return view(state,identity,now);
     }
 
-    @Transactional
+    @Transactional(readOnly=true)
     public Map<String,Object> get(String id, PlayerIdentity identity) {
-        NavalState state = loadForUpdate(id); long now = System.currentTimeMillis(); pruneSpectators(state,now); requireViewer(state,identity);
-        NavalEngine.advance(state,now);
-        touch(state,identity,now);
-        Spectator person = spectator(state,identity.key()); if (person != null) person.lastSeenAt = now;
-        if ("WAITING".equals(state.phase) && activeIndex(state,identity.key()) >= 0) state.lastSeenAt = now;
-        save(state); return view(state,identity,now);
+        NavalState state=currentRoom(id,identity);
+        Map<String,Object> result=view(state,identity,System.currentTimeMillis());result.put("version",state.version);return result;
     }
+    public Map<String,Object> sync(String id,PlayerIdentity identity,long version){NavalState state=currentRoom(id,identity);if(id.equals(state.id)&&state.version==version)return Map.of("unchanged",true,"version",version);return view(state,identity,System.currentTimeMillis());}
 
     @Transactional
     public Map<String,Object> action(String id, PlayerIdentity identity, Action action) {
+        return action(id,identity,action,false);
+    }
+    @Transactional
+    public Map<String,Object> action(String id,PlayerIdentity identity,Action action,boolean compact){
         if (action == null || action.type == null) NavalEngine.bad("缺少操作类型");
-        if (List.of("TAKE_SEAT","CONTINUE").contains(action.type)) lockMatchmaking();
-        NavalState state = loadForUpdate(id); long now = System.currentTimeMillis(); pruneSpectators(state,now); requireViewer(state,identity);
-        if (!("LEAVE".equals(action.type) && "AI".equals(state.mode) && !NavalEngine.battleStarted(state))) NavalEngine.advance(state,now);
+        if (List.of("TAKE_SEAT","CONTINUE","LEAVE").contains(action.type)) lockMatchmaking();
+        NavalState state=loadForUpdate(id);id=state.id;String hash=null;
+        if(action.requestId!=null){
+            try{if(action.requestId.length()!=36)throw new IllegalArgumentException();action.requestId=UUID.fromString(action.requestId).toString();}catch(Exception bad){NavalEngine.bad("操作标识无效");}
+            hash=requestHash(action);
+            var receipts=jdbc.queryForList("SELECT payload_hash,version,reply_json FROM naval_action_receipts WHERE room_id=? AND player_key=? AND request_id=?",id,identity.key(),action.requestId);
+            if(!receipts.isEmpty()){
+                var receipt=receipts.get(0);if(!hash.equals(receipt.get("payload_hash")))throw new BusinessException(409,"操作标识已用于另一项操作");
+                if(receipt.get("reply_json")!=null)return readMap(receipt.get("reply_json").toString());
+                return Map.of("accepted",true,"replayed",true,"id",id,"version",receipt.get("version"));
+            }
+        }
+        Map<String,Object> reply=performAction(state,identity,action,compact);
+        if(action.requestId!=null)jdbc.update("INSERT INTO naval_action_receipts(room_id,player_key,request_id,payload_hash,version,reply_json) VALUES(?,?,?,?,?,?)",id,identity.key(),action.requestId,hash,state.version,List.of("LEAVE","TAKE_SEAT","CONTINUE").contains(action.type)?write(reply):null);
+        return reply;
+    }
+    private static final ObjectMapper REQUEST_JSON=com.fasterxml.jackson.databind.json.JsonMapper.builder().enable(com.fasterxml.jackson.databind.SerializationFeature.ORDER_MAP_ENTRIES_BY_KEYS).build();
+    private String requestHash(Action action){try{Map<String,Object> fields=json.convertValue(action,new TypeReference<LinkedHashMap<String,Object>>(){});fields.remove("requestId");byte[] bytes=REQUEST_JSON.writeValueAsBytes(fields);if(bytes.length>200000)NavalEngine.bad("操作数据过大");return java.util.HexFormat.of().formatHex(java.security.MessageDigest.getInstance("SHA-256").digest(bytes));}catch(BusinessException e){throw e;}catch(Exception e){throw new IllegalArgumentException(e);}}
+    private Map<String,Object> performAction(NavalState state,PlayerIdentity identity,Action action,boolean compact){
+        String id=state.id;long now=System.currentTimeMillis();pruneSpectators(state,now);requireViewer(state,identity);
+        if (!("LEAVE".equals(action.type) && !NavalEngine.battleStarted(state))) NavalEngine.advance(state,now);
         int you = activeIndex(state,identity.key());
         touch(state,identity,now);
+        if(!"FINISHED".equals(state.phase))heartbeats.put(id+":"+identity.key(),now);
         if (you < 0) {
             Spectator person = spectator(state,identity.key());
             if ("LEAVE".equals(action.type)) {
@@ -257,8 +333,17 @@ public class NavalService {
             case "CONTINUE" -> continueRound(state,you,action.value == null || action.value,now);
             default -> NavalEngine.bad("未知的战局操作");
         }
-        save(state); return view(state,identity,now);
+        save(state); return actionReply(state,identity,action,now,compact);
     }
+
+    private Map<String,Object> actionReply(NavalState state,PlayerIdentity identity,Action action,long now,boolean compact){
+        if(compact&&List.of("ATTACK","DEPLOY","LAYOUT_READY","READY","CHAT","PRESENTED","SPECTATORS").contains(action.type))return Map.of("accepted",true,"id",state.id,"version",state.version);
+        return view(state,identity,now);
+    }
+    @Transactional public Map<String,Object> hideLocal(String id,PlayerIdentity identity){NavalState state=loadForUpdate(id);if(!state.localSimulation||!Objects.equals(state.players.get(0).key,identity.key()))throw new BusinessException(403,"无权修改镜像");state.allowSpectators=false;state.spectators.clear();save(state);return Map.of("spectators",List.of());}
+    Map<String,Object> mirrorAudience(String id,PlayerIdentity identity){NavalState state=committedRoom(id);if(!state.localSimulation||!Objects.equals(state.players.get(0).key,identity.key()))throw new BusinessException(403,"无权读取镜像");return Map.of("id",id,"version",state.version,"spectators",state.allowSpectators?state.spectators.stream().map(p->{Map<String,Object> item=new LinkedHashMap<>();item.put("id",p.id);item.put("name",p.name);item.put("avatarUrl",p.avatarUrl);item.put("registered",p.registered);item.put("medals",p.medals);item.put("viewMode",p.viewMode);return item;}).toList():List.of());}
+    Map<String,Object> directoryCard(String id){try{return directoryCard(committedRoom(id));}catch(BusinessException missing){if(missing.getCode()==404)return null;throw missing;}}
+    private Map<String,Object> directoryCard(NavalState state){long now=System.currentTimeMillis();applyHeartbeats(state);if("FINISHED".equals(state.phase)||state.players.stream().noneMatch(p->!p.left&&!"AI".equals(p.key)&&now-(p.disconnectedAt>0?p.disconnectedAt:p.lastSeenAt)<30000))return null;Map<String,Object> row=new LinkedHashMap<>();row.put("id",state.id);row.put("mode",state.mode);row.put("phase",state.phase);row.put("ruleSet",state.ruleSet);row.put("allowSpectators",state.allowSpectators);row.put("requiresInvite","MULTIPLAYER".equals(state.mode)&&!state.autoMatch);row.put("spectators",state.spectators.size());row.put("players",state.players.stream().filter(p->!p.left).map(p->{Map<String,Object> person=new LinkedHashMap<>();person.put("name",p.name);person.put("registered",p.registered);person.put("avatarUrl",p.registered?p.avatarUrl:null);person.put("medals",p.medals);return person;}).toList());return row;}
 
     @Transactional
     public Map<String,Object> connection(String id, PlayerIdentity identity, ConnectionRequest request) {
@@ -270,6 +355,7 @@ public class NavalService {
             Player player = state.players.get(you);
             if (request.connected()) {
                 touch(state,identity,now); player.connectionToken = request.pageToken();
+                heartbeats.put(id+":"+identity.key(),now);
             } else if (player.connectionToken == null || request.pageToken().equals(player.connectionToken)) {
                 if ("WAITING".equals(state.phase)) NavalEngine.leave(state,you,now);
                 else if (player.disconnectedAt == 0) player.disconnectedAt = now;
@@ -284,7 +370,7 @@ public class NavalService {
         if (you >= 0 && !"FINISHED".equals(state.phase)) {
             Player person = state.players.get(you);
             long pausedAt = person.disconnectedAt > 0 ? person.disconnectedAt : person.lastSeenAt;
-            if ("AI".equals(state.mode) && List.of("PLACEMENT","SUPPLY").contains(state.phase) && pausedAt > 0 && (person.disconnectedAt > 0 || now-pausedAt>=5_000)) state.deadline += Math.max(0,now-pausedAt);
+            if ("AI".equals(state.mode) && List.of("PLACEMENT","SUPPLY").contains(state.phase) && pausedAt > 0 && (person.disconnectedAt > 0 || now-pausedAt>=15_000)) state.deadline += Math.max(0,now-pausedAt);
             person.lastSeenAt = now; person.disconnectedAt = 0;
         }
     }
@@ -409,7 +495,9 @@ public class NavalService {
         if (code == null || !code.trim().toUpperCase().matches("[A-Z2-9]{6}")) NavalEngine.bad("请输入有效的 6 位邀请码");
         List<NavalState> rows = jdbc.query("SELECT state_json FROM naval_rooms WHERE invite_code=?"+(lock ? " FOR UPDATE" : ""),this::readState,code.trim().toUpperCase());
         if (rows.isEmpty()) throw new BusinessException(ErrorCode.NOT_FOUND,"邀请码不存在");
-        return rows.get(0);
+        NavalState state=rows.get(0);
+        if(state.matchedRoomId!=null)return lock?loadForUpdate(state.matchedRoomId):readRoom(state.matchedRoomId);
+        return state;
     }
 
     private Player player(PlayerIdentity identity) {
@@ -456,22 +544,22 @@ public class NavalService {
     }
 
     private Map<String,Object> view(NavalState state, PlayerIdentity identity, long now) {
-        for(Player p:state.players)p.medals=new NavalMedals(jdbc,json).wall(p.key);
-        for(Spectator p:state.spectators)p.medals=new NavalMedals(jdbc,json).wall(p.key);
+        decorate(state);
         int active = activeIndex(state,identity.key());
-        if (active >= 0) return NavalEngine.view(state,active,now);
+        if (active >= 0) {var result=NavalEngine.view(state,active,now);result.put("version",state.version);return result;}
         Spectator person = spectator(state,identity.key());
-        if (person != null) return NavalEngine.view(state,-1,"SPECTATOR",person.viewMode,person.id,now);
-        return NavalEngine.view(state,indexOf(state,identity.key()),now);
+        var result=person!=null?NavalEngine.view(state,-1,"SPECTATOR",person.viewMode,person.id,now):NavalEngine.view(state,indexOf(state,identity.key()),now);result.put("version",state.version);return result;
     }
 
     @Scheduled(fixedDelay = 1000, initialDelay = 15_000)
     public void tick() {
         try {
-            List<String> rooms = jdbc.queryForList("SELECT id FROM naval_rooms WHERE phase IN ('WAITING','PLACEMENT','SUPPLY','BATTLE','LOCAL') ORDER BY updated_at LIMIT 100",String.class);
+            long now=System.currentTimeMillis();
+            heartbeats.entrySet().removeIf(e->e.getValue()<now-120000);
+            List<String> rooms = jdbc.queryForList("SELECT id FROM naval_rooms WHERE phase IN ('WAITING','PLACEMENT','SUPPLY','BATTLE','LOCAL') AND due_at<=? ORDER BY due_at LIMIT 100",String.class,now);
             TransactionTemplate tx = new TransactionTemplate(transactions);
             for (String id : rooms) {
-                try { tx.executeWithoutResult(status -> { NavalState state = loadForUpdate(id); NavalEngine.advance(state,System.currentTimeMillis()); save(state); }); }
+                try { tx.executeWithoutResult(status -> { NavalState state = loadForUpdate(id); String before=write(state); applyHeartbeats(state); NavalEngine.advance(state,System.currentTimeMillis()); if(!before.equals(write(state)))save(state);else jdbc.update("UPDATE naval_rooms SET due_at=? WHERE id=?",nextDue(state),id); }); }
                 catch (RuntimeException exception) { LOG.warn("Naval room tick failed for {}",id,exception); }
             }
         } catch (org.springframework.jdbc.BadSqlGrammarException exception) {
@@ -490,20 +578,71 @@ public class NavalService {
     }
 
     private NavalState loadForUpdate(String id) {
-        List<NavalState> rows = jdbc.query("SELECT state_json FROM naval_rooms WHERE id=? FOR UPDATE",this::readState,id);
-        if (rows.isEmpty()) throw new BusinessException(ErrorCode.NOT_FOUND,"海战房间不存在");
-        return rows.get(0);
+        for(int hop=0;hop<8;hop++){
+            List<NavalState> rows = jdbc.query("SELECT state_json FROM naval_rooms WHERE id=? FOR UPDATE",this::readState,id);
+            if (rows.isEmpty()) throw new BusinessException(ErrorCode.NOT_FOUND,"海战房间不存在");
+            NavalState state=rows.get(0);
+            if(state.matchedRoomId!=null){id=state.matchedRoomId;continue;}
+            applyHeartbeats(state);return state;
+        }
+        throw new BusinessException(409,"匹配房间跳转异常，请重新进入");
+    }
+
+    private NavalState currentRoom(String id,PlayerIdentity identity){
+        for(int hop=0;hop<8;hop++){NavalState state=readRoom(id);requireViewer(state,identity);if(state.matchedRoomId==null)return state;id=state.matchedRoomId;}
+        throw new BusinessException(409,"匹配房间跳转异常，请重新进入");
+    }
+
+    private void requestMatch(NavalState state){
+        if(state.autoMatch&&"MULTIPLAYER".equals(state.mode)&&"WAITING".equals(state.phase)&&state.matchedRoomId==null)events.publishEvent(new MatchRequested(state.ruleSet));
+    }
+    public List<String> waitingMatchRules(){
+        return jdbc.queryForList("SELECT DISTINCT match_rule_set FROM naval_rooms FORCE INDEX (idx_naval_waiting_match) WHERE phase='WAITING' AND auto_match=TRUE AND mode='MULTIPLAYER'",String.class);
+    }
+    @Transactional
+    public boolean matchWaiting(String rule){
+        if(!List.of("CLASSIC","MILITARY").contains(rule))return false;
+        lockMatchmaking();long now=System.currentTimeMillis();
+        var candidates=jdbc.query("SELECT state_json FROM naval_rooms FORCE INDEX (idx_naval_waiting_match) WHERE phase='WAITING' AND auto_match=TRUE AND mode='MULTIPLAYER' AND match_rule_set=? ORDER BY created_at,id LIMIT 2 FOR UPDATE",this::readState,rule);
+        if(candidates.size()<2)return false;
+        List<NavalState> ready=new ArrayList<>();
+        for(NavalState state:candidates){
+            applyHeartbeats(state);NavalEngine.advance(state,now);
+            if(!"WAITING".equals(state.phase)){save(state);continue;}
+            if(occupied(state)!=1){
+                if(occupied(state)==2)NavalEngine.beginPlacement(state,now);
+                else{state.phase="FINISHED";state.finishReason="CANCELLED";state.finishedAt=now;state.deadline=0;}
+                save(state);continue;
+            }
+            ready.add(state);
+        }
+        if(ready.size()<2)return true;
+        NavalState target=ready.get(0),source=ready.get(1);
+        Player incoming=source.players.stream().filter(p->!p.left).findFirst().orElseThrow();
+        source.matchedRoomId=target.id;source.phase="FINISHED";source.finishReason="MATCHED";source.winner=null;source.finishedAt=now;source.deadline=0;save(source);
+        if(activeIndex(target,incoming.key)<0){
+            putPlayer(target,vacant(target),json.convertValue(incoming,Player.class));
+            target.allowSpectators=target.allowSpectators&&source.allowSpectators;
+            for(Spectator spectator:source.spectators)if(target.spectators.size()<100&&activeIndex(target,spectator.key)<0&&spectator(target,spectator.key)==null)target.spectators.add(spectator);
+            target.spectators.removeIf(p->activeIndex(target,p.key)>=0);
+            if(!target.allowSpectators)target.spectators.clear();
+            if(target.settlement!=null)newRound(target,now);else NavalEngine.beginPlacement(target,now);
+            save(target);
+        }
+        return true;
     }
 
     private void archiveRound(NavalState state) {
         if(state.localSimulation) return;
-        if (!"FINISHED".equals(state.phase) || state.winner == null || state.players.size() != 2 || "AI".equals(state.mode) && !NavalEngine.battleStarted(state)) return;
+        if (!"FINISHED".equals(state.phase) || state.winner == null || state.players.size() != 2 || !NavalEngine.battleStarted(state)) return;
         String gameId = state.id+":"+state.round;
         if (state.settlement != null) return;
         Map<String,Object> result = result(state);
         jdbc.update("INSERT IGNORE INTO naval_round_results (game_id,room_id,round_no,player0_key,player1_key,finished_at,result_json) VALUES (?,?,?,?,?,?,?)",
                 gameId,state.id,state.round,state.players.get(0).key,state.players.get(1).key,state.finishedAt,write(result));
         new NavalMedals(jdbc,json).credit(result);
+        NavalRankings.credit(jdbc,result);
+        cache.clear();
         Map<String,Object> publicResult = new LinkedHashMap<>(result);
         @SuppressWarnings("unchecked") List<Map<String,Object>> participants = (List<Map<String,Object>>)result.get("players");
         publicResult.put("players",participants.stream().map(person -> { Map<String,Object> copy = new LinkedHashMap<>(person); copy.remove("key"); return copy; }).toList());
@@ -540,7 +679,7 @@ public class NavalService {
             if("MILITARY".equals(state.ruleSet)){used.clear();remaining.clear();purchased.clear();}
             stats.put("coatedShips",person.ships.stream().filter(ship -> ship.stealth).count());
             stats.put("ships",person.ships); stats.put("shotsReceived",person.shots);
-            stats.put("minesRemaining",person.mines); stats.put("antiAirRemaining",person.aa);
+            stats.put("minesRemaining",person.mines);stats.put("scrapMinesRemaining",person.scrapMines); stats.put("antiAirRemaining",person.aa);
             stats.put("shots",target.shots.size()); stats.put("accuracy",target.shots.isEmpty() ? 0 : Math.round(100.0*hits/target.shots.size()));
             stats.put("shipsSunk",target.ships.stream().filter(NavalEngine::sunk).count());
             stats.put("shipsRemaining",person.ships.stream().filter(ship -> !NavalEngine.sunk(ship)).count());
@@ -551,7 +690,7 @@ public class NavalService {
 
     @SuppressWarnings("unchecked")
     private Map<String,Object> historySummary(Map<String,Object> result, String key) {
-        if ("AI".equals(result.get("mode")) && Boolean.FALSE.equals(result.get("battleStarted"))) return null;
+        if (Boolean.FALSE.equals(result.get("battleStarted"))) return null;
         List<Map<String,Object>> players = (List<Map<String,Object>>)result.get("players"); int you = -1;
         for (int i=0;i<players.size();i++) if (key.equals(players.get(i).get("key"))) you = i;
         if (you < 0) return null;
@@ -563,8 +702,33 @@ public class NavalService {
 
     private void save(NavalState state) {
         archiveRound(state);
-        jdbc.update("UPDATE naval_rooms SET phase=?,host_key=?,peer_key=?,deadline=?,state_json=?,updated_at=CURRENT_TIMESTAMP WHERE id=?",state.localSimulation && !"FINISHED".equals(state.phase)?"LOCAL":state.phase,state.players.get(0).key,
-                state.players.size()==2 ? state.players.get(1).key : null,state.deadline,write(state),state.id);
+        if(state.persistedJson!=null&&durableState(json,state.persistedJson).equals(durableState(json,write(state)))){
+            return;
+        }
+        state.version++;
+        jdbc.update("UPDATE naval_rooms SET phase=?,host_key=?,peer_key=?,deadline=?,state_json=?,version=?,due_at=?,updated_at=CURRENT_TIMESTAMP WHERE id=?",state.localSimulation && !"FINISHED".equals(state.phase)?"LOCAL":state.phase,state.players.get(0).key,
+                state.players.size()==2 ? state.players.get(1).key : null,state.deadline,write(state),state.version,nextDue(state),state.id);
+        events.publishEvent(new RoomChanged(state.id));
+        state.persistedJson=write(state);
+        requestMatch(state);
+        String committed=state.persistedJson,key=state.id+":"+state.version;long version=state.version;
+        Runnable publish=()->{if(committed.length()<=1048576)roomCache.put(key,new Committed(version,committed),30000);};
+        if(org.springframework.transaction.support.TransactionSynchronizationManager.isSynchronizationActive())org.springframework.transaction.support.TransactionSynchronizationManager.registerSynchronization(new org.springframework.transaction.support.TransactionSynchronization(){@Override public void afterCommit(){publish.run();}});else publish.run();
+    }
+    static com.fasterxml.jackson.databind.JsonNode durableState(ObjectMapper json,String source){
+        try{
+            var tree=(com.fasterxml.jackson.databind.node.ObjectNode)json.readTree(source);tree.remove(java.util.List.of("version","lastSeenAt"));
+            for(String group:java.util.List.of("players","spectators"))if(tree.path(group).isArray())for(var person:tree.path(group))if(person.isObject())((com.fasterxml.jackson.databind.node.ObjectNode)person).remove("lastSeenAt");
+            return tree;
+        }catch(Exception e){throw new IllegalStateException("Invalid room snapshot",e);}
+    }
+    private long nextDue(NavalState s){
+        long now=System.currentTimeMillis(),due=s.deadline>now?s.deadline:now+30000;
+        if(s.localSimulation)return now+30000;
+        if(s.presentationUntil>0)due=Math.min(due,s.presentationUntil);
+        if("BATTLE".equals(s.phase)&&"AI".equals(s.mode)&&s.turn==1&&s.presentationUntil==0)due=Math.min(due,Math.max(now,s.nextAiAt));
+        if(s.connectionTracking)for(Player p:s.players)if(!p.left&&!"AI".equals(p.key))due=Math.min(due,Math.max(now+1000,(p.disconnectedAt>0?p.disconnectedAt:p.lastSeenAt)+30000));
+        return due;
     }
 
     private void lockMatchmaking() {
@@ -593,8 +757,11 @@ public class NavalService {
     }
 
     private NavalState readState(ResultSet rs, int index) throws SQLException {
+        return parseState(rs.getString("state_json"));
+    }
+    private NavalState parseState(String persisted){
         try {
-            NavalState state=json.readValue(rs.getString("state_json"),NavalState.class);
+            NavalState state=json.readValue(persisted,NavalState.class);state.persistedJson=persisted;
             NavalEngine.normalize(state,System.currentTimeMillis());
             if (!state.connectionTracking) {
                 state.connectionTracking = true;

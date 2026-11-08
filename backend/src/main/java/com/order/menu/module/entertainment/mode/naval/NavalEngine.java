@@ -232,6 +232,7 @@ public final class NavalEngine {
     public static void normalize(NavalState state, long now) {
         normalizeMessages(state);
         if("MILITARY".equals(state.ruleSet)){
+            NavalRepairSupport.normalizeShots(state);
             if("PLACEMENT".equals(state.phase))for(Player p:state.players)if(p.ships.removeIf(ship->"torpedo".equals(ship.kind)))p.coins=300-p.ships.stream().mapToInt(ship->NavalMilitary.MODELS.get(ship.kind)[2]).sum();
             for(Player p:state.players)for(Ship ship:p.ships)if("submarine".equals(ship.kind)&&(sunk(ship)||ship.hits.contains(NavalMilitary.key(NavalMilitary.cell(ship,0,1)))))for(int y=ship.y;y<ship.y+ship.h;y++)for(int x=ship.x;x<ship.x+ship.w;x++){if(!ship.hits.contains(x+","+y))ship.hits.add(x+","+y);if(shotAt(p,x,y)==null)p.shots.add(new Shot(x,y,"hit"));}
             return;
@@ -292,7 +293,7 @@ public final class NavalEngine {
         if("MILITARY".equals(state.ruleSet)&&NavalMilitary.checkDefeat(state,now))return;
         if (state.connectionTracking && "AI".equals(state.mode) && List.of("PLACEMENT","SUPPLY").contains(state.phase)) {
             Player human = state.players.get(0);
-            if (human.disconnectedAt > 0 || human.lastSeenAt > 0 && now-human.lastSeenAt >= 5_000) return;
+            if (human.disconnectedAt > 0 || human.lastSeenAt > 0 && now-human.lastSeenAt >= 15_000) return;
         }
         if (state.connectionTracking && "MULTIPLAYER".equals(state.mode) && !"FINISHED".equals(state.phase)) {
             int disconnected = -1;
@@ -353,7 +354,7 @@ public final class NavalEngine {
         }
         if (now >= state.deadline) {
             event(state, state.turn, "timeout", List.of(), "攻击超时，回合交给对手");
-            state.mineActions=0; state.turn = 1 - state.turn; state.deadline = now + TURN_MS; state.nextAiAt = now + AI_DELAY_MS;
+            state.mineActions=0;state.supportActions=0;state.supportShipId=null; state.turn = 1 - state.turn; state.deadline = now + TURN_MS; state.nextAiAt = now + AI_DELAY_MS;
         }
         if ("AI".equals(state.mode) && state.turn == 1 && now >= state.nextAiAt) {
             if ("MILITARY".equals(state.ruleSet)) NavalMilitary.ai(state,now); else aiAttack(state, now);
@@ -460,17 +461,19 @@ public final class NavalEngine {
             route.add(new Cell(first.x()+shift,first.y()));
             for (Cell cell : hull) {
                 Cell position = new Cell(cell.x()+shift,cell.y());
-                if (!inside(position.x(),position.y()) || !target.mines.remove(position)) continue;
-                target.inventory.compute("mine",(key,count) -> Math.max(0,(count == null ? 0 : count)-1));
+                if (!inside(position.x(),position.y()))continue;
+                boolean scrap=target.scrapMines.remove(position);if(!scrap&&!target.mines.remove(position))continue;
+                if(!scrap)target.inventory.compute("mine",(key,count) -> Math.max(0,(count == null ? 0 : count)-1));
                 for (Cell part : hull) {
                     int x=part.x()+shift, y=part.y();
-                    if (!inside(x,y) || shotAt(target,x,y)!=null) continue;
-                    boolean mine=position.equals(new Cell(x,y)) || target.mines.remove(new Cell(x,y));
-                    if (mine && !position.equals(new Cell(x,y))) target.inventory.compute("mine",(key,count) -> Math.max(0,count-1));
+                    if (!inside(x,y))continue;
+                    boolean extraScrap=target.scrapMines.remove(new Cell(x,y));Ship current=shipAt(target,x,y);if(shotAt(target,x,y)!=null&&!Boolean.TRUE.equals(shotAt(target,x,y).uncertain())&&(current==null||current.hits.contains(x+","+y))&&!position.equals(new Cell(x,y))&&!extraScrap)continue;
+                    boolean mine=position.equals(new Cell(x,y)) || extraScrap || target.mines.remove(new Cell(x,y));
+                    if (mine && !extraScrap && !position.equals(new Cell(x,y))) target.inventory.compute("mine",(key,count) -> Math.max(0,count-1));
                     Ship ship=shipAt(target,x,y);
-                    if (ship!=null) { ship.hits.add(x+","+y); hit=true; }
-                    Shot shot=new Shot(x,y,mine ? "mine" : ship!=null ? "hit" : "miss");
-                    outcomes.add(shot); target.shots.add(shot);
+                    if (ship!=null) { if(!ship.hits.contains(x+","+y))ship.hits.add(x+","+y); hit=true; }
+                    Shot shot=new Shot(x,y,mine ? "mine" : ship!=null ? "hit" : "miss",extraScrap||scrap&&position.equals(new Cell(x,y))?"scrap":null);
+                    outcomes.add(shot); NavalRepairSupport.recordShot(target,shot);
                 }
                 destroyed = true; break;
             }
@@ -479,12 +482,12 @@ public final class NavalEngine {
             Cell origin = hull.get(RANDOM.nextInt(3)); List<Cell> path = new ArrayList<>(); path.add(origin);
             for (int row=origin.y()+direction;inside(origin.x(),row);row+=direction) {
                 Cell cell = new Cell(origin.x(),row); path.add(cell);
-                Ship ship = shipAt(target,cell.x(),cell.y()); boolean mine = target.mines.contains(cell);
-                if (shotAt(target,cell.x(),cell.y()) == null) {
+                Ship ship = shipAt(target,cell.x(),cell.y()); boolean scrap=target.scrapMines.contains(cell),mine = target.mines.contains(cell)||scrap;
+                if (shotAt(target,cell.x(),cell.y()) == null||Boolean.TRUE.equals(shotAt(target,cell.x(),cell.y()).uncertain())||mine||ship!=null&&!ship.hits.contains(cell.x()+","+cell.y())) {
                     String result = mine ? "mine" : ship != null ? "hit" : "miss";
-                    if (ship != null) { ship.hits.add(cell.x()+","+cell.y()); hit = true; }
-                    if (mine) { target.mines.remove(cell); target.inventory.compute("mine",(key,count) -> Math.max(0,(count == null ? 0 : count)-1)); }
-                    Shot shot = new Shot(cell.x(),cell.y(),result); outcomes.add(shot); target.shots.add(shot);
+                    if (ship != null) { if(!ship.hits.contains(cell.x()+","+cell.y()))ship.hits.add(cell.x()+","+cell.y()); hit = true; }
+                    if (mine) { target.scrapMines.remove(cell);target.mines.remove(cell); if(!scrap)target.inventory.compute("mine",(key,count) -> Math.max(0,(count == null ? 0 : count)-1)); }
+                    Shot shot = new Shot(cell.x(),cell.y(),result,scrap?"scrap":null); outcomes.add(shot); NavalRepairSupport.recordShot(target,shot);
                 }
                 if (ship != null || mine) break;
             }
@@ -536,7 +539,7 @@ public final class NavalEngine {
     public static void leave(NavalState state, int actor, long now) {
         Player departing = state.players.get(actor); departing.left = true; departing.continueRequested = false;
         if ("FINISHED".equals(state.phase)) return;
-        boolean cancelled = "WAITING".equals(state.phase) || "AI".equals(state.mode) && !battleStarted(state);
+        boolean cancelled = !battleStarted(state);
         state.phase = "FINISHED"; state.winner = !cancelled && state.players.size() == 2 ? 1 - actor : null;
         state.deadline = 0; state.finishedAt = now; state.finishReason = cancelled ? "CANCELLED" : "PLAYER_LEFT";
         event(state, actor, "leave", List.of(), "玩家已离开战局");
@@ -560,10 +563,10 @@ public final class NavalEngine {
         view.put("autoMatch",state.autoMatch); view.put("phase",state.phase); view.put("deadline",state.deadline);
         view.put("allowSpectators",state.allowSpectators); view.put("lobbyShared",state.lobbySharedRound==state.round);
         view.put("presentationUntil",state.presentationUntil); view.put("presentationId",state.presentationId);
-        view.put("mineActions",state.mineActions);view.put("turn",state.turn); view.put("you",you); view.put("winner",state.winner); view.put("serverTime",now); view.put("finishedAt",state.finishedAt);
+        view.put("supportActions",state.supportActions);view.put("supportShipId",both||viewAs==state.turn?state.supportShipId:null);view.put("mineActions",state.mineActions);view.put("turn",state.turn); view.put("you",you); view.put("winner",state.winner); view.put("serverTime",now); view.put("finishedAt",state.finishedAt);
         view.put("role",role); view.put("viewMode",spectator ? viewMode : "PLAYER_"+you); view.put("viewAs",viewAs);
         view.put("ownSpectatorId",spectatorId); view.put("round",state.round); view.put("gameId",state.id+":"+state.round); view.put("finishReason",state.finishReason);
-        view.put("settlement",state.settlement);
+        view.put("battleStarted",battleStarted(state));view.put("settlement",state.settlement);
         view.put("lastResult",state.settlement);
         int resultYou = -1;
         if (!spectator && you >= 0 && state.settlement != null && state.settlement.get("players") instanceof List<?> participants) {
@@ -577,16 +580,16 @@ public final class NavalEngine {
             boolean visible = both || i == viewAs || "FINISHED".equals(state.phase);
             Map<String,Object> member = new LinkedHashMap<>();
             member.put("id",player.id); member.put("name",player.name); member.put("ready",player.ready); member.put("stage",player.stage);
-            member.put("occupied",occupied); member.put("left",!occupied); member.put("connected",occupied && player.disconnectedAt == 0 && (!state.connectionTracking || now-player.lastSeenAt<5_000)); member.put("continueRequested",player.continueRequested);
+            member.put("occupied",occupied); member.put("left",!occupied); member.put("connected",occupied && player.disconnectedAt == 0 && (!state.connectionTracking || now-player.lastSeenAt<15_000)); member.put("continueRequested",player.continueRequested);
             member.put("reconnectUntil",occupied && player.disconnectedAt > 0 ? player.disconnectedAt+30_000 : 0);
             member.put("medals",player.medals); member.put("registered",player.registered); member.put("avatarUrl",player.registered ? player.avatarUrl : null);
             member.put("totalShips",player.ships.size());
             member.put("ships",visible ? player.ships : player.ships.stream().filter(NavalEngine::sunk).toList());
-            member.put("shots",player.shots); member.put("mines",visible ? player.mines : List.of());
+            member.put("scrapMines",visible?player.scrapMines:List.of());member.put("shots",player.shots); member.put("mines",visible ? player.mines : List.of());
             member.put("aa",visible ? player.aa : List.of()); member.put("inventory",visible ? player.inventory : emptyInventory());
             member.put("coins",visible ? player.coins : 0); member.put("radar",visible ? player.radar : List.of()); players.add(member);
         }
-        view.put("players",players); view.put("messages",state.messages); view.put("events",state.events.subList(Math.max(0,state.events.size()-100),state.events.size()));
+        view.put("players",players); view.put("messages",state.messages); view.put("events",state.events.subList(Math.max(0,state.events.size()-100),state.events.size()).stream().map(e->{if(e.support()==null||both||e.player()==viewAs||"FINISHED".equals(state.phase))return e;return new Event(e.id(),e.player(),e.weapon(),List.of(),e.text(),null,null,null,List.of(),List.of(),List.of(),false,List.of(),null,0,Map.of("mode",e.support().get("mode")));}).toList());
         view.put("radar",viewAs < state.players.size() ? state.players.get(viewAs).radar : List.of());
         view.put("spectators",state.spectators.stream().map(person -> {
             Map<String,Object> personView = new LinkedHashMap<>(); personView.put("id",person.id); personView.put("name",person.name);

@@ -2,6 +2,7 @@ import { MILITARY_SHIPS, militaryCell, militaryComponents, militarySunk } from '
 
 const ROOT = '/entertainment/naval/'
 const SOURCES = {
+  repairTugHull: `${ROOT}military/repair-tug.png`, repair: `${ROOT}military/repair-tool.png`, tow: `${ROOT}military/tow-tool.png`,
   depthCharge: `${ROOT}military/depth-charge.png`,depthChargeHull:`${ROOT}military/depth-charge-destroyer.png`,
   carrier: `${ROOT}military/carrier.png`, hull: `${ROOT}military/utility-hull.png`,
   fighter: `${ROOT}v2/fighter.png`, bomber: `${ROOT}v2/bomber.png`, torpedo: `${ROOT}v2/torpedo.png`,
@@ -120,7 +121,7 @@ export function drawMilitaryShip(ctx, ship, cellSize, options = {}) {
   canonicalTransform(ctx, model, ship.rotation || 0, c)
   if (wreck) { ctx.globalAlpha *= .58; ctx.filter = 'grayscale(1) brightness(.55)' }
   const carrier = ['carrier','bomberCarrier','torpedoCarrier'].includes(ship.kind)
-  sprite(ctx, carrier ? 'carrier' : ship.kind==='depthCharge'?'depthChargeHull':ship.kind === 'submarine' ? 'submarine' : 'hull', c * .09, c * .07, model.w * c - c * .18, model.h * c - c * .14)
+  sprite(ctx, carrier ? 'carrier' : ship.kind==='repairTug'?'repairTugHull':ship.kind==='depthCharge'?'depthChargeHull':ship.kind === 'submarine' ? 'submarine' : 'hull', c * .09, c * .07, model.w * c - c * .18, model.h * c - c * .14)
   if (ship.kind === 'jammer') sprite(ctx, 'stealth', c * .27, c * 1.25, c * .46, c * .52, true)
   if (ship.kind === 'mineLayer') {
     for (let i = 0; i < 10; i++) {
@@ -172,6 +173,10 @@ export function drawMilitaryShip(ctx, ship, cellSize, options = {}) {
   if (ship.kind === 'decoy') {
     ctx.fillStyle = '#dae5d9'; ctx.fillRect(c * .35, c * .27, c * .3, c * .22)
     ctx.fillStyle = '#577979'; ctx.fillRect(c * .42, c * .31, c * .16, c * .04)
+  }
+  if (ship.kind === 'repairTug') for (const [x,y] of [[1,0],[0,1]]) {
+    const cell=militaryCell(ship,x,y)
+    if((ship.hits||[]).includes(`${cell.x},${cell.y}`))hullScorch(ctx,x*c,y*c,c)
   }
   ctx.restore()
   return true

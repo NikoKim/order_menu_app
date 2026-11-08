@@ -33,15 +33,21 @@ public class NavalController {
     private final EntertainmentGuestService guests;
     private final NavalPresenceService presence;
     private final NavalCommunityService community;
+    private final ShortCache cache=new ShortCache();
+    @PutMapping("/rooms/local/access") public ApiResponse<Map<String,Object>> hideLocal(@RequestBody Map<String,String> request,@RequestHeader(value="X-Guest-Token",required=false) String guest){return ApiResponse.success(service.hideLocal(request.get("id"),identity(guest)));}
 
     @GetMapping("/leaderboard")
-    public ApiResponse<List<Map<String,Object>>> leaderboard(@RequestParam(defaultValue="AI") String mode,@RequestParam(defaultValue="wins") String metric,@RequestParam(defaultValue="CLASSIC") String ruleSet) { return ApiResponse.success(community.leaderboard(mode,metric,ruleSet)); }
+    public ApiResponse<List<Map<String,Object>>> leaderboard(@RequestParam(defaultValue="AI") String mode,@RequestParam(defaultValue="wins") String metric,@RequestParam(defaultValue="CLASSIC") String ruleSet,@RequestParam(defaultValue="1") int page,@RequestParam(defaultValue="100") int pageSize) { return ApiResponse.success(cache.get("rank:"+mode+":"+metric+":"+ruleSet+":"+page+":"+pageSize,15000,()->community.leaderboard(mode,metric,ruleSet,page,pageSize))); }
     @GetMapping("/history/{gameId}")
     public ApiResponse<Map<String,Object>> detail(@PathVariable String gameId,@RequestHeader(value="X-Guest-Token",required=false) String guest) { return ApiResponse.success(community.detail(gameId,identity(guest))); }
+    @GetMapping("/leaderboard/page")
+    public ApiResponse<Map<String,Object>> leaderboardPage(@RequestParam(defaultValue="AI") String mode,@RequestParam(defaultValue="wins") String metric,@RequestParam(defaultValue="CLASSIC") String ruleSet,@RequestParam(defaultValue="1") int page,@RequestParam(defaultValue="8") int pageSize){return ApiResponse.success(cache.get("rank-page:"+mode+":"+metric+":"+ruleSet+":"+page+":"+pageSize,15000,()->community.leaderboardPage(mode,metric,ruleSet,page,pageSize)));}
     @GetMapping("/lobby/messages")
-    public ApiResponse<List<Map<String,Object>>> messages(@RequestHeader(value="X-Guest-Token",required=false) String guest) { return ApiResponse.success(community.messages(guests.resolve(UserContext.getOrNull(),guest,false))); }
+    public ApiResponse<List<Map<String,Object>>> messages(@RequestHeader(value="X-Guest-Token",required=false) String guest) { return ApiResponse.success(community.messages(guests.resolveReadonly(UserContext.getOrNull(),guest,false))); }
+    @GetMapping("/lobby/sync")
+    public ApiResponse<Map<String,Object>> syncMessages(@RequestParam(defaultValue="0") long afterId,@RequestParam(defaultValue="") String cardVersion,@RequestHeader(value="X-Guest-Token",required=false) String guest){return ApiResponse.success(community.syncMessages(guests.resolveReadonly(UserContext.getOrNull(),guest,false),afterId,cardVersion));}
     @PostMapping("/lobby/messages")
-    public ApiResponse<List<Map<String,Object>>> message(@RequestBody NavalCommunityService.TextRequest request,@RequestHeader(value="X-Guest-Token",required=false) String guest) { return ApiResponse.success(community.send(identity(guest),request)); }
+    public ApiResponse<List<Map<String,Object>>> message(@RequestBody NavalCommunityService.TextRequest request,@RequestHeader(value="X-Guest-Token",required=false) String guest,@RequestParam(defaultValue="0") long afterId) { return ApiResponse.success(community.send(identity(guest),request,afterId)); }
     @GetMapping("/reviews")
     public ApiResponse<Map<String,Object>> reviews(@RequestParam(defaultValue="1") int page,@RequestHeader(value="X-Guest-Token",required=false) String guest) { return ApiResponse.success(community.reviews(identity(guest),page)); }
     @PutMapping("/reviews/me")
@@ -69,7 +75,7 @@ public class NavalController {
     public ApiResponse<Map<String,Object>> militaryTemplate(){return ApiResponse.success(service.militaryTemplate());}
 
     @GetMapping("/rooms")
-    public ApiResponse<List<Map<String,Object>>> rooms() { return ApiResponse.success(service.rooms()); }
+    public ApiResponse<List<Map<String,Object>>> rooms() { return ApiResponse.success(cache.get("rooms",3000,service::rooms)); }
 
     @PostMapping("/rooms/{id}/enter")
     public ApiResponse<Map<String,Object>> enter(@PathVariable String id,@RequestBody NavalService.EnterRequest request,@RequestHeader(value="X-Guest-Token",required=false) String guest) { return ApiResponse.success(service.enter(id,identity(guest),request)); }
@@ -91,8 +97,8 @@ public class NavalController {
 
     @GetMapping("/rooms/{id}")
     public ApiResponse<Map<String,Object>> room(@PathVariable String id,
-            @RequestHeader(value="X-Guest-Token",required=false) String guest) {
-        return ApiResponse.success(service.get(id,identity(guest)));
+            @RequestHeader(value="X-Guest-Token",required=false) String guest,@RequestParam(defaultValue="-1") long version) {
+        return ApiResponse.success(service.sync(id,identity(guest),version));
     }
 
     @PostMapping("/rooms/spectate")
@@ -103,8 +109,8 @@ public class NavalController {
 
     @PostMapping("/rooms/{id}/actions")
     public ApiResponse<Map<String,Object>> action(@PathVariable String id,@RequestBody NavalState.Action request,
-            @RequestHeader(value="X-Guest-Token",required=false) String guest) {
-        return ApiResponse.success(service.action(id,identity(guest),request));
+            @RequestHeader(value="X-Guest-Token",required=false) String guest,@RequestParam(defaultValue="false") boolean compact) {
+        return ApiResponse.success(service.action(id,identity(guest),request,compact));
     }
 
     @PostMapping("/rooms/{id}/connection")
@@ -124,16 +130,18 @@ public class NavalController {
         return ApiResponse.success(service.saveProfile(identity(guest),request));
     }
 
-    private PlayerIdentity identity(String guest) { return guests.resolve(UserContext.getOrNull(),guest,true); }
+    private PlayerIdentity identity(String guest) { return guests.resolveReadonly(UserContext.getOrNull(),guest,true); }
+
+    @PostMapping("/rooms/{id}/heartbeat") public ApiResponse<Map<String,Object>> heartbeat(@PathVariable String id,@RequestHeader(value="X-Guest-Token",required=false) String guest){return ApiResponse.success(service.heartbeat(id,identity(guest)));}
 
     @ExceptionHandler(DataAccessException.class)
     public ResponseEntity<ApiResponse<Void>> databaseUnavailable(DataAccessException exception) {
-        log.error("Naval database request failed; check migrations V53-V59 and datasource permissions",exception);
+        log.error("Naval database request failed; check migrations V53-V62 and datasource permissions",exception);
         String message = "海战服务暂时不可用，请稍后重试";
         for (Throwable cause=exception;cause!=null;cause=cause.getCause()) {
             if (!(cause instanceof SQLException sql)) continue;
             if (sql.getErrorCode() == 1146 || sql.getErrorCode() == 1054)
-                message = "海战数据库尚未初始化完成，请管理员检查 V53、V54、V55、V56、V57、V58、V59 数据库迁移";
+                message = "海战数据库尚未初始化完成，请管理员检查 V53、V54、V55、V56、V57、V58、V59、V60、V61、V62 数据库迁移";
             else if (sql.getErrorCode() == 1044 || sql.getErrorCode() == 1045 || sql.getErrorCode() == 1142)
                 message = "海战服务暂不可用，请管理员检查数据库连接和权限";
         }

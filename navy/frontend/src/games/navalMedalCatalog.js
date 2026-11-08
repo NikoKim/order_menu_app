@@ -1,0 +1,1 @@
+export const NAVAL_MEDALS=['classic','military'].flatMap((mode,index)=>[3,5,10].map((wins,i)=>({id:`${mode}-${wins}`,mode,wins,name:`${index?'军事':'经典'}${wins}连胜`,src:`/naval/medals/${mode}-${wins}.png`})))

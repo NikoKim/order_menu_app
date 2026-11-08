@@ -22,7 +22,7 @@
       <nav class="ranking-subtabs metrics-tabs" role="tablist" aria-label="排行榜指标"><button v-for="item in metrics" :key="item.value" role="tab" :aria-selected="metric === item.value" :class="{ active: metric === item.value }" @click="metric = item.value">{{ item.label }}</button></nav>
       <p class="ranking-note">注册玩家榜 · {{ metric === 'economy' ? '每位玩家最佳获胜记录 · 对手花费 − 自己花费' : metric === 'rate' ? '按胜率排序，展示对局样本数' : '按累计获胜场数排序' }}</p>
       <div class="community-body ranking-table"><p v-if="loading" class="community-empty" role="status">正在读取...</p><template v-else><div class="ranking-row table-heading"><span>排名</span><span>指挥官</span><span>{{ metric === 'economy' ? '节省金币' : metric === 'rate' ? '胜率' : '胜场' }}</span><span>{{ metric === 'economy' ? '战绩' : '对局' }}</span></div><div v-for="(row, index) in pageRanking" :key="`${row.name}-${row.gameId || index}`" class="ranking-row"><span>{{ page * pageSize + index + 1 }}</span><div class="ranking-person"><NavalAvatar :person="{ ...row, registered: true }" :size="22" /><strong>{{ row.name }}</strong></div><strong>{{ metric === 'economy' ? `${row.difference > 0 ? '+' : ''}${row.difference}` : metric === 'rate' ? `${Number(row.rate).toFixed(1)}%` : row.wins }}</strong><button v-if="row.gameId" class="detail-link" @click="openDetail(row)">查看</button><span v-else>{{ row.games }} 场</span></div><p v-if="!ranking.length" class="community-empty">暂无上榜战绩</p></template></div>
-      <nav v-if="ranking.length > pageSize" class="pagination" aria-label="排行榜分页"><button :disabled="!page" aria-label="上一页" @click="page--"><ChevronLeft :size="18" /></button><span>{{ page + 1 }} / {{ Math.ceil(ranking.length / pageSize) }}</span><button :disabled="(page + 1) * pageSize >= ranking.length" aria-label="下一页" @click="page++"><ChevronRight :size="18" /></button></nav>
+      <nav v-if="rankingTotal > pageSize" class="pagination" aria-label="排行榜分页"><button :disabled="!page" aria-label="上一页" @click="page--"><ChevronLeft :size="18" /></button><span>{{ page + 1 }} / {{ Math.ceil(rankingTotal / pageSize) }}</span><button :disabled="(page + 1) * pageSize >= rankingTotal" aria-label="下一页" @click="page++"><ChevronRight :size="18" /></button></nav>
     </template>
     <template v-else-if="tab === 'history'"><div class="community-body"><p v-if="!history.length" class="community-empty">暂无战斗记录</p><button v-for="item in pageHistory" :key="item.gameId || item.id" class="history-entry" @click="openDetail(item)"><strong :class="item.won ? 'won' : 'lost'">{{ item.won ? '胜利' : '战败' }}</strong><span>{{ ruleLabel(item) }} · {{ item.mode === 'AI' ? '人机对战' : '双人对战' }}<small v-if="item.opponent">{{ item.opponent }}</small></span><time>{{ date(item.at || item.finishedAt) }}</time><ChevronRight :size="16" /></button></div><nav v-if="history.length > pageSize" class="pagination" aria-label="战绩分页"><button :disabled="!page" aria-label="上一页" @click="page--"><ChevronLeft :size="18" /></button><span>{{ page + 1 }} / {{ Math.ceil(history.length / pageSize) }}</span><button :disabled="(page + 1) * pageSize >= history.length" aria-label="下一页" @click="page++"><ChevronRight :size="18" /></button></nav></template>
     <section v-else class="global-chat community-body">
@@ -53,7 +53,8 @@ import NavalRooms from './NavalRooms.vue'
 import NavalMedalWall from './NavalMedalWall.vue'
 import { stickerMessage } from '../../games/navalStickers'
 import { ITEMS } from '../../games/navalEngine'
-import { getNavalHistory, getNavalLeaderboard, getNavalLobbyMessages, sendNavalLobbyMessage } from '../../api/naval'
+import { getNavalHistory, getNavalRankingPage, sendNavalLobbyMessage } from '../../api/naval'
+import { subscribeLobby, refreshStreams } from '../../services/roomSync'
 const props = defineProps({ ruleSet: { type: String, default: 'CLASSIC' }, panel: String, medalPerson: Object, mobile: Boolean, room: Object, history: { type: Array, default: () => [] } })
 const emit = defineEmits(['close', 'join', 'share', 'replay', 'messages'])
 const tab = computed(() => props.panel)
@@ -68,9 +69,9 @@ const joinable = card => card.status === 'WAITING' || card.status === 'STARTED' 
 const roomLabel = card => `${card.status === 'STARTED' && card.allowSpectators === false ? '游戏已开始 · 无法观战' : roomStatus[card.status]}${card.requiresInvite ? ' · 需要邀请码' : ''}`
 const invitedRoom = ref(null), inviteText = ref(''), stickerTray = ref(null)
 function selectRoom(card) { if (card.requiresInvite) { invitedRoom.value = card; inviteText.value = '' } else emit('join', card) }
-const mode = ref('AI'), metric = ref('wins'), ranking = ref([]), loading = ref(false), error = ref(''), page = ref(0)
+const mode = ref('AI'), metric = ref('wins'), ranking = ref([]), rankingTotal = ref(0), loading = ref(false), error = ref(''), page = ref(0)
 const pageSize = computed(() => props.mobile ? 5 : 8)
-const pageRanking = computed(() => ranking.value.slice(page.value * pageSize.value, (page.value + 1) * pageSize.value))
+const pageRanking = computed(() => ranking.value)
 const pageHistory = computed(() => props.history.slice(page.value * pageSize.value, (page.value + 1) * pageSize.value))
 const messages = ref([]), text = ref(''), sending = ref(false), chatLog = ref(null), detail = ref(null), detailLoading = ref(false)
 let generation = 0, detailGeneration = 0, disposed = false
@@ -80,8 +81,8 @@ async function load(silent = false) {
   const request = ++generation
   if (!silent) { loading.value = true; error.value = '' }
   try {
-    if (tab.value === 'ranking') { const result = await getNavalLeaderboard(mode.value, metric.value, props.ruleSet); if (!disposed && request === generation) ranking.value = result }
-    if (tab.value === 'chat') { const result = await getNavalLobbyMessages(); if (!disposed && request === generation) { const atBottom = !chatLog.value || chatLog.value.scrollHeight - chatLog.value.scrollTop - chatLog.value.clientHeight < 60; messages.value = result; emit('messages', result); if (atBottom) { await nextTick(); chatLog.value?.scrollTo(0, chatLog.value.scrollHeight) } } }
+    if (tab.value === 'ranking') { const result = await getNavalRankingPage(mode.value, metric.value, props.ruleSet, page.value + 1, pageSize.value); if (!disposed && request === generation) { ranking.value = result.records; rankingTotal.value = result.total } }
+    if (tab.value === 'chat') refreshStreams()
   } catch (e) { if (!disposed && request === generation) error.value = e.message || '读取失败' }
   finally { if (!disposed && request === generation) loading.value = false }
 }
@@ -96,9 +97,19 @@ async function shareResult() {
   if (!result || result.shared || result.lobbyShared) return
   if (await post(result.local ? { localResult: result } : { gameId: result.gameId })) result.lobbyShared=true
 }
-watch([tab, mode, metric, () => props.ruleSet], () => { page.value = 0; closeDetail(); load() }, { immediate: true })
-const poll = setInterval(() => { if (tab.value === 'chat' && !document.hidden && !loading.value && !sending.value) load(true) }, 2500)
-onUnmounted(() => { disposed = true; generation++; detailGeneration++; clearInterval(poll) })
+watch([tab, mode, metric, () => props.ruleSet], () => { page.value = 0; closeDetail() }, { flush: 'sync' })
+watch([tab, mode, metric, () => props.ruleSet, page, pageSize], () => load(), { immediate: true })
+let stopLobby
+watch(tab, value => {
+  stopLobby?.();stopLobby=null
+  if(value==='chat')stopLobby=subscribeLobby(async result=>{
+    if(disposed)return
+    const atBottom=!chatLog.value||chatLog.value.scrollHeight-chatLog.value.scrollTop-chatLog.value.clientHeight<60
+    messages.value=result;emit('messages',result)
+    if(atBottom){await nextTick();chatLog.value?.scrollTo(0,chatLog.value.scrollHeight)}
+  })
+}, {immediate:true})
+onUnmounted(() => { disposed = true; generation++; detailGeneration++; stopLobby?.() })
 </script>
 <style scoped>
 .sticker-tray{min-height:0}.sticker-tray:not(:empty){height:min(220px,38dvh);min-height:70px;flex:0 1 auto;overflow:auto;overscroll-behavior:contain}.sticker-tray:empty{display:none}.global-chat{gap:8px}.lobby-chat-log article{padding-bottom:12px}.lobby-chat-log header{margin-bottom:8px}.invite-room-form{align-items:center}.invite-room-form .small-icon{flex-shrink:0}

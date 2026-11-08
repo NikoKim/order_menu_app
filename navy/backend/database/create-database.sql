@@ -1,0 +1,5 @@
+CREATE DATABASE IF NOT EXISTS navy CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;
+CREATE USER IF NOT EXISTS 'navy_admin'@'localhost' IDENTIFIED BY '1714672038qwe';
+CREATE USER IF NOT EXISTS 'navy_admin'@'127.0.0.1' IDENTIFIED BY '1714672038qwe';
+GRANT ALL PRIVILEGES ON navy.* TO 'navy_admin'@'localhost';
+GRANT ALL PRIVILEGES ON navy.* TO 'navy_admin'@'127.0.0.1';

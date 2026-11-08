@@ -3,6 +3,9 @@ const key=c=>`${c.x},${c.y}`
 const inside=c=>c.x>=0&&c.y>=0&&c.x<12&&c.y<12
 const cells=s=>Array.from({length:s.w*s.h},(_,i)=>({x:s.x+i%s.w,y:s.y+Math.floor(i/s.w)}))
 export function militaryKnowledge(own,enemy,events=[]){
+  enemy={...enemy,shots:enemy.shots.filter(c=>!c.uncertain)}
+  const publicHits=new Set(enemy.shots.filter(c=>c.result==='hit').map(key))
+  enemy={...enemy,ships:enemy.ships.map(s=>({...s,hits:s.hits.filter(h=>publicHits.has(h))}))}
   const intel=militaryIntel(own,enemy,events)
   const sunk=[...enemy.ships.filter(s=>s.hits.length>=s.w*s.h),...intel.resolved],excluded=new Set(intel.excluded),shot=new Map(enemy.shots.map(c=>[key(c),c.result])),scanned=new Set(own.radar.map(key)),signals=new Set(own.radar.filter(c=>c.occupied).map(key))
   const negative=new Set(own.radar.filter(c=>!c.occupied).map(key))

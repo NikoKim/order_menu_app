@@ -1,5 +1,24 @@
 # Naval Battle
 
+## Realtime And Load Reduction (2026-11-02)
+
+- Apply V62 for event-driven automatic matchmaking. The indexed generated rule key filters compatible candidates before LIMIT, avoiding starvation behind unrelated-rule rooms. A bounded single-flight worker wakes after committed waiting-room changes, re-entry/socket subscription, or one startup recovery; it performs no periodic matching queries. Existing waiting rooms can be merged atomically, and an authorized durable source-to-destination handoff is pushed through the existing socket. Old room IDs remain usable for reconnects and operations. Invitation-only rooms stay out of the queue.
+- Matching and cancellation/seat changes share the existing SQL mutex. Each transaction examines at most two indexed waiting candidates; batches yield after 16 progress steps. This removes polling/full-room scans, but the mutex remains a potential high-arrival-rate bottleneck. Multi-instance WebSocket delivery still needs cross-instance notifications.
+
+- Apply `V60__naval_realtime.sql` and `V61__naval_rankings_and_request_receipts.sql` before deploying this backend. They add room versions/indexed due times, ranking aggregates with one-time historical backfill, and transactional action receipts. Existing room JSON and battle history are preserved. The local development database has been upgraded.
+- Every naval page shares one WebSocket, even outside a game. Initial `multiplex: true` frames carry credentials, `subscriptions: {lobby,directory,presence}`, optional `roomId/scope/version`, and lobby `afterId/cardVersion`. Later frames replace subscriptions. Chat history arrives once, then messages are pushed; unread indicators reuse the same feed. Directory subscriptions are removed when the panel closes. A ten-second heartbeat replaces HTTP presence polling; aggregated counts are pushed by the server. No fixed naval room/lobby/directory/presence HTTP polling remains.
+- Public feed sends use bounded queues (16 frames / 1 MiB per page, 64 MiB globally); overload or a five-second stalled send closes the connection for cursor-based recovery. Private room subscriptions and mirror owners are indexed by room. Room deltas retain permission-filtered projections, scoped to the current game subscription; version gaps explicitly request a new snapshot.
+- Reads check the small SQL room version before using a bounded committed-state cache. Cache publication happens after commit, never on rollback. Settlement credits indexed ranking totals once per game; `/leaderboard/page` sorts/pages those totals and returns a total count without reading historical JSON. Actions carry UUID `requestId` values; identical concurrent/retried actions return the recorded version, different payloads with the same ID receive 409, and failed transactions do not consume an ID. Old clients remain compatible but must adopt IDs for retry safety.
+- Room reads are read-only. `/rooms/{id}?version=N` returns an unchanged marker for matching versions; room heartbeats use `/rooms/{id}/heartbeat`. Anonymous naval requests use read-only guest resolution, without updating the guest row on each request. Presence is process-local and no longer writes every heartbeat.
+- `/api/entertainment/naval/live` authenticates the first WebSocket frame using the existing JWT/guest identities. Disabled accounts are rejected just as for HTTP. Room mutations and attack/winner validation remain authoritative HTTP operations. Connections are indexed by room, and committed room state is read once per broadcast, then projected per player/spectator permission group. Never broadcast raw `state_json`.
+- Sender queues are bounded: four workers, 128 queued jobs, one coalescing pending state per client. A stalled client is disconnected for resynchronization rather than blocking the action thread or accumulating state updates. Room loaders have two workers and 64 queued jobs. Reconnect history is bounded and expires; missing baselines or changed permissions use a fresh snapshot.
+- Healthy live clients request compact action acknowledgements and wait for the returned authoritative version on the stream. Attack/deployment/chat replies no longer duplicate the whole room over HTTP. If the stream disconnects/times out, the client falls back to an authorized full read. Reconnect baselines can only be reused by an identity that previously received that permission-group version.
+- `/lobby/sync?afterId=N&cardVersion=...` returns incremental records and changed public room cards. Sender medals are batch-loaded/cached. Public cached records do not include viewer-specific `mine` or expose private sender keys; personalization happens after the shared cache lookup. Legacy list endpoints remain available.
+- Cache loading is coordinated per key, not under a global I/O lock. Only due rooms/AI are scheduled; unchanged acknowledgements and heartbeat-only state do not rewrite snapshots. Complete JSON remains the recovery source. Local probes do not justify prematurely splitting events into new tables; production bottleneck attribution is still required before that migration.
+- HTTP response compression is enabled. `moments_web_frontend/nginx-spa.conf` includes the naval WebSocket upgrade route and asset cache headers. Vite proxies WebSockets in development; its development asset cache is intentionally not long-lived.
+- These local caches/presence and the room notification registry assume one backend instance. Multi-instance deployment requires shared presence and cross-instance committed-room notifications, not merely another load-balanced JVM.
+
+
 ## 勋章与深弹舰修订（2026-11-01，当前规则）
 
 ### 价格与深水炸弹驱逐舰
@@ -546,15 +565,18 @@ player avatars, phase, viewer count and an invitation badge. Public responses ne
 include invite codes, boards or private player keys. Entering a private room by ID
 requires its correct invite code, whether joining a seat or spectating. Players can
 disable spectators in the audience panel or mobile menu; existing spectators lose
-access on their next poll. Lobby cards reflect this setting and require an invitation
+access immediately through their stream. Lobby cards reflect this setting and require an invitation
 for private rooms. A room can post one lobby invitation per round, enforced in the
 same database transaction under the room row lock.
 
 Guest AI continues locally and works offline. Its disposable live mirror is stored
 with SQL phase `LOCAL`, so it is never advanced as a server game or included in
 results, history or leaderboards. The owner publishes a bounded snapshot after
-changes and every four seconds, and receives the audience list. Mirrors close after
-30 seconds without publication; completed mirrors are purged after an hour. Guest
+changes only while spectators are allowed, and receives audience metadata through
+the shared connection. Unchanged mirrors use lightweight socket heartbeats.
+Closing spectators sends only the mirror ID; later local actions do not upload a
+board until spectators are re-enabled. Mirrors close after 30 seconds without
+a heartbeat; completed mirrors are purged after an hour. Guest
 formations and history remain in the browser. Deploy both frontend and backend;
 all new settings live in existing JSON state, with no new SQL migration.
 

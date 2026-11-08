@@ -1,0 +1,19 @@
+CREATE TABLE users (
+ id BIGINT NOT NULL AUTO_INCREMENT PRIMARY KEY,
+ nickname VARCHAR(32) NOT NULL UNIQUE,
+ password_hash VARCHAR(100) NOT NULL,
+ avatar_url VARCHAR(500) NULL
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+CREATE TABLE account_sessions (
+ token_hash CHAR(64) NOT NULL PRIMARY KEY,
+ user_id BIGINT NOT NULL,
+ expires_at BIGINT NOT NULL,
+ KEY idx_session_expiry(expires_at),
+ FOREIGN KEY(user_id) REFERENCES users(id)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+CREATE TABLE naval_guests (
+ id BIGINT NOT NULL AUTO_INCREMENT PRIMARY KEY,
+ token_hash CHAR(64) NOT NULL UNIQUE,
+ display_suffix VARCHAR(6) NOT NULL,
+ expires_at BIGINT NOT NULL
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;

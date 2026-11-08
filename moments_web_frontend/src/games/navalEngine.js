@@ -1,3 +1,4 @@
+import {recordNavalShot} from './navalShotMarkers.js'
 import { chooseNavalAiAction, navalAiMines } from './navalAi.js'
 
 const BOARD_SIZE = 12
@@ -277,18 +278,21 @@ export function submarineAttack(room, action, attacker, now) {
     const occupied = footprint.map(cell => ({ x: cell.x + shift, y: cell.y })).filter(cell => inside(cell.x, cell.y))
     route.push({ x: footprint[0].x + shift, y: footprint[0].y })
     for (const cell of occupied) {
+      const scrap=opponent.scrapMines?.findIndex(point=>key(point)===key(cell))??-1
       const mine = opponent.mines.findIndex(point => key(point) === key(cell))
-      if (mine < 0) continue
-      opponent.mines.splice(mine, 1); opponent.inventory.mine = Math.max(0, opponent.inventory.mine - 1)
+      if (mine < 0&&scrap<0) continue
+      if(scrap>=0)opponent.scrapMines.splice(scrap,1);else {opponent.mines.splice(mine, 1); opponent.inventory.mine = Math.max(0, opponent.inventory.mine - 1)}
       for (const part of occupied) {
-        if (opponent.shots.some(point => key(point) === key(part))) continue
+        const extraScrap=opponent.scrapMines?.findIndex(m=>key(m)===key(part))??-1
+        if (opponent.shots.some(point => !point.uncertain && key(point) === key(part))&&!opponent.ships.some(ship=>shipCells(ship).some(point=>key(point)===key(part))&&!ship.hits.includes(key(part)))&&key(part)!==key(cell)&&extraScrap<0) continue
         const extraMine = opponent.mines.findIndex(point => key(point) === key(part))
-        const isMine = key(part) === key(cell) || extraMine >= 0
+        const isMine = key(part) === key(cell) || extraMine >= 0||extraScrap>=0
+        if(extraScrap>=0)opponent.scrapMines.splice(extraScrap,1)
         if (extraMine >= 0) { opponent.mines.splice(extraMine, 1); opponent.inventory.mine = Math.max(0, opponent.inventory.mine - 1) }
         const ship = opponent.ships.find(ship => shipCells(ship).some(point => key(point) === key(part)))
         if (ship) { ship.hits = [...new Set([...(ship.hits || []), key(part)])]; hit = true }
-        const shot = { ...part, result: isMine ? 'mine' : ship ? 'hit' : 'miss' }
-        outcomes.push(shot); opponent.shots.push(shot)
+        const shot = { ...part, result: isMine ? 'mine' : ship ? 'hit' : 'miss', ...(extraScrap>=0||key(part)===key(cell)&&scrap>=0?{mineKind:'scrap'}:{}) }
+        outcomes.push(shot); recordNavalShot(opponent,shot)
       }
       destroyed = true; break
     }
@@ -298,14 +302,16 @@ export function submarineAttack(room, action, attacker, now) {
     for (let y = origin.y + direction; inside(origin.x, y); y += direction) {
       const cell = { x: origin.x, y }, ship = opponent.ships.find(ship => shipCells(ship).some(point => key(point) === key(cell)))
       path.push(cell)
+      const scrap=opponent.scrapMines?.findIndex(point=>key(point)===key(cell))??-1
       const mine = opponent.mines.findIndex(point => key(point) === key(cell))
-      if (!opponent.shots.some(point => key(point) === key(cell))) {
-        const result = mine >= 0 ? 'mine' : ship ? 'hit' : 'miss', shot = { ...cell, result }
-        if (ship) { ship.hits.push(key(cell)); hit = true }
+      if (scrap>=0||!opponent.shots.some(point => !point.uncertain && key(point) === key(cell))||ship&&!ship.hits.includes(key(cell))) {
+        const result = mine >= 0||scrap>=0 ? 'mine' : ship ? 'hit' : 'miss', shot = { ...cell, result, ...(scrap>=0?{mineKind:'scrap'}:{}) }
+        if (ship) { if(!ship.hits.includes(key(cell)))ship.hits.push(key(cell)); hit = true }
+        if(scrap>=0)opponent.scrapMines.splice(scrap,1)
         if (mine >= 0) { opponent.mines.splice(mine, 1); opponent.inventory.mine = Math.max(0, opponent.inventory.mine - 1) }
-        outcomes.push(shot); opponent.shots.push(shot)
+        outcomes.push(shot); recordNavalShot(opponent,shot)
       }
-      if (ship || mine >= 0) break
+      if (ship || mine >= 0||scrap>=0) break
     }
     torpedoes.push(path)
   }

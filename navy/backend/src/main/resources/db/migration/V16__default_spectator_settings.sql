@@ -1,0 +1,1 @@
+ALTER TABLE users ADD COLUMN default_allow_spectators BOOLEAN NOT NULL DEFAULT TRUE;
